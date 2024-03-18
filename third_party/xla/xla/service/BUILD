@@ -145,6 +145,7 @@ cc_library(
     deps = [
         ":hlo_domain_map",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
     ],
 )
 
@@ -1389,6 +1390,7 @@ cc_library(
     ]) + if_cuda_is_configured([
         "//xla/service/gpu:nvptx_compiler",
         "//xla/stream_executor/cuda:stream_executor_cuda",
+        "//xla/tsl:gpu_runtime_hermetic_cuda_deps",
     ]) + if_rocm_is_configured([
         "//xla/service/gpu:amdgpu_compiler",
         "//xla/stream_executor/rocm:stream_executor_rocm",
