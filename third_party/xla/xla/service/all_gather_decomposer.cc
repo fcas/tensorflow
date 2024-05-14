@@ -77,7 +77,8 @@ HloInstruction* TranslateAllGatherToAllReducePerOperand(
   return ar;
 }
 
-Status DecomposeAllGather(HloAllGatherInstruction* ag, HloComputation* comp) {
+absl::Status DecomposeAllGather(HloAllGatherInstruction* ag,
+                                HloComputation* comp) {
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(ag->channel_id().has_value(),
                                                ag->use_global_device_ids()));
