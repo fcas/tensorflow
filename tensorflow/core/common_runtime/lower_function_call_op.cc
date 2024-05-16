@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/function_def_utils.h"
 #include "tensorflow/core/common_runtime/inline_function_utils.h"
 #include "tensorflow/core/common_runtime/lower_function_call_inline_policy.h"
+#include "tensorflow/core/config/flag_defs.h"
 #include "tensorflow/core/framework/node_def_util.h"
 #include "tensorflow/core/graph/graph.h"
 #include "tensorflow/core/graph/graph_node_util.h"
@@ -86,6 +87,10 @@ Status RewriteFunctionCallNode(Node* n, Graph* g,
   std::unique_ptr<FunctionBody> fbody;
   TF_RETURN_IF_ERROR(
       FunctionDefToBodyHelper(std::move(fdef), n->attrs(), &flib_def, &fbody));
+
+  if (flags::Global().enable_function_pruning_before_inlining.value()) {
+    PruneFunctionBody(fbody->record->fdef(), fbody->graph);
+  }
 
   Status can_inline_function_call =
       ValidateInlining(n, fbody.get(), inline_options);
