@@ -5553,6 +5553,7 @@ class WeightOnlyQuantizationTest(quantize_model_test_base.QuantizedModelTest):
 
   @parameterized.named_parameters(
       ('to_xla_per_tensor', quant_opts_pb2.XLA, False),
+      ('stablehlo_per_channel', quant_opts_pb2.STABLEHLO, True),
       # TODO: b/289761265 - [Converter Component][TF-Quantizer] Improve Weight-
       # only Quantization
       # Enable this back once new weight-only quantizer is supported for per-
@@ -5612,7 +5613,10 @@ class WeightOnlyQuantizationTest(quantize_model_test_base.QuantizedModelTest):
         0.3,
     )
 
-    if enable_per_channel_quantization:
+    if (
+        enable_per_channel_quantization
+        and target_opset != quant_opts_pb2.STABLEHLO
+    ):
       per_channel_size_attr = attr_value_pb2.AttrValue(
           list=attr_value_pb2.AttrValue.ListValue(
               shape=[
