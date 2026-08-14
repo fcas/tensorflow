@@ -78,10 +78,10 @@ bool ShouldInjectPrefetch(const NodeDef* last_node,
 
 }  // namespace
 
-Status InjectPrefetch::OptimizeAndCollectStats(Cluster* cluster,
-                                               const GrapplerItem& item,
-                                               GraphDef* output,
-                                               OptimizationStats* stats) {
+absl::Status InjectPrefetch::OptimizeAndCollectStats(Cluster* cluster,
+                                                     const GrapplerItem& item,
+                                                     GraphDef* output,
+                                                     OptimizationStats* stats) {
   *output = item.graph;
   if (!autotune_) {
     VLOG(1) << "The optimization inject_prefetch is not applied if autotune is "
@@ -96,9 +96,9 @@ Status InjectPrefetch::OptimizeAndCollectStats(Cluster* cluster,
   }
 
   if (item.fetch.size() != 1) {
-    return errors::InvalidArgument(
-        "Expected only one fetch node but there were ", item.fetch.size(), ": ",
-        absl::StrJoin(item.fetch, ", "));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected only one fetch node but there were ",
+                     item.fetch.size(), ": ", absl::StrJoin(item.fetch, ", ")));
   }
 
   NodeDef* sink_node = graph.GetNode(item.fetch.at(0));
@@ -110,7 +110,7 @@ Status InjectPrefetch::OptimizeAndCollectStats(Cluster* cluster,
   // Insert `prefetch(AUTOTUNE)` after the last node.
   NodeDef prefetch_node;
   graph_utils::SetUniqueGraphNodeName(
-      strings::StrCat("inject/prefetch_", last_node->name()), graph.graph(),
+      absl::StrCat("inject/prefetch_", last_node->name()), graph.graph(),
       &prefetch_node);
   prefetch_node.set_op(kPrefetchDataset);
   // `input_dataset` input

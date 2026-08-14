@@ -12,6 +12,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <cassert>
+#include <memory>
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -156,8 +159,8 @@ class InsertFallbackTensorCopy
     assert(!result_types.empty());
 
     // Create the tfrt_fallback_async.copy_if_small kernel.
-    auto copy_op = builder.create<tfrt::fallback_async::CopyIfSmallOp>(
-        loc, result_types, value);
+    auto copy_op = tfrt::fallback_async::CopyIfSmallOp::create(
+        builder, loc, result_types, value);
 
     // Finally, replaces all uses with the new value.
     for (int i = 0; i < copies.size(); ++i) {

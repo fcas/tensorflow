@@ -17,8 +17,11 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -26,12 +29,15 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "fp16.h"  // from @FP16
-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "flatbuffers/buffer.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
+#include "flatbuffers/string.h"  // from @flatbuffers
+#include "tensorflow/compiler/mlir/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/core/interpreter_builder.h"
 #include "tensorflow/lite/core/kernels/register.h"
-#include "tensorflow/lite/core/model.h"
 #include "tensorflow/lite/delegates/xnnpack/test_util.h"
 #include "tensorflow/lite/interpreter.h"
-#include "tensorflow/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/profiling/buffered_profiler.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
@@ -87,6 +93,7 @@ void BinaryElementwiseTester::Test(tflite::BuiltinOperator binary_op,
       input2_distribution = std::uniform_real_distribution<float>(0.1f, 1.0f);
       break;
     case BuiltinOperator_MUL:
+    case BuiltinOperator_PRELU:
       input1_distribution = std::uniform_real_distribution<float>(-5.0f, 5.0f);
       input2_distribution = std::uniform_real_distribution<float>(-5.0f, 5.0f);
       break;
@@ -131,6 +138,12 @@ void BinaryElementwiseTester::Test(tflite::BuiltinOperator binary_op,
   ASSERT_EQ(delegate_interpreter->AllocateTensors(), kTfLiteOk);
   ASSERT_EQ(default_interpreter->AllocateTensors(), kTfLiteOk);
 
+  std::unique_ptr<::tflite::profiling::BufferedProfiler> profiler;
+  if (yield_fp16_precision_) {
+    profiler = std::make_unique<::tflite::profiling::BufferedProfiler>(1024);
+    delegate_interpreter->SetProfiler(profiler.get());
+  }
+
   ASSERT_EQ(delegate_interpreter->ModifyGraphWithDelegate(delegate), kTfLiteOk);
 
   if (!Input1Static()) {
@@ -157,8 +170,18 @@ void BinaryElementwiseTester::Test(tflite::BuiltinOperator binary_op,
                 xnnpack_input2_data);
   }
 
+  if (profiler) {
+    profiler->StartProfiling();
+  }
+
   ASSERT_EQ(default_interpreter->Invoke(), kTfLiteOk);
   ASSERT_EQ(delegate_interpreter->Invoke(), kTfLiteOk);
+
+  if (profiler) {
+    profiler->StopProfiling();
+    EXPECT_TRUE(HasConvertNode(profiler.get()))
+        << "Expected Convert nodes in FP16 rewrite";
+  }
 
   float* default_output_data =
       default_interpreter->typed_output_tensor<float>(0);
@@ -166,9 +189,16 @@ void BinaryElementwiseTester::Test(tflite::BuiltinOperator binary_op,
       delegate_interpreter->typed_output_tensor<float>(0);
 
   for (size_t i = 0; i < ComputeSize(OutputShape()); i++) {
-    ASSERT_NEAR(default_output_data[i], xnnpack_output_data[i],
-                std::numeric_limits<float>::epsilon() *
-                    std::max(std::abs(default_output_data[i]) * 2.0f, 1.0f));
+    float tolerance = std::numeric_limits<float>::epsilon() *
+                      std::max(std::abs(default_output_data[i]) * 2.0f, 1.0f);
+    if (absolute_tolerance_ > 0.0f) {
+      tolerance = std::max(tolerance, absolute_tolerance_);
+    }
+    if (relative_tolerance_ > 0.0f) {
+      tolerance = std::max(
+          tolerance, relative_tolerance_ * std::abs(default_output_data[i]));
+    }
+    ASSERT_NEAR(default_output_data[i], xnnpack_output_data[i], tolerance);
   }
 }
 

@@ -1,4 +1,18 @@
-// RUN: stablehlo-quant-opt %s -split-input-file -stablehlo-quantize | FileCheck %s
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+// RUN: stablehlo-quant-opt %s -split-input-file -tf-stablehlo-quantize | FileCheck %s
 
 // Test that hybrid quantized dot_general is produced when q/dq pair only exists
 // for weight.
@@ -6,8 +20,8 @@
 module attributes {tf_saved_model.semantics} {
   func.func private @quantize_dot_general_fn(%arg0: tensor<1x2xf32>) -> tensor<1x3xf32> attributes {tf._original_func_name = "main_0"} {
     %cst = stablehlo.constant dense<3.000000e-01> : tensor<2x3xf32>
-    %0 = "quantfork.qcast"(%cst) : (tensor<2x3xf32>) -> tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>
-    %1 = "quantfork.dcast"(%0) : (tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>) -> tensor<2x3xf32>
+    %0 = "quantization.qcast"(%cst) : (tensor<2x3xf32>) -> tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>
+    %1 = "quantization.dcast"(%0) : (tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>) -> tensor<2x3xf32>
     %2 = "tf.XlaCallModule"(%arg0, %1) <{Sout = [#tf_type.shape<1x3>], dim_args_spec = [], disabled_checks = [], has_token_input_output = false, module = "", platforms = [], version = 5 : i64}> {_entry_function = @composite_dot_general_fn, _original_entry_function = "composite_dot_general_fn", _quantization_method = "weight_only_ptq { }", _stablehlo_module_attrs = {}, _tfl_quant_trait = "fully_quantizable", device = ""} : (tensor<1x2xf32>, tensor<2x3xf32>) -> tensor<1x3xf32>
     return %2 : tensor<1x3xf32>
   }
@@ -21,7 +35,7 @@ module attributes {tf_saved_model.semantics} {
 // CHECK-LABEL: quantize_dot_general_fn
 // CHECK-SAME: %[[ARG0:.+]]: tensor<1x2xf32>
 // CHECK: %[[CST:.+]] = stablehlo.constant dense<3.000000e-01> : tensor<2x3xf32>
-// CHECK: %[[Q:.+]] = "quantfork.qcast"(%[[CST]]) : (tensor<2x3xf32>) -> tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>
+// CHECK: %[[Q:.+]] = "quantization.qcast"(%[[CST]]) : (tensor<2x3xf32>) -> tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>
 // CHECK: %[[CALL:.+]] = call @quantized_dot_general_fn(%[[ARG0]], %[[Q]])
 // CHECK-SAME: {_quantization_method = "weight_only_ptq { }"} : (tensor<1x2xf32>, tensor<2x3x!quant.uniform<i8:f32, 6.000000e-03>>) -> tensor<1x3xf32>
 // CHECK: return %[[CALL]]
@@ -40,8 +54,8 @@ module attributes {tf_saved_model.semantics} {
 module attributes {tf_saved_model.semantics} {
   func.func private @quantize_conv_fn(%arg0: tensor<1x3x4x3xf32>) -> tensor<1x3x4x2xf32> attributes {tf._original_func_name = "main_0"} {
     %cst = stablehlo.constant dense<3.000000e-01> : tensor<2x3x3x2xf32>
-    %0 = "quantfork.qcast"(%cst) : (tensor<2x3x3x2xf32>) -> tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>
-    %1 = "quantfork.dcast"(%0) : (tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>) -> tensor<2x3x3x2xf32>
+    %0 = "quantization.qcast"(%cst) : (tensor<2x3x3x2xf32>) -> tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>
+    %1 = "quantization.dcast"(%0) : (tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>) -> tensor<2x3x3x2xf32>
     %2 = "tf.XlaCallModule"(%arg0, %1) <{Sout = [#tf_type.shape<1x3x4x2>], dim_args_spec = [], disabled_checks = [], has_token_input_output = false, module = "", platforms = [], version = 5 : i64}> {_entry_function = @composite_conv_fn, _original_entry_function = "composite_conv_fn", _quantization_method = "weight_only_ptq { }", _stablehlo_module_attrs = {}, _tfl_quant_trait = "fully_quantizable", device = ""} : (tensor<1x3x4x3xf32>, tensor<2x3x3x2xf32>) -> tensor<1x3x4x2xf32>
     return %2 : tensor<1x3x4x2xf32>
   }
@@ -55,7 +69,7 @@ module attributes {tf_saved_model.semantics} {
 // CHECK-LABEL: quantize_conv_fn
 // CHECK-SAME: %[[ARG0:.+]]: tensor<1x3x4x3xf32>
 // CHECK: %[[CST:.+]] = stablehlo.constant dense<3.000000e-01> : tensor<2x3x3x2xf32>
-// CHECK: %[[Q:.+]] = "quantfork.qcast"(%[[CST]]) : (tensor<2x3x3x2xf32>) -> tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>
+// CHECK: %[[Q:.+]] = "quantization.qcast"(%[[CST]]) : (tensor<2x3x3x2xf32>) -> tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>
 // CHECK: %[[CALL:.+]] = call @quantized_conv_fn(%[[ARG0]], %[[Q]]) {_quantization_method = "weight_only_ptq { }"} : (tensor<1x3x4x3xf32>, tensor<2x3x3x2x!quant.uniform<i8:f32, 6.000000e-03:-128>>) -> tensor<1x3x4x2xf32>
 // CHECK: return %[[CALL]]
 

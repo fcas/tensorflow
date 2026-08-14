@@ -165,6 +165,7 @@ from tensorflow.lite.testing.op_tests.sign import make_sign_tests
 from tensorflow.lite.testing.op_tests.slice import make_slice_tests
 from tensorflow.lite.testing.op_tests.softmax import make_softmax_tests
 from tensorflow.lite.testing.op_tests.softplus import make_softplus_tests
+from tensorflow.lite.testing.op_tests.softsign import make_softsign_tests
 from tensorflow.lite.testing.op_tests.space_to_batch_nd import make_space_to_batch_nd_tests
 from tensorflow.lite.testing.op_tests.space_to_depth import make_space_to_depth_tests
 from tensorflow.lite.testing.op_tests.sparse_to_dense import make_sparse_to_dense_tests
@@ -284,6 +285,8 @@ class Options:
     self.unfold_batchmatmul = False
     # Experimental low bit options
     self.experimental_low_bit_qat = False
+    # Whether to enable experimental unsafe single batch rank reduction.
+    self.experimental_unsafe_single_batch_rank_reduction = False
 
 
 def _prepare_dir(options):

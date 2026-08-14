@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary", "tf_cc_test")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
@@ -9,6 +24,10 @@ package(
     ],
     licenses = ["notice"],
 )
+
+exports_files(glob([
+    "testdata/*.bin",
+]))
 
 package_group(
     name = "friends",
@@ -31,14 +50,15 @@ cc_library(
         "//tensorflow/compiler/mlir/lite:flatbuffer_translate_lib",
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
         "//tensorflow/compiler/mlir/lite:tf_tfl_passes",
+        "//tensorflow/compiler/mlir/lite/debug",
+        "//tensorflow/compiler/mlir/lite/debug:debug_options_proto_cc",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
-        "//tensorflow/compiler/mlir/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/lite:framework",
-        "//tensorflow/lite/c:c_api_types",
-        "//tensorflow/lite/core/api",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -60,14 +80,13 @@ cc_library(
         "//tensorflow/compiler/mlir/lite:flatbuffer_translate_lib",
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
         "//tensorflow/compiler/mlir/lite:tf_tfl_passes",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
-        "//tensorflow/compiler/mlir/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/lite:framework",
-        "//tensorflow/lite/c:c_api_types",
-        "//tensorflow/lite/core/api",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@flatbuffers//:runtime_cc",
         "@llvm-project//llvm:Support",
@@ -84,14 +103,14 @@ cc_library(
     ],
     hdrs = [
         "tfl_to_std.h",
-        "//tensorflow/compiler/mlir/quantization/common/quantization_lib:quantization_utils.h",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_utils.h",
     ],
     deps = [
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/compiler/mlir/lite/quantization/ir:QuantOps",
         "//tensorflow/compiler/mlir/quantization/common/ir:QuantOps",
-        "//tensorflow/compiler/mlir/quantization/common/quantization_lib",
-        "//tensorflow/compiler/mlir/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -114,8 +133,7 @@ tf_cc_binary(
     deps = [
         ":quantize_model",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
-        "//tensorflow/lite:framework",
-        "//tensorflow/lite/c:c_api_types",
+        "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -124,39 +142,39 @@ tf_cc_test(
     name = "quantize_model_test",
     srcs = ["quantize_model_test.cc"],
     args = [
-        "--test_model_file=$(location //tensorflow/lite/tools/optimize:testdata/single_conv_weights_min_0_max_plus_10.bin)",
+        "--test_model_file=$(location //tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_conv_weights_min_0_max_plus_10.bin)",
     ],
     data = [
-        "//tensorflow/lite/tools/optimize:testdata/add_with_const_input.bin",
-        "//tensorflow/lite/tools/optimize:testdata/argmax.bin",
-        "//tensorflow/lite/tools/optimize:testdata/broadcast_to.bin",
-        "//tensorflow/lite/tools/optimize:testdata/concat.bin",
-        "//tensorflow/lite/tools/optimize:testdata/fc.bin",
-        "//tensorflow/lite/tools/optimize:testdata/fc_qat.bin",
-        "//tensorflow/lite/tools/optimize:testdata/gather_nd.bin",
-        "//tensorflow/lite/tools/optimize:testdata/lstm_calibrated.bin",
-        "//tensorflow/lite/tools/optimize:testdata/lstm_calibrated2.bin",
-        "//tensorflow/lite/tools/optimize:testdata/lstm_quantized.bin",
-        "//tensorflow/lite/tools/optimize:testdata/lstm_quantized2.bin",
-        "//tensorflow/lite/tools/optimize:testdata/maximum.bin",
-        "//tensorflow/lite/tools/optimize:testdata/minimum.bin",
-        "//tensorflow/lite/tools/optimize:testdata/mixed.bin",
-        "//tensorflow/lite/tools/optimize:testdata/mixed16x8.bin",
-        "//tensorflow/lite/tools/optimize:testdata/multi_input_add_reshape.bin",
-        "//tensorflow/lite/tools/optimize:testdata/pack.bin",
-        "//tensorflow/lite/tools/optimize:testdata/single_avg_pool_min_minus_5_max_plus_5.bin",
-        "//tensorflow/lite/tools/optimize:testdata/single_conv_no_bias.bin",
-        "//tensorflow/lite/tools/optimize:testdata/single_conv_weights_min_0_max_plus_10.bin",
-        "//tensorflow/lite/tools/optimize:testdata/single_conv_weights_min_minus_127_max_plus_127.bin",
-        "//tensorflow/lite/tools/optimize:testdata/single_softmax_min_minus_5_max_plus_5.bin",
-        "//tensorflow/lite/tools/optimize:testdata/split.bin",
-        "//tensorflow/lite/tools/optimize:testdata/svdf_calibrated.bin",
-        "//tensorflow/lite/tools/optimize:testdata/svdf_quantized.bin",
-        "//tensorflow/lite/tools/optimize:testdata/transpose.bin",
-        "//tensorflow/lite/tools/optimize:testdata/unidirectional_sequence_lstm_calibrated.bin",
-        "//tensorflow/lite/tools/optimize:testdata/unidirectional_sequence_lstm_quantized.bin",
-        "//tensorflow/lite/tools/optimize:testdata/unpack.bin",
-        "//tensorflow/lite/tools/optimize:testdata/where.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/add_with_const_input.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/argmax.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/broadcast_to.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/concat.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/fc.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/fc_qat.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/gather_nd.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/lstm_calibrated.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/lstm_calibrated2.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/lstm_quantized.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/lstm_quantized2.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/maximum.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/minimum.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/mixed.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/mixed16x8.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/multi_input_add_reshape.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/pack.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_avg_pool_min_minus_5_max_plus_5.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_conv_no_bias.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_conv_weights_min_0_max_plus_10.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_conv_weights_min_minus_127_max_plus_127.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_softmax_min_minus_5_max_plus_5.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/split.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/svdf_calibrated.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/svdf_quantized.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/transpose.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/unidirectional_sequence_lstm_calibrated.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/unidirectional_sequence_lstm_quantized.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/unpack.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/where.bin",
     ],
     tags = [
         "tflite_not_portable_android",
@@ -164,18 +182,17 @@ tf_cc_test(
     ],
     deps = [
         ":quantize_model",
+        ":test_util",
+        "//tensorflow/compiler/mlir/lite/core:absl_error_model_builder",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
+        "//tensorflow/compiler/mlir/lite/schema:schema_utils",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",
-        "//tensorflow/lite:framework",
-        "//tensorflow/lite:string",
-        "//tensorflow/lite/c:c_api_types",
-        "//tensorflow/lite/core/api:error_reporter",
-        "//tensorflow/lite/schema:schema_utils",
-        "//tensorflow/lite/tools/optimize:test_util",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
         "@flatbuffers",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -183,13 +200,13 @@ tf_cc_test(
     name = "quantize_weights_test",
     srcs = ["quantize_weights_test.cc"],
     args = [
-        "--test_model_file=$(location //tensorflow/lite/tools/optimize:testdata/single_conv_weights_min_0_max_plus_10.bin)",
+        "--test_model_file=$(location //tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_conv_weights_min_0_max_plus_10.bin)",
     ],
     data = [
-        "//tensorflow/lite/tools/optimize:testdata/custom_op.bin",
-        "//tensorflow/lite/tools/optimize:testdata/quantized_with_gather.bin",
-        "//tensorflow/lite/tools/optimize:testdata/single_conv_weights_min_0_max_plus_10.bin",
-        "//tensorflow/lite/tools/optimize:testdata/weight_shared_between_convs.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/custom_op.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/quantized_with_gather.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/single_conv_weights_min_0_max_plus_10.bin",
+        "//tensorflow/compiler/mlir/lite/quantization/lite:testdata/weight_shared_between_convs.bin",
     ],
     tags = [
         # TODO(b/327796566): re-enable after the bug is fixed
@@ -202,15 +219,28 @@ tf_cc_test(
     ],
     deps = [
         ":quantize_weights",
+        ":test_util",
+        "//tensorflow/compiler/mlir/lite/core:absl_error_model_builder",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
+        "//tensorflow/compiler/mlir/lite/schema:schema_utils",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",
-        "//tensorflow/lite:framework",
-        "//tensorflow/lite/c:c_api_types",
-        "//tensorflow/lite/schema:schema_utils",
-        "//tensorflow/lite/tools/optimize:test_util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
         "@flatbuffers",
-        "@local_tsl//tsl/platform:logging",
+        "@xla//xla/tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "test_util",
+    testonly = 1,
+    srcs = ["test_util.cc"],
+    hdrs = ["test_util.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tensorflow/compiler/mlir/lite/core/api:error_reporter",
+        "@com_google_googletest//:gtest",
     ],
 )

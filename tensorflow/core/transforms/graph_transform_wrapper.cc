@@ -16,8 +16,9 @@ limitations under the License.
 #include "tensorflow/core/transforms/graph_transform_wrapper.h"
 
 #include <initializer_list>
+#include <memory>
 
-#include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
@@ -30,7 +31,7 @@ limitations under the License.
 namespace mlir {
 namespace tfg {
 
-tensorflow::Status RunTransformOnGraph(
+absl::Status RunTransformOnGraph(
     tensorflow::Graph* graph,
     const std::initializer_list<
         llvm::function_ref<std::unique_ptr<mlir::Pass>()>>& passes,
@@ -48,16 +49,29 @@ tensorflow::Status RunTransformOnGraph(
   mlir::StatusScopedDiagnosticHandler error_handler(&context);
   if (failed(pm.run(*module)))
     return error_handler.Combine(
-        tensorflow::errors::InvalidArgument("MLIR Graph Optimizer failed: "));
+        absl::InvalidArgumentError("MLIR Graph Optimizer failed: "));
 
   // Export and replace Graph.
   tensorflow::GraphDef graphdef;
   TF_RETURN_WITH_CONTEXT_IF_ERROR(ConvertToGraphDef(*module, &graphdef),
                                   "when exporting MLIR module to GraphDef");
+
+  tensorflow::Graph temp_graph(graph->flib_def());
+  tensorflow::GraphConstructorOptions opts;
+  absl::Status s = ConvertGraphDefToGraph(opts, graphdef, &temp_graph);
+  if (!s.ok()) {
+    return s;
+  }
+
   graph->Clear();
   graph->mutable_flib_def()->Clear();
-  tensorflow::GraphConstructorOptions opts;
-  return ConvertGraphDefToGraph(opts, graphdef, graph);
+  absl::Status library_status =
+      graph->mutable_flib_def()->AddLibrary(graphdef.library());
+  if (!library_status.ok()) {
+    return library_status;
+  }
+  graph->Copy(temp_graph);
+  return absl::OkStatus();
 }
 
 }  // namespace tfg

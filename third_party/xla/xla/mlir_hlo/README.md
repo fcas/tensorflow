@@ -1,5 +1,9 @@
 # MLIR-HLO: A Standalone "HLO" MLIR-based Compiler
 
+> Note:
+> [this project is deprecated](https://groups.google.com/a/openxla.org/g/openxla-discuss/c/Mppuv1Edv1s),
+> and will be removed in the future.
+
 The code here exists in two places:
 
 *   https://github.com/openxla/xla/tree/main/xla/mlir_hlo:
@@ -167,7 +171,7 @@ The latter could be implemented by adding the op and a legalization of the op to
 other known ops, from which a helper function can get generated that could be
 used as regular.
 
-Status: Exists but need to be cleaned up.
+absl::Status: Exists but need to be cleaned up.
 
 ### Meta HLO Dialect `mhlo`
 
@@ -210,7 +214,7 @@ intermediate optimization dialect/format. It is also where we can experiment
 cheaply with new ops. This format will be where the representation would differ
 from existing endpoints.
 
-Status: Exists but need to be cleaned up and evolved, in particular with respect
+absl::Status: Exists but need to be cleaned up and evolved, in particular with respect
 to supporting dynamic shapes.
 
 MHLO differs from XLA HLO op set in multiple ways, including:

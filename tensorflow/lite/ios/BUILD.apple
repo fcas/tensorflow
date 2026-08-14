@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # TensorFlow Lite for iOS
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
@@ -96,6 +111,7 @@ strip_common_include_path_prefix(
         "//tensorflow/lite/core/c:c_api_experimental.h",
         "//tensorflow/lite/core/c:c_api_opaque.h",
         "//tensorflow/lite/core/c:c_api_types.h",
+        "//tensorflow/compiler/mlir/lite/core/c:tflite_types.h",
         "//tensorflow/lite/core/c:common.h",
         "//tensorflow/lite/core/c:operator.h",
         "//tensorflow/lite/core/async/c:types.h",
@@ -127,6 +143,7 @@ tflite_ios_framework(
         ":operator.h",
         ":profiler.h",
         ":telemetry_setting.h",
+        ":tflite_types.h",
         ":types.h",
         ":xnnpack_delegate.h",
     ],
@@ -181,6 +198,7 @@ ios_static_framework(
         ":operator.h",
         ":profiler.h",
         ":telemetry_setting.h",
+        ":tflite_types.h",
         ":types.h",
         ":xnnpack_delegate.h",
     ],
@@ -255,6 +273,7 @@ tflite_ios_framework(
 cc_library(
     name = "tensorflow_lite_c",
     hdrs = [
+        "//tensorflow/compiler/mlir/lite/core/c:tflite_types.h",
         "//tensorflow/lite:builtin_ops.h",
         "//tensorflow/lite/core/async/c:types.h",
         "//tensorflow/lite/core/c:c_api.h",
@@ -272,6 +291,7 @@ cc_library(
         "swift_module=TensorFlowLiteC",
     ],
     deps = [
+        "//tensorflow/compiler/mlir/lite/core/c:tflite_types",
         "//tensorflow/lite:builtin_ops",
         "//tensorflow/lite/core/async/c:types",
         "//tensorflow/lite/core/c:c_api",

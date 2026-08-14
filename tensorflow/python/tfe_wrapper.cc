@@ -1,6 +1,6 @@
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");;
+Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
@@ -24,10 +24,10 @@ limitations under the License.
 // clang-format on
 
 #include "Python.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "include/dlpack/dlpack.h"  // from @dlpack
 #include "pybind11/chrono.h"  // from @pybind11
 #include "pybind11/complex.h"  // from @pybind11
 #include "pybind11/functional.h"  // from @pybind11
@@ -110,11 +110,12 @@ namespace tensorflow {
 // pybind11 custom type caster.
 
 TFE_Context* InputTFE_Context(const py::handle& ctx) {
-  return static_cast<TFE_Context*>(PyCapsule_GetPointer(ctx.ptr(), nullptr));
+  return static_cast<TFE_Context*>(
+      PyCapsule_GetPointer(ctx.ptr(), "TFE_Context"));
 }
 
 PyObject* OutputTFE_Context(TFE_Context* context) {
-  return PyCapsule_New(context, nullptr, TFE_DeleteContextCapsule);
+  return PyCapsule_New(context, "TFE_Context", TFE_DeleteContextCapsule);
 }
 
 TF_Buffer* ProtoStringToTFBuffer(PyObject* input) {
@@ -168,7 +169,7 @@ TFE_InputTensorHandles InputTFE_InputTensorHandles(
           // This is a subclass of EagerTensor that we don't support.
           PyErr_Clear();
           tensorflow::ThrowTypeError(
-              tensorflow::strings::StrCat(
+              absl::StrCat(
                   "Saw an object that is an instance of a strict subclass of "
                   "EagerTensor, which is not supported.  Item ",
                   i, " is type: ", elem->ob_type->tp_name)
@@ -236,10 +237,9 @@ TFE_InputTensorHandles InputTFE_InputTensorHandles(
                 .c_str());
       } else {
         tensorflow::ThrowTypeError(
-            tensorflow::strings::StrCat(
-                "provided list of inputs contains objects other "
-                "than 'EagerTensor'. Item ",
-                i, " is type: ", elem->ob_type->tp_name)
+            absl::StrCat("provided list of inputs contains objects other "
+                         "than 'EagerTensor'. Item ",
+                         i, " is type: ", elem->ob_type->tp_name)
                 .c_str());
       }
     }
@@ -271,16 +271,14 @@ TFE_OutputTensorHandles InputTFE_OutputTensorHandles(
 #endif
   // PyLong_AsLong might throw an error if an overflow occurs.
   if (PyErr_Occurred()) {
-    PyErr_SetString(PyExc_ValueError, tensorflow::strings::StrCat(
-                                          "Number of outputs is too big: ", sz)
-                                          .c_str());
+    PyErr_SetString(PyExc_ValueError,
+                    absl::StrCat("Number of outputs is too big: ", sz).c_str());
     throw py::error_already_set();
   }
   // We can't handle more than int32 sizes for number of outputs.
   if (static_cast<long>(static_cast<int32_t>(sz)) != sz) {  // NOLINT
-    PyErr_SetString(PyExc_ValueError, tensorflow::strings::StrCat(
-                                          "Number of outputs is too big: ", sz)
-                                          .c_str());
+    PyErr_SetString(PyExc_ValueError,
+                    absl::StrCat("Number of outputs is too big: ", sz).c_str());
     throw py::error_already_set();
   }
   if (sz > 0) {
@@ -380,9 +378,8 @@ py::object TFE_Py_ExecuteCancelable_wrapper(
 }
 
 static py::object TF_ListPhysicalDevices() {
-  std::vector<string> devices;
-  tensorflow::Status s =
-      tensorflow::DeviceFactory::ListAllPhysicalDevices(&devices);
+  std::vector<std::string> devices;
+  absl::Status s = tensorflow::DeviceFactory::ListAllPhysicalDevices(&devices);
   MaybeRaiseRegisteredFromStatus(s);
   PyObject* result = PyList_New(devices.size());
   int i = 0;
@@ -395,8 +392,8 @@ static py::object TF_ListPhysicalDevices() {
 }
 
 static py::object TF_ListPluggablePhysicalDevices() {
-  std::vector<string> devices;
-  tensorflow::Status s =
+  std::vector<std::string> devices;
+  absl::Status s =
       tensorflow::DeviceFactory::ListPluggablePhysicalDevices(&devices);
   MaybeRaiseRegisteredFromStatus(s);
   Safe_PyObjectPtr result(PyList_New(devices.size()));
@@ -409,10 +406,11 @@ static py::object TF_ListPluggablePhysicalDevices() {
   return tensorflow::PyoOrThrow(result.release());
 }
 
-static std::unordered_map<string, string> TF_GetDeviceDetails(int index) {
+static std::unordered_map<std::string, std::string> TF_GetDeviceDetails(
+    int index) {
   tensorflow::Safe_TF_StatusPtr status = tensorflow::make_safe(TF_NewStatus());
-  std::unordered_map<string, string> device_details;
-  tensorflow::Status s =
+  std::unordered_map<std::string, std::string> device_details;
+  absl::Status s =
       tensorflow::DeviceFactory::GetAnyDeviceDetails(index, &device_details);
   tensorflow::Set_TF_Status_from_Status(status.get(), s);
   MaybeRaiseRegisteredFromTFStatus(status.get());
@@ -459,7 +457,11 @@ static py::bytes TFE_GetCompilerIr(py::handle& ctx,
 
   std::string s_stage(stage);
   IrExportStage selected_stage = [&] {
-    if (s_stage == "hlo") {
+    if (s_stage == "stablehlo") {
+      return IrExportStage::STABLEHLO;
+    } else if (s_stage == "stablehlo_serialized") {
+      return IrExportStage::STABLEHLO_SERIALIZED;
+    } else if (s_stage == "hlo") {
       return IrExportStage::HLO;
     } else if (s_stage == "hlo_no_metadata") {
       return IrExportStage::HLO_NO_METADATA;
@@ -494,9 +496,8 @@ static py::bytes TFE_GetCompilerIr(py::handle& ctx,
       return CompilerArgSource::CONCRETE_INPUT;
     } else {
       ThrowValueError(
-          tensorflow::strings::StrCat(
-              "Only accept tf.TensorSpec or tf.Tensor but got type ",
-              elem->ob_type->tp_name)
+          absl::StrCat("Only accept tf.TensorSpec or tf.Tensor but got type ",
+                       elem->ob_type->tp_name)
               .c_str());
     }
   }();
@@ -1126,7 +1127,7 @@ PYBIND11_MODULE(_pywrap_tfe, m) {
     tensorflow::Safe_TF_StatusPtr status =
         tensorflow::make_safe(TF_NewStatus());
     if (job_names.size() != task_nums.size()) {
-      status->status = tensorflow::errors::InvalidArgument(
+      status->status = absl::InvalidArgumentError(
           "The size of job names is not equal to the size of task nums.");
       tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
     }
@@ -1154,10 +1155,10 @@ PYBIND11_MODULE(_pywrap_tfe, m) {
              tensorflow::errors::GetPayloads(state[i].status)) {
           payloads[payload.first.c_str()] = payload.second;
         }
-        auto exception_class = py::reinterpret_steal<py::object>(
+        auto exception_class = py::reinterpret_borrow<py::object>(
             tensorflow::PyExceptionRegistry::Lookup(code));
         if (!exception_class) {
-          status->status = tensorflow::errors::Internal(absl::StrCat(
+          status->status = absl::InternalError(absl::StrCat(
               "Fail to find the corresponding exception class for ", code));
           tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
         }
@@ -1824,13 +1825,32 @@ PYBIND11_MODULE(_pywrap_tfe, m) {
         py::return_value_policy::reference);
 
   // DLPack functions
+  m.def("TFE_DlpackDevice", [](py::handle& o) {
+    PyObject* eager_tensor_pyobject_ptr = o.ptr();
+    tensorflow::Safe_TF_StatusPtr status =
+        tensorflow::make_safe(TF_NewStatus());
+
+    if (!EagerTensor_CheckExact(eager_tensor_pyobject_ptr)) {
+      status->status = absl::InvalidArgumentError(
+          "The argument to `to_dlpack` must be a TF tensor, not Python object");
+      tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
+    }
+
+    TFE_TensorHandle* thandle = EagerTensor_Handle(eager_tensor_pyobject_ptr);
+    auto dl_device = std::unique_ptr<DLDevice>(static_cast<DLDevice*>(
+        tensorflow::TFE_GetDLDevice(thandle, status.get())));
+    tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
+    return py::make_tuple(static_cast<int32_t>(dl_device->device_type),
+                          dl_device->device_id);
+  });
+
   m.def("TFE_ToDlpackCapsule", [](py::handle& o) {
     PyObject* eager_tensor_pyobject_ptr = o.ptr();
     tensorflow::Safe_TF_StatusPtr status =
         tensorflow::make_safe(TF_NewStatus());
 
     if (!EagerTensor_CheckExact(eager_tensor_pyobject_ptr)) {
-      status->status = tensorflow::errors::InvalidArgument(
+      status->status = absl::InvalidArgumentError(
           "The argument to `to_dlpack` must be a TF tensor, not Python object");
       tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
     }
@@ -1859,10 +1879,10 @@ PYBIND11_MODULE(_pywrap_tfe, m) {
         tensorflow::make_safe(TF_NewStatus());
     if (absl::string_view(pycapsule.name()) !=
         tensorflow::kDlTensorCapsuleName) {
-      status->status = tensorflow::errors::InvalidArgument(
+      status->status = absl::InvalidArgumentError(absl::StrCat(
           "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
           "Note that a DLPack tensor may be consumed at most once.",
-          absl::string_view(pycapsule.name()));
+          absl::string_view(pycapsule.name())));
       tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
     }
 
@@ -1891,18 +1911,18 @@ PYBIND11_MODULE(_pywrap_tfe, m) {
     tensorflow::Safe_TF_StatusPtr status =
         tensorflow::make_safe(TF_NewStatus());
     if (absl::string_view(device.name()) != "TFE_CustomDevice") {
-      status->status = tensorflow::errors::InvalidArgument(
+      status->status = absl::InvalidArgumentError(absl::StrCat(
           "Expected a capsule named 'TFE_CustomDevice' for the `device` "
           "argument, got ",
-          absl::string_view(device.name()));
+          absl::string_view(device.name())));
       tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
     }
     if (absl::string_view(device_info.name()) !=
         "TFE_CustomDevice_DeviceInfo") {
-      status->status = tensorflow::errors::InvalidArgument(
+      status->status = absl::InvalidArgumentError(absl::StrCat(
           "Expected a capsule named 'TFE_CustomDevice_DeviceInfo' for "
           "the `device_info` argument, got ",
-          absl::string_view(device_info.name()));
+          absl::string_view(device_info.name())));
       tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
     }
     // TFE_RegisterCustomDevice takes ownership

@@ -16,6 +16,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tfrt/transforms/corert_converter.h"
 
 #include <optional>
+#include <string>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
@@ -25,14 +26,18 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Transforms/Passes.h"
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/Interfaces/DerivedAttributeOpInterface.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/attr_lowering_utils.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/utils.h"
 #include "tensorflow/core/util/device_name_utils.h"
 #include "tfrt/basic_kernels/opdefs/basic_kernels.h"  // from @tf_runtime
-#include "tfrt/core_runtime/opdefs/attributes.h"  // from @tf_runtime
+#include "tfrt/basic_kernels/opdefs/types.h"  // from @tf_runtime
 #include "tfrt/core_runtime/opdefs/core_runtime.h"  // from @tf_runtime
 #include "tfrt/core_runtime/opdefs/types.h"  // from @tf_runtime
 
@@ -144,8 +149,8 @@ mlir::Value CoreRTConverter::ConvertOpHandler(
 
   func::FuncOp func_op = op->getParentOfType<mlir::func::FuncOp>();
   mlir::Value in_chain = func_op.getArgument(0);
-  auto get_op_handler_op = rewriter->create<tfrt::corert::GetOpHandler>(
-      block->getParent()->getLoc(), op_handler_type(), in_chain,
+  auto get_op_handler_op = tfrt::corert::GetOpHandler::create(
+      *rewriter, block->getParent()->getLoc(), op_handler_type(), in_chain,
       op_handler_name);
   op_handler_by_name_[op_handler_name] = get_op_handler_op.getResult();
   return get_op_handler_op.getResult();
@@ -203,8 +208,8 @@ mlir::Value CoreRTConverter::GetLocalSideEffectChain(
   // kernel and return the merged chain.
   ConversionPatternRewriter::InsertionGuard insertion_guard(*rewriter);
   rewriter->setInsertionPoint(op);
-  return rewriter->create<tfrt::compiler::MergeChainsOp>(op->getLoc(),
-                                                         chain_type(), chains);
+  return tfrt::compiler::MergeChainsOp::create(*rewriter, op->getLoc(),
+                                               chain_type(), chains);
 }
 
 mlir::Value CoreRTConverter::GetTaskHandle(

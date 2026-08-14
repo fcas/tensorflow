@@ -35,7 +35,7 @@ using mlir::Builder;
 using mlir::ShapedType;
 using mlir::Type;
 
-Status ConvertDataType(DataType dtype, Builder builder, Type* type) {
+absl::Status ConvertDataType(DataType dtype, Builder builder, Type* type) {
   switch (dtype) {
     case DT_HALF:
       *type = builder.getF16Type();
@@ -83,16 +83,33 @@ Status ConvertDataType(DataType dtype, Builder builder, Type* type) {
       *type = mlir::ComplexType::get(builder.getF64Type());
       return absl::OkStatus();
     case tensorflow::DT_FLOAT8_E4M3FN:
-      *type = builder.getFloat8E4M3FNType();
+      *type = builder.getType<mlir::Float8E4M3FNType>();
       return absl::OkStatus();
     case tensorflow::DT_FLOAT8_E5M2:
-      *type = builder.getFloat8E5M2Type();
+      *type = builder.getType<mlir::Float8E5M2Type>();
+      return absl::OkStatus();
+    case tensorflow::DT_FLOAT8_E4M3FNUZ:
+      *type = builder.getType<mlir::Float8E4M3FNUZType>();
+      return absl::OkStatus();
+    case tensorflow::DT_FLOAT8_E4M3B11FNUZ:
+      *type = builder.getType<mlir::Float8E4M3B11FNUZType>();
+      return absl::OkStatus();
+    case tensorflow::DT_FLOAT8_E5M2FNUZ:
+      *type = builder.getType<mlir::Float8E5M2FNUZType>();
       return absl::OkStatus();
     case DT_INT4:
-      *type = builder.getIntegerType(4, /*isSigned=*/true);
+      // build a **signless** integer type.
+      *type = builder.getIntegerType(4);
       return absl::OkStatus();
     case DT_UINT4:
       *type = builder.getIntegerType(4, /*isSigned=*/false);
+      return absl::OkStatus();
+    case DT_INT2:
+      // build a **signless** integer type.
+      *type = builder.getIntegerType(2);
+      return absl::OkStatus();
+    case DT_UINT2:
+      *type = builder.getIntegerType(2, /*isSigned=*/false);
       return absl::OkStatus();
 #define HANDLE_TF_TYPE(tftype, enumerant, name)             \
   case DT_##enumerant:                                      \
@@ -101,12 +118,12 @@ Status ConvertDataType(DataType dtype, Builder builder, Type* type) {
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.def"
 
     default:
-      return errors::Unimplemented(absl::StrCat(
+      return absl::UnimplementedError(absl::StrCat(
           "Converting DataType '", DataTypeString(dtype), "' to MLIR Type"));
   }
 }
 
-Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
+absl::Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
   if (type.isF16()) {
     *dtype = DT_HALF;
     return absl::OkStatus();
@@ -119,16 +136,28 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
   } else if (type.isBF16()) {
     *dtype = DT_BFLOAT16;
     return absl::OkStatus();
-  } else if (type.isFloat8E4M3FN()) {
+  } else if (llvm::isa<mlir::Float8E4M3FNType>(type)) {
     *dtype = DT_FLOAT8_E4M3FN;
     return absl::OkStatus();
-  } else if (type.isFloat8E5M2()) {
+  } else if (llvm::isa<mlir::Float8E5M2Type>(type)) {
     *dtype = DT_FLOAT8_E5M2;
+    return absl::OkStatus();
+  } else if (llvm::isa<mlir::Float8E4M3FNUZType>(type)) {
+    *dtype = DT_FLOAT8_E4M3FNUZ;
+    return absl::OkStatus();
+  } else if (llvm::isa<mlir::Float8E4M3B11FNUZType>(type)) {
+    *dtype = DT_FLOAT8_E4M3B11FNUZ;
+    return absl::OkStatus();
+  } else if (llvm::isa<mlir::Float8E5M2FNUZType>(type)) {
+    *dtype = DT_FLOAT8_E5M2FNUZ;
     return absl::OkStatus();
   } else if (auto itype = mlir::dyn_cast<mlir::IntegerType>(type)) {
     switch (itype.getWidth()) {
       case 1:
         *dtype = DT_BOOL;
+        return absl::OkStatus();
+      case 2:
+        *dtype = itype.isUnsigned() ? DT_UINT2 : DT_INT2;
         return absl::OkStatus();
       case 4:
         *dtype = itype.isUnsigned() ? DT_UINT4 : DT_INT4;
@@ -146,7 +175,7 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
         *dtype = itype.isUnsigned() ? DT_UINT64 : DT_INT64;
         return absl::OkStatus();
       default:
-        return errors::Unimplemented(
+        return absl::UnimplementedError(
             absl::StrCat("Converting ", debugString(type), " to DataType"));
     }
   } else if (auto complex_type = mlir::dyn_cast<mlir::ComplexType>(type)) {
@@ -158,23 +187,23 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
       *dtype = DT_COMPLEX128;
       return absl::OkStatus();
     }
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         absl::StrCat("Converting ", debugString(type), " to DataType"));
   }
 
-#define HANDLE_TF_TYPE(tftype, enumerant, name)  \
-  if (type.isa<mlir::tf_type::tftype##Type>()) { \
-    *dtype = DT_##enumerant;                     \
-    return OkStatus();                           \
+#define HANDLE_TF_TYPE(tftype, enumerant, name)       \
+  if (llvm::isa<mlir::tf_type::tftype##Type>(type)) { \
+    *dtype = DT_##enumerant;                          \
+    return OkStatus();                                \
   }
 // NOLINTNEXTLINE
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.def"
 
-  return errors::Unimplemented(
+  return absl::UnimplementedError(
       absl::StrCat("Converting ", debugString(type), " to DataType"));
 }
 
-Status ConvertToDataType(Type type, DataType* dtype) {
+absl::Status ConvertToDataType(Type type, DataType* dtype) {
   if (auto stype = mlir::dyn_cast<ShapedType>(type)) {
     TF_RETURN_IF_ERROR(
         ConvertScalarTypeToDataType(stype.getElementType(), dtype));
@@ -192,13 +221,13 @@ void ConvertToMlirShape(const TensorShape& input_shape,
   }
 }
 
-Status ConvertToMlirShape(const TensorShapeProto& input_shape,
-                          llvm::SmallVectorImpl<int64_t>* shape) {
+absl::Status ConvertToMlirShape(const TensorShapeProto& input_shape,
+                                llvm::SmallVectorImpl<int64_t>* shape) {
   shape->reserve(input_shape.dim_size());
   auto& dims = input_shape.dim();
   for (auto& d : dims) {
     if (d.size() > std::numeric_limits<int64_t>::max()) {
-      return errors::InvalidArgument("Shape element overflows");
+      return absl::InvalidArgumentError("Shape element overflows");
     }
     shape->push_back(d.size() == kTFDynamicSize ? ShapedType::kDynamic
                                                 : d.size());

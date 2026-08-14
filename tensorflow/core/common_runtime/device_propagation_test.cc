@@ -39,7 +39,7 @@ const char kTpu1[] = "/job:localhost/replica:0/task:0/device:TPU:1";
 const char kTpu2[] = "/job:localhost/replica:0/task:0/device:TPU:2";
 const char kGpu0[] = "/job:localhost/replica:0/task:0/device:GPU:0";
 
-bool IsTPUDevice(StringPiece device_name) {
+bool IsTPUDevice(absl::string_view device_name) {
   return absl::StrContains(device_name, "device:TPU:");
 }
 
@@ -55,9 +55,9 @@ absl::flat_hash_map<std::string, std::string> GetNodeNameDevices(
     if (node->IsSource() || node->IsSink()) {
       continue;
     }
-    const string& device = node->assigned_device_name().empty()
-                               ? node->requested_device()
-                               : node->assigned_device_name();
+    const std::string& device = node->assigned_device_name().empty()
+                                    ? node->requested_device()
+                                    : node->assigned_device_name();
     node_name_devices[node->name()] = device;
   }
   return node_name_devices;

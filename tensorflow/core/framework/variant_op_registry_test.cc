@@ -38,42 +38,44 @@ typedef Eigen::GpuDevice GPUDevice;
 namespace {
 
 struct VariantValue {
-  string TypeName() const { return "TEST VariantValue"; }
-  static Status CPUZerosLikeFn(OpKernelContext* ctx, const VariantValue& v,
-                               VariantValue* v_out) {
+  std::string TypeName() const { return "TEST VariantValue"; }
+  static absl::Status CPUZerosLikeFn(OpKernelContext* ctx,
+                                     const VariantValue& v,
+                                     VariantValue* v_out) {
     if (v.early_exit) {
-      return errors::InvalidArgument("early exit zeros_like!");
+      return absl::InvalidArgumentError("early exit zeros_like!");
     }
     v_out->value = 1;  // CPU
     return absl::OkStatus();
   }
-  static Status GPUZerosLikeFn(OpKernelContext* ctx, const VariantValue& v,
-                               VariantValue* v_out) {
+  static absl::Status GPUZerosLikeFn(OpKernelContext* ctx,
+                                     const VariantValue& v,
+                                     VariantValue* v_out) {
     if (v.early_exit) {
-      return errors::InvalidArgument("early exit zeros_like!");
+      return absl::InvalidArgumentError("early exit zeros_like!");
     }
     v_out->value = 2;  // GPU
     return absl::OkStatus();
   }
-  static Status CPUAddFn(OpKernelContext* ctx, const VariantValue& a,
-                         const VariantValue& b, VariantValue* out) {
+  static absl::Status CPUAddFn(OpKernelContext* ctx, const VariantValue& a,
+                               const VariantValue& b, VariantValue* out) {
     if (a.early_exit) {
-      return errors::InvalidArgument("early exit add!");
+      return absl::InvalidArgumentError("early exit add!");
     }
     out->value = a.value + b.value;  // CPU
     return absl::OkStatus();
   }
-  static Status GPUAddFn(OpKernelContext* ctx, const VariantValue& a,
-                         const VariantValue& b, VariantValue* out) {
+  static absl::Status GPUAddFn(OpKernelContext* ctx, const VariantValue& a,
+                               const VariantValue& b, VariantValue* out) {
     if (a.early_exit) {
-      return errors::InvalidArgument("early exit add!");
+      return absl::InvalidArgumentError("early exit add!");
     }
     out->value = -(a.value + b.value);  // GPU
     return absl::OkStatus();
   }
-  static Status CPUToGPUCopyFn(
+  static absl::Status CPUToGPUCopyFn(
       const VariantValue& from, VariantValue* to,
-      const std::function<Status(const Tensor&, Tensor*)>& copier) {
+      const std::function<absl::Status(const Tensor&, Tensor*)>& copier) {
     TF_RETURN_IF_ERROR(copier(Tensor(), nullptr));
     to->value = 0xdeadbeef;
     return absl::OkStatus();
@@ -142,10 +144,35 @@ TEST(VariantOpDecodeRegistryTest, TestEmpty) {
   EXPECT_FALSE(DecodeUnaryVariant(&encoded));
 }
 
+TEST(VariantOpDecodeRegistryTest, TestRecursionLimit) {
+  auto* registry = UnaryVariantOpRegistry::Global();
+  const std::string kTypeName = "RecursiveTest_Unique";
+
+  if (registry->GetDecodeFn(kTypeName) == nullptr) {
+    registry->RegisterDecodeFn(kTypeName, [kTypeName](Variant* v) {
+      Variant nested;
+      VariantTensorDataProto proto;
+      proto.set_type_name(kTypeName);
+      proto.set_metadata("payload");
+      nested = std::move(proto);
+      return DecodeUnaryVariant(&nested);
+    });
+  }
+
+  Variant v;
+  VariantTensorDataProto proto;
+  proto.set_type_name(kTypeName);
+  proto.set_metadata("start");
+  v = std::move(proto);
+
+  // Only assert that the recursive decode fails at the limit.
+  EXPECT_FALSE(DecodeUnaryVariant(&v));
+}
+
 TEST(VariantOpDecodeRegistryTest, TestDuplicate) {
   UnaryVariantOpRegistry registry;
   UnaryVariantOpRegistry::VariantDecodeFn f;
-  string kTypeName = "fjfjfj";
+  std::string kTypeName = "fjfjfj";
   registry.RegisterDecodeFn(kTypeName, f);
   EXPECT_DEATH(registry.RegisterDecodeFn(kTypeName, f),
                "fjfjfj already registered");
@@ -168,7 +195,7 @@ TEST(VariantOpCopyToGPURegistryTest, TestBasic) {
   Variant v_out;
   bool dummy_executed = false;
   auto dummy_copy_fn = [&dummy_executed](const Tensor& from,
-                                         Tensor* to) -> Status {
+                                         Tensor* to) -> absl::Status {
     dummy_executed = true;
     return absl::OkStatus();
   };
@@ -203,8 +230,8 @@ TEST(VariantOpZerosLikeRegistryTest, TestBasicCPU) {
   Variant v_out = VariantValue();
 
   OpKernelContext* null_context_pointer = nullptr;
-  Status s0 = UnaryOpVariant<CPUDevice>(null_context_pointer,
-                                        ZEROS_LIKE_VARIANT_UNARY_OP, v, &v_out);
+  absl::Status s0 = UnaryOpVariant<CPUDevice>(
+      null_context_pointer, ZEROS_LIKE_VARIANT_UNARY_OP, v, &v_out);
   EXPECT_FALSE(s0.ok());
   EXPECT_TRUE(absl::StrContains(s0.message(), "early exit zeros_like"));
 
@@ -229,8 +256,8 @@ TEST(VariantOpUnaryOpRegistryTest, TestBasicGPU) {
   Variant v_out = VariantValue();
 
   OpKernelContext* null_context_pointer = nullptr;
-  Status s0 = UnaryOpVariant<GPUDevice>(null_context_pointer,
-                                        ZEROS_LIKE_VARIANT_UNARY_OP, v, &v_out);
+  absl::Status s0 = UnaryOpVariant<GPUDevice>(
+      null_context_pointer, ZEROS_LIKE_VARIANT_UNARY_OP, v, &v_out);
   EXPECT_FALSE(s0.ok());
   EXPECT_TRUE(absl::StrContains(s0.message(), "early exit zeros_like"));
 
@@ -275,7 +302,7 @@ TEST(VariantOpAddRegistryTest, TestBasicCPU) {
   Variant v_out = VariantValue();
 
   OpKernelContext* null_context_pointer = nullptr;
-  Status s0 = BinaryOpVariants<CPUDevice>(
+  absl::Status s0 = BinaryOpVariants<CPUDevice>(
       null_context_pointer, ADD_VARIANT_BINARY_OP, v_a, v_b, &v_out);
   EXPECT_FALSE(s0.ok());
   EXPECT_TRUE(absl::StrContains(s0.message(), "early exit add"));
@@ -302,7 +329,7 @@ TEST(VariantOpAddRegistryTest, TestBasicGPU) {
   Variant v_out = VariantValue();
 
   OpKernelContext* null_context_pointer = nullptr;
-  Status s0 = BinaryOpVariants<GPUDevice>(
+  absl::Status s0 = BinaryOpVariants<GPUDevice>(
       null_context_pointer, ADD_VARIANT_BINARY_OP, v_a, v_b, &v_out);
   EXPECT_FALSE(s0.ok());
   EXPECT_TRUE(absl::StrContains(s0.message(), "early exit add"));

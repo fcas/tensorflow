@@ -1,8 +1,22 @@
-#include "third_party/absl/strings/str_cat.h"
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 #Description:
 # TensorFlow SavedModel.
 
-load("//tensorflow:strict.default.bzl", "py_strict_binary")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load(
     "//tensorflow:tensorflow.bzl",
     "if_android",
@@ -16,7 +30,6 @@ load("//tensorflow:tensorflow.default.bzl", "filegroup")
 load(
     "//tensorflow/core/platform:build_config_root.bzl",
     "if_static",
-    "if_static_and_not_mobile",
 )
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 load(
@@ -102,17 +115,27 @@ tf_cc_test(
 )
 
 cc_library(
+    name = "loader_default_deps",
+    visibility = ["//visibility:private"],
+    deps = if_static([
+        "//tensorflow/core:all_kernels",
+        "//tensorflow/core:direct_session",
+    ]) + if_google(if_static(["//tensorflow/core/platform/default/build_config:tensorflow_platform_specific"])),
+)
+
+cc_library(
     name = "loader",
     hdrs = ["loader.h"],
     deps = [
         ":loader_lite",
-    ] + if_static_and_not_mobile([
-        "//tensorflow/core:direct_session",
-        "//tensorflow/core:all_kernels",
-    ] + if_google(
-        ["//tensorflow/core/platform/default/build_config:tensorflow_platform_specific"],
-        [],
-    )) + if_not_mobile([
+    ] + select({
+        "//tensorflow:android": [],
+        "//tensorflow:ios": [],
+        "//tensorflow:tflite_converter": ["//tensorflow/core:direct_session"] + if_google([
+            "//tensorflow/core/platform/default/build_config:tensorflow_platform_specific",
+        ]),
+        "//conditions:default": [":loader_default_deps"],
+    }) + if_not_mobile([
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:lib",
         "//tensorflow/core:ops",
@@ -179,9 +202,9 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@jsoncpp_git//:jsoncpp",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:strcat",
     ],
 )
 
@@ -215,7 +238,7 @@ tf_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@jsoncpp_git//:jsoncpp",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -260,19 +283,19 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+        "@com_google_absl//absl/status",
     ],
 )
 
 # A subset of the TF2 saved models can be generated with this tool.
-py_strict_binary(
+py_binary(
     name = "testdata/generate_saved_models",
     srcs = ["testdata/generate_saved_models.py"],
     data = [
         ":saved_model_asset_data",
         ":saved_model_static_hashtable_asset_data",
     ],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/client:session",
         "//tensorflow/python/compat:v2_compat",
@@ -294,11 +317,10 @@ py_strict_binary(
 
 # copybara:uncomment_begin(google-only)
 #
-# py_strict_binary(
+# py_binary(
 #     name = "testdata/generate_chunked_models",
 #     srcs = ["testdata/generate_chunked_models.py"],
-#     python_version = "PY3",
-#     srcs_version = "PY3",
+#     strict_deps = True,
 #     deps = [
 #         "//tensorflow/python/compat:v2_compat",
 #         "//tensorflow/python/eager:def_function",
@@ -344,6 +366,7 @@ filegroup(
     srcs = glob([
         "testdata/bert2/**",
         "testdata/bert1/**",
+        "testdata/half_plus_two_pbtxt/**",
     ]),
 )
 
@@ -438,7 +461,7 @@ tf_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
         "@jsoncpp_git//:jsoncpp",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -479,7 +502,61 @@ tf_cc_test(
         "//tensorflow/core/framework:tensor_shape_proto_cc",
         "//tensorflow/core/framework:tensor_testutil",
         "//tensorflow/core/protobuf:for_core_protos_cc",
-        "@local_tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:status_matchers",
+    ],
+)
+
+# Linked directly into ":tensorflow_framework".
+cc_library(
+    name = "singleprint_impl",
+    srcs = [
+        "singleprint.cc",
+        "singleprint.h",
+    ],
+    visibility = [
+        "//tensorflow:__pkg__",
+        "//tensorflow/python:__pkg__",
+    ],
+    deps = [
+        ":constants",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ] + if_not_mobile([
+        "//tensorflow/core:lib",
+    ]) + if_android([
+        "//tensorflow/core:portable_tensorflow_lib_lite",
+    ]),
+    alwayslink = True,
+)
+
+cc_library(
+    name = "singleprint",
+    hdrs = ["singleprint.h"],
+    visibility = ["//visibility:public"],
+    deps = if_static([
+        ":singleprint_impl",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+    ]) + if_not_mobile([
+        "//tensorflow/core:lib",
+    ]) + if_android([
+        "//tensorflow/core:portable_tensorflow_lib_lite",
+    ]),
+)
+
+tf_cc_test(
+    name = "singleprint_test",
+    size = "small",
+    srcs = ["singleprint_test.cc"],
+    deps = [
+        ":singleprint",
+        "//tensorflow/core:protos_all_cc",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -496,6 +573,8 @@ cc_library(
     ],
     deps = [
         ":constants",
+        ":fingerprinting_x_platform_utils",
+        ":singleprint",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/graph/regularization:simple_delete",
         "//tensorflow/core/graph/regularization:util",
@@ -505,8 +584,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:types",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:types",
     ] + if_not_mobile([
         "//tensorflow/core:lib",
     ]) + if_android([
@@ -522,13 +602,17 @@ cc_library(
     name = "fingerprinting",
     hdrs = ["fingerprinting.h"],
     visibility = [
-        "//learning/brain/contrib/hub/server/distro:__subpackages__",
+        "//learning/brain/contrib/hub/server/ingestion:__subpackages__",
         "//learning/brain/contrib/tpu_modeling:__subpackages__",
+        "//learning/gemini/deployment/disaggregation/wiz_cc:__subpackages__",
         "//learning/metadata/artifactoid/cc:__subpackages__",
         "//learning/tfx/pipeline/util:__subpackages__",
+        "//tensorflow/core/tfrt:__subpackages__",
         "//tensorflow/python/saved_model:__subpackages__",
     ],
-    deps = if_static([
+    deps = [
+        ":singleprint",
+    ] + if_static([
         ":fingerprinting_impl",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/status:statusor",
@@ -547,10 +631,9 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":constants",
+        ":fingerprinting_x_platform_utils",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/core/graph/regularization:simple_delete",
-        "//tensorflow/core/graph/regularization:util",
         "//tensorflow/core/util/tensor_bundle:naming",
         "//tensorflow/tools/proto_splitter:chunk_proto_cc",
         "//tensorflow/tools/proto_splitter:merge",
@@ -558,11 +641,22 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:protobuf",
+        "@com_google_absl//absl/strings:str_format",
         "@riegeli//riegeli/bytes:fd_reader",
         "@riegeli//riegeli/records:record_reader",
     ],
     alwayslink = True,
+)
+
+cc_library(
+    name = "fingerprinting_x_platform_utils",
+    srcs = ["fingerprinting_x_platform_utils.cc"],
+    hdrs = ["fingerprinting_x_platform_utils.h"],
+    deps = [
+        "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:random",
+    ],
 )
 
 tf_cc_test(
@@ -579,8 +673,8 @@ tf_cc_test(
     deps = [
         ":fingerprinting_utils",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/platform:env",
         "//tensorflow/core/platform:path",
-        "//tensorflow/core/platform:protobuf",
         "//tensorflow/tools/proto_splitter:chunk_proto_cc",
         "//tensorflow/tools/proto_splitter/cc:util",
         "//tensorflow/tools/proto_splitter/testdata:test_message_proto_cc",
@@ -588,12 +682,12 @@ tf_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/platform:test",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -616,7 +710,7 @@ tf_cc_test(
         "//tensorflow/core/platform:path",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -638,6 +732,7 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core/protobuf:for_core_protos_cc",
+        "@com_google_absl//absl/numeric:int128",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

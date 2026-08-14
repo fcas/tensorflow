@@ -386,6 +386,41 @@ def BatchFunctionOp : TensorflowMlrt_Op<"batch_function", [Pure]> {
   let assemblyFormat = "`(` $args `)` attr-dict `:` functional-type($args, $results)";
 }
 
+def BatchFunctionWithDeviceOp : TensorflowMlrt_Op<"batch_function.device", [Pure]> {
+  let summary = "Fallback ExecuteOp specialized for tf.BatchFunction with custom device.";
+
+  let description = [{
+    This kernel executes a variant tf.BatchFunction kernel that supports having
+    the `f` attribute as a bytecode function with a custom device.
+
+    Example:
+      %res = tf_mlrt.batch_function.device(%custom_device, %input, %captured_input)  {
+          device = "/device:CPU:0",
+          f = @batch_function,
+          node_def = "..."
+        } : (!tf_mlrt.tensor,!tf_mlrt.tensor) -> (!tf_mlrt.tensor)
+
+    Note that the trailing number indicates the number of results.
+    Also note that the custom device argument is not the same as the device attribute. 
+    The latter is just the name in which the enclosure graph is executed.
+  }];
+
+  let arguments = (ins
+    TFDeviceType:$custom_device,
+    Variadic<TFTensorType>:$args,
+    StrAttr:$device,
+    SymbolRefAttr:$f,
+    StrAttr:$node_def
+  );
+
+  let results = (outs
+    Variadic<MlrtFutureType>:$results
+  );
+
+  let assemblyFormat = " `(` $custom_device`)` `(` $args `)` attr-dict `:` functional-type($args, $results)";
+}
+
+
 def CancelOp: TensorflowMlrt_Op<"cancel", []> {
   let summary = "Handle cancellation request.";
 
@@ -461,8 +496,6 @@ def IfrtLoadVariableOp: TensorflowMlrt_Op<"ifrt_load_variable", [Pure]> {
 
   let arguments = (ins
     TFTensorType:$variable,
-    StrAttr:$device_sharding_config_proto_text,
-    StrAttr:$name,
     DefaultValuedAttr<BoolAttr, "false">:$used_by_host
   );
 
@@ -477,16 +510,18 @@ def IfrtRestoreVariableOp: TensorflowMlrt_Op<"ifrt_restore_variable", []> {
   let description = [{
     This is the MLRT version of tf.IfrtRestoreVariableOp.
 
-    This Op is similar to a combination of RestoreV2 and AssignVariable Op, but
-    this Op's execution is asynchronous.
+    This op restores tensors from a checkpoint asynchronously, similar to tf.RestoreV2.
+    It fuses variable assignment: tensors that are consumed by tf.AssignVariableOp
+    are handled internally via the $var_handles operands and do not appear in
+    the results.
 
+    Tensors that are consumed by other operations (e.g. tf.LookupTableImportV2)
+    will be returned as results in $tensors. Consequently, the number of
+    results is dynamic, containing only those tensors not assigned to variables
+    but consumed directly by other operations. A restored tensor with no
+    consumer will cause an error in the kernel.
     This Op is specific to MLRT runtime and is not a stable interface for
     serialization.
-
-    This Op will restore the tensors asynchronously and allow the runtime to look
-    for them.
-    The runtime shall handle the possibility that the tensors are not ready when requested
-    because the tensors are loaded asynchronously.
 
   }];
 
@@ -495,8 +530,48 @@ def IfrtRestoreVariableOp: TensorflowMlrt_Op<"ifrt_restore_variable", []> {
     TFTensorType:$tensor_names,
     TFTensorType:$shape_and_slices,
     Variadic<TFTensorType>:$var_handles,
-    TypeArrayAttr: $restored_dtypes
+    TypeArrayAttr: $restored_dtypes,
+    DenseBoolArrayAttr: $truncate_in_cast,
+     // The names of the returned tensors. The order of names corresponds to the
+    // order of the returned tensors.
+    StrArrayAttr: $returned_tensor_names
   );
+
+  let results = (outs
+    Res<Variadic<MlrtFutureType>, [{The restored tensor futures as requested by the $returned_Tensor_names attribute.}]>:$tensors
+  );
+}
+
+def MlrtIfrtResourceDeserializeOp: TensorflowMlrt_Op<"ifrt_resource_deserialize", []> {
+  let summary = "Deserialize resource vars.";
+  let description = [{
+    This is the MLRT version of the IfrtResourceDeserialize op.
+  }];
+
+  let arguments = (ins
+    TFTensorType:$resource_var,
+    TFTensorType:$input_dir,
+    StrAttr:$tensor_name
+  );
+}
+
+def AsyncIfrtCallOp : TensorflowMlrt_Op<"async_ifrt_call", []> {
+  let summary = "IFRT execution op for mlrt";
+  let description = [{
+    This op executes an IFRT program asynchronously.
+  }];
+
+  let arguments = (ins
+    I64Attr:$program_id,
+    I32ArrayAttr:$variable_arg_indices,
+    Variadic<TFTensorType>:$args
+  );
+
+  let results = (outs
+    Variadic<MlrtFutureType>:$results
+  );
+
+  let assemblyFormat = "`(` $args `)` attr-dict `:` functional-type($args, $results)";
 }
 
 #endif

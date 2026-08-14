@@ -808,7 +808,8 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
   def testMaxPoolWithArgmaxKsizeOverflow(self):
     with self.assertRaisesRegex(
         (ValueError, errors_impl.InvalidArgumentError),
-        "ksize must be a postive int32 value"):
+        "ksize must be a positive int32 value",
+    ):
       with self.cached_session():
         t = gen_nn_ops.max_pool_with_argmax(
             input=[[[[1, 1, 1]]]],
@@ -1254,7 +1255,7 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
         err_tolerance = 1e-4
       else:
         if x_init_value is None:
-          x_init_value = np.asfarray(
+          x_init_value = np.asarray(
               np.arange(1, total_size + 1),
               dtype=np.float32).reshape(input_sizes)
         func_name = "max_pool"
@@ -1332,7 +1333,7 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
         err_tolerance = 1e-3
       else:
         if x_init_value is None:
-          x_init_value = np.asfarray(
+          x_init_value = np.asarray(
               np.arange(1, total_size + 1),
               dtype=np.float32).reshape(input_sizes)
         func_name = "max_pool"
@@ -2215,6 +2216,37 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
       self._testAvgPoolGradSamePadding2_1(data_format, use_gpu)
       self._testAvgPoolGradSamePadding2_2(data_format, use_gpu)
       self._testAvgPoolGradSamePadding3_1(data_format, use_gpu)
+
+  def testAvgPoolGradOutputWithZeroDim(self):
+    for data_format, use_gpu in GetTestConfigs():
+      with self.cached_session(use_gpu=use_gpu):
+        if data_format == "NHWC":
+          orig_input_shape = [1, 2, 1, 1]
+          grad_shape = [1, 2, 0, 1]
+          ksize = [1, 1, 2, 1]
+          strides = [1, 1, 1, 1]
+        elif data_format == "NCHW":
+          orig_input_shape = [1, 1, 2, 1]
+          grad_shape = [1, 1, 2, 0]
+          ksize = [1, 1, 1, 2]
+          strides = [1, 1, 1, 1]
+        else:
+          continue
+
+        grad = constant_op.constant(
+            np.full(grad_shape, 0.1, dtype=np.float32), dtype=dtypes.float32
+        )
+        t = gen_nn_ops.AvgPoolGrad(
+            orig_input_shape=orig_input_shape,
+            grad=grad,
+            ksize=ksize,
+            strides=strides,
+            padding="VALID",
+            data_format=data_format,
+        )
+        values = self.evaluate(t)
+        self.assertEqual(values.shape, tuple(orig_input_shape))
+        self.assertAllClose(values, np.zeros(orig_input_shape))
 
   def _testAvgPoolGradValidPadding1_1(self, data_format, use_gpu):
     self._ConstructAndTestGradient(

@@ -21,6 +21,8 @@ limitations under the License.
 # pylint: disable=missing-function-docstring
 # pylint: disable=missing-class-docstring
 # pylint: disable=protected-access
+# pylint: disable=too-many-function-args
+# pylint: disable=invalid-unary-operand-type
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -71,7 +73,9 @@ from tensorflow.python.platform import test
 from tensorflow.python.platform import tf_logging
 from tensorflow.python.training import adam
 from tensorflow.python.training import gradient_descent
+from tensorflow.python.util import numpy_compat
 from tensorflow.python.util.compat import collections_abc
+
 
 _ADD = lambda x, y: x + y
 _SUB = lambda x, y: x - y
@@ -377,7 +381,7 @@ class ArgMaxTest(test.TestCase):
     # self._testDim(np.float32)
 
   def testFloatInt32Output(self):
-    x = np.asarray(100 * np.random.randn(200), dtype=np.float32)
+    x = numpy_compat.np_asarray(100 * np.random.randn(200), dtype=np.float32)
     expected_values = x.argmax()
     with self.session(use_gpu=True):
       ans = math_ops.argmax(x, axis=0, output_type=dtypes.int32)
@@ -854,7 +858,7 @@ class AdamOptimizerTest(test.TestCase):
 class RoundingTest(test.TestCase):
 
   def _compare_values(self, x, y=None):
-    y = np.rint(x) if y is None else np.asarray(y)
+    y = np.rint(x) if y is None else numpy_compat.np_asarray(y)
 
     tf_rint = math_ops.rint(x)
     np_rint = self.evaluate(tf_rint)
@@ -910,7 +914,7 @@ class ReverseSequenceTest(test.TestCase):
       self.assertShapeEqual(truth, ans)
 
   def _testBasic(self, dtype, len_dtype=np.int64):
-    x = np.asarray(
+    x = numpy_compat.np_asarray(
         [
             [[1, 2, 3, 4], [5, 6, 7, 8]],
             [[9, 10, 11, 12], [13, 14, 15, 16]],
@@ -922,9 +926,9 @@ class ReverseSequenceTest(test.TestCase):
     x = x.transpose([2, 1, 0, 3, 4])  # permute axes 0 <=> 2
 
     # reverse dim 2 up to (0:3, none, 0:4) along dim=0
-    seq_lengths = np.asarray([3, 0, 4], dtype=len_dtype)
+    seq_lengths = numpy_compat.np_asarray([3, 0, 4], dtype=len_dtype)
 
-    truth_orig = np.asarray(
+    truth_orig = numpy_compat.np_asarray(
         [
             [[3, 2, 1, 4], [7, 6, 5, 8]],  # reverse 0:3
             [[9, 10, 11, 12], [13, 14, 15, 16]],  # reverse none
@@ -1009,7 +1013,7 @@ class InTopKTest(test.TestCase):
 
   def testInTop2_int64Target(self):
     predictions = [[0.1, 0.3, 0.2, 0.4], [0.1, 0.2, 0.3, 0.4]]
-    target = np.asarray([0, 2]).astype(np.int64)
+    target = numpy_compat.np_asarray([0, 2]).astype(np.int64)
     self._validateInTopK(predictions, target, 2, [False, True])
 
   def testTensorK(self):
@@ -1087,7 +1091,7 @@ class ResizeBilinearTest(test.TestCase):
       for channel_ind in range(array.shape[-1]):
         channel = array[:, :, channel_ind]
         pil_img = Image.fromarray(channel)
-        resized_img = np.asarray(
+        resized_img = numpy_compat.np_asarray(
             pil_img.resize(size=(y[1], y[0]), resample=Image.BILINEAR)
         )
         img_channels.append(resized_img)
@@ -1100,19 +1104,19 @@ class ResizeBilinearTest(test.TestCase):
   def testFloatBasic(self):
     x = np.random.rand(3, 24, 24, 3)
     x = x.astype(np.float32)
-    y = np.asarray([48, 48], dtype=np.int32)
+    y = numpy_compat.np_asarray([48, 48], dtype=np.int32)
     self._testResize(x, y, use_gpu=True)
 
   def testFloatUneven(self):
     x = np.random.rand(3, 24, 48, 3)
     x = x.astype(np.float32)
-    y = np.asarray([96, 64])
+    y = numpy_compat.np_asarray([96, 64])
     self._testResize(x, y, use_gpu=True)
 
   def testFloatLarge(self):
     x = np.random.rand(3, 256, 256, 3)
     x = x.astype(np.float32)
-    y = np.asarray([1024, 1024])
+    y = numpy_compat.np_asarray([1024, 1024])
     self._testResize(x, y, use_gpu=True)
 
 
@@ -1141,12 +1145,12 @@ class OneHotTest(test.TestCase):
     self._testOneHot(truth, False, expected_err_re, raises, **inputs)
 
   def _testBasic(self, dtype):
-    indices = np.asarray([0, 2, -1, 1], dtype=np.int32)
+    indices = numpy_compat.np_asarray([0, 2, -1, 1], dtype=np.int32)
     depth = 3
-    on_value = np.asarray(1.0, dtype=dtype)
-    off_value = np.asarray(-1.0, dtype=dtype)
+    on_value = numpy_compat.np_asarray(1.0, dtype=dtype)
+    off_value = numpy_compat.np_asarray(-1.0, dtype=dtype)
 
-    truth = np.asarray(
+    truth = numpy_compat.np_asarray(
         [
             [1.0, -1.0, -1.0],
             [-1.0, -1.0, 1.0],
@@ -1178,10 +1182,10 @@ class OneHotTest(test.TestCase):
     )  # Output is transpose version in this case
 
   def _testDefaultBasic(self, dtype):
-    indices = np.asarray([0, 2, -1, 1], dtype=np.int32)
+    indices = numpy_compat.np_asarray([0, 2, -1, 1], dtype=np.int32)
     depth = 3
 
-    truth = np.asarray(
+    truth = numpy_compat.np_asarray(
         [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         dtype=dtype,
     )
@@ -2456,7 +2460,7 @@ class BroadcastToTest(test_util.TensorFlowTestCase):
   @test_util.run_deprecated_v1
   def testBroadcastScalarToNonScalar(self):
     with self.session(use_gpu=True):
-      x = np.array(1.0, dtype=np.float)
+      x = np.array(1.0, dtype=np.float64)
       v_tf = array_ops.broadcast_to(
           constant_op.constant(1.0), [2, 3, 4, 1, 1, 1]
       )
@@ -3673,7 +3677,7 @@ class LeakyReluTest(test.TestCase):
           y = nn_ops.leaky_relu(x)
         return tape.gradient(y, x)
 
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float16,
           order="F",
@@ -3685,7 +3689,7 @@ class LeakyReluTest(test.TestCase):
 
   def testGradientFloat16(self):
     with self.cached_session():
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float16,
           order="F",
@@ -3698,7 +3702,7 @@ class LeakyReluTest(test.TestCase):
 
   def testGradientFloat32(self):
     with self.cached_session():
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float32,
           order="F",
@@ -3710,7 +3714,7 @@ class LeakyReluTest(test.TestCase):
 
   def testGradientFloat64(self):
     with self.cached_session():
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float64,
           order="F",
@@ -3730,7 +3734,7 @@ class LeakyReluTest(test.TestCase):
           y = nn_ops.leaky_relu(x)
         return tape.gradient(y, x)
 
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float32,
           order="F",
@@ -3792,7 +3796,7 @@ class ReluTest(test.TestCase):
           dy = tape.gradient(y, x)
           return dy
 
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float32,
           order="F",
@@ -3813,7 +3817,7 @@ class ReluTest(test.TestCase):
           dy = tape.gradient(y, x)
           return dy
 
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [0.1, 0.3, 0.5, 0.7, 0.9]],
           dtype=np.float16,
           order="F",
@@ -3858,7 +3862,7 @@ class Relu6Test(test.TestCase):
   def testNumbersGPU(self):
     if not test.is_gpu_available():
       self.skipTest("No GPU available")
-    for t in [np.float16, np.float, np.double]:
+    for t in [np.float16, np.float32, np.double]:
       print(t)
       self._testRelu6(
           np.array([[-9, 7, -5, 3, -1], [1, -3, 5, -7, 9]]).astype(t)
@@ -3869,7 +3873,7 @@ class Relu6Test(test.TestCase):
   # in terms of input values.
   def testGradientFloat32(self):
     with self.cached_session():
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [6.1, 6.3, 6.5, 6.7, 6.9]],
           dtype=np.float32,
           order="F",
@@ -3881,7 +3885,7 @@ class Relu6Test(test.TestCase):
 
   def testGradientFloat16(self):
     with self.cached_session():
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [6.1, 6.3, 6.5, 6.7, 6.9]],
           dtype=np.float16,
           order="F",
@@ -3893,7 +3897,7 @@ class Relu6Test(test.TestCase):
 
   def testGradientFloat64(self):
     with self.cached_session():
-      x = np.asarray(
+      x = numpy_compat.np_asarray(
           [[-0.9, -0.7, -0.5, -0.3, -0.1], [6.1, 6.3, 6.5, 6.7, 6.9]],
           dtype=np.float64,
           order="F",
@@ -5339,8 +5343,8 @@ class SelectOpTest(test.TestCase):
         # care is taken with choosing the inputs and the delta. This is
         # a weaker check (in particular, it does not test the op itself,
         # only its gradient), but it's much better than nothing.
-        self._compareGradientX(fn, c, xt, yt, np.float)
-        self._compareGradientY(fn, c, xt, yt, np.float)
+        self._compareGradientX(fn, c, xt, yt, np.float64)
+        self._compareGradientY(fn, c, xt, yt, np.float64)
       else:
         self._compareGradientX(fn, c, xt, yt)
         self._compareGradientY(fn, c, xt, yt)
@@ -5441,7 +5445,7 @@ class ZerosLikeTest(test.TestCase):
     # causes a TypeError in constant_op.constant below. Here we catch the
     # special case of tf.string and set the numpy dtype appropriately.
     if dtype == dtypes.string:
-      numpy_dtype = np.string_
+      numpy_dtype = np.bytes_
     else:
       numpy_dtype = dtype.as_numpy_dtype
     d = constant_op.constant(np.ones((2, 3), dtype=numpy_dtype), dtype=dtype)
@@ -5833,7 +5837,7 @@ class MpsTest(test.TestCase):
         jacob_t, _ = gradient_checker.compute_gradient(
             inx, s, y, s, x_init_value=x
         )
-        xf = x.astype(np.float)
+        xf = x.astype(np.float64)
         inxf = ops.convert_to_tensor(xf)
         yf = tf_func(inxf)
         _, jacob_n = gradient_checker.compute_gradient(

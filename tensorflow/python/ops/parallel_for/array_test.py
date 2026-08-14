@@ -273,7 +273,7 @@ class ArrayTest(PForTestCase):
 
     def loop_fn(i):
       x1 = array_ops.gather(x, i)
-      return array_ops.pad_v2(x1, padding, mode="CONSTANT")
+      return array_ops.pad_v2(x1, padding, mode="CONSTANT", constant_values=1.5)
 
     self._test_loop_fn(loop_fn, 3)
 
@@ -323,6 +323,15 @@ class ArrayTest(PForTestCase):
     def loop_fn(i):
       x1 = array_ops.gather(x, i)
       return array_ops.transpose(x1, [2, 1, 0])
+
+    self._test_loop_fn(loop_fn, 3)
+
+  def test_top_k(self):
+    x = random_ops.random_uniform([3, 2, 3, 4])
+
+    def loop_fn(i):
+      x1 = array_ops.gather(x, i)
+      return nn.top_k(x1, k=2)
 
     self._test_loop_fn(loop_fn, 3)
 

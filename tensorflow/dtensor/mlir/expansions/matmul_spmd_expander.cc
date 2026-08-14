@@ -15,23 +15,33 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/matmul_spmd_expander.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/IRMapping.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
-#include "tensorflow/core/platform/statusor.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
-#include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
-#include "tensorflow/dtensor/mlir/spmd_expander.h"
 #include "tensorflow/dtensor/mlir/spmd_expander_common.h"
-#include "tensorflow/dtensor/mlir/value_utils.h"
 
 namespace tensorflow {
 namespace dtensor {
@@ -54,7 +64,6 @@ void GetTransposeSettings(mlir::Operation* op, bool* left_transposed,
 }  // namespace
 
 StatusOr<mlir::Operation*> MatMulSPMDExpander::ExpandOp(mlir::Operation* op) {
-  absl::flat_hash_set<std::string> reduced_dims;
   bool left_transposed;
   bool right_transposed;
   TF_ASSIGN_OR_RETURN(const Layout left_layout,
@@ -115,9 +124,10 @@ StatusOr<Layout> MatMulSPMDExpander::OutputLayoutAndReducedDims(
 
   if (!*left || !*right) {
     if (allow_unknown_layouts) return absl::OkStatus();
-    return errors::Unimplemented("failed to do SPMD expansion for ", OpName(op),
-                                 " operand layouts "
-                                 "unknown");
+    return absl::UnimplementedError(
+        absl::StrCat("failed to do SPMD expansion for ", OpName(op),
+                     " operand layouts "
+                     "unknown"));
   }
 
   if (mlir::isa<mlir::TF::BatchMatMulV2Op>(op)) {
@@ -144,7 +154,7 @@ StatusOr<Layout> MatMulSPMDExpander::OutputLayoutAndReducedDims(
     left_layout = left->value();
     right_layout = right->value();
   } else {
-    return errors::Internal("Unknown op ", OpName(op));
+    return absl::InternalError(absl::StrCat("Unknown op ", OpName(op)));
   }
   GetTransposeSettings(op, &left_transposed, &right_transposed);
 
@@ -183,7 +193,7 @@ StatusOr<Layout> MatMulSPMDExpander::OutputLayoutAndReducedDims(
 // * The resulting layout of the matmul tensor, so we can insert an AllConcat/
 //   split to make the output have the desired layout.
 // * The left and right value for use as input to the matmul.
-Status MatMulSPMDExpander::MaybeRelayoutInputs(
+absl::Status MatMulSPMDExpander::MaybeRelayoutInputs(
     mlir::Operation* op, const Layout& left_layout, bool left_transposed,
     const Layout& right_layout, bool right_transposed,
     const Layout& output_layout, std::string& reduced_dim,
@@ -261,27 +271,27 @@ Status MatMulSPMDExpander::MaybeRelayoutInputs(
   // dimensions are equal and are sharded. These would require more extensive
   // relayout to solve.
   if (b != c && Layout::IsShardedDimension(b) && Layout::IsShardedDimension(c))
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Contracting dimension for matmul has sharding dimension ", b,
         " for the left input and ", c,
         " for the right input which are not equal. This case is currently not "
-        "supported.");
+        "supported."));
 
   if (a != e && Layout::IsShardedDimension(a) && Layout::IsShardedDimension(e))
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Non-contracting dimension for left argument of matmul has sharding "
         "dimension ",
         a,
         " and the second to last dimension of the output has sharding "
         "dimension ",
-        e, ", which are not equal. This case is currently not supported.");
+        e, ", which are not equal. This case is currently not supported."));
 
   if (d != f && Layout::IsShardedDimension(d) && Layout::IsShardedDimension(f))
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Non-contracting dimension for right argument of matmul has sharding "
         "dimension ",
         d, " and the last dimension of the output has sharding dimension ", f,
-        ", which are not equal. This case is currently not supported.");
+        ", which are not equal. This case is currently not supported."));
 
   // If the output is sharded and the corresponding non-contracting input is not
   // sharded, then shard the input on that dim, to reduce the amount of work
@@ -425,7 +435,7 @@ StatusOr<llvm::DenseMap<int, Layout>> MatMulSPMDExpander::ComputeLayoutBackward(
   // to dim - 2), one of the two inputs may have dimension 1 while the
   // other has dimension > 1 and equal to the dim of the output. Since a
   // tensor with dimension 1 cannot be sharded, we set this to unsharded.
-  auto specs_matmul_operands = [](const llvm::ArrayRef<int64>& tensor_shape,
+  auto specs_matmul_operands = [](const llvm::ArrayRef<int64_t>& tensor_shape,
                                   const Layout& layout,
                                   bool is_left_operand) -> StatusOr<Layout> {
     int contracting_dim =

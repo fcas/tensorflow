@@ -14,6 +14,13 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/common_runtime/rendezvous_util.h"
 
+#include <string>
+#include <vector>
+
+#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/synchronization/notification.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/notification.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/test.h"
@@ -31,20 +38,20 @@ class RendezvousUtilTest : public ::testing::Test {
 };
 
 // string -> Tensor<string>
-Tensor V(const string& content) {
+Tensor V(const std::string& content) {
   Tensor tensor(DT_STRING, TensorShape({}));
   tensor.scalar<tstring>()() = content;
   return tensor;
 }
 
 // Tensor<string> -> string
-string V(const Tensor& tensor) {
+std::string V(const Tensor& tensor) {
   CHECK_EQ(tensor.dtype(), DT_STRING);
   CHECK(TensorShapeUtils::IsScalar(tensor.shape()));
   return tensor.scalar<tstring>()();
 }
 
-string MakeStringKey(const string& name) {
+std::string MakeStringKey(const std::string& name) {
   return Rendezvous::CreateKey(
       "/job:localhost/replica:0/task:0/device:CPU:0", 0,
       "/job:localhost/replica:0/task:0/device:GPU:0", name, FrameAndIter(0, 0));
@@ -56,11 +63,11 @@ TEST_F(RendezvousUtilTest, SendBeforeRecv) {
       rendez_, nullptr, {}, {MakeStringKey("hello1"), MakeStringKey("hello2")},
       {V("hello1"), V("hello2")}));
 
-  Notification n;
+  absl::Notification n;
   std::vector<Tensor> received_keys;
   RecvOutputsFromRendezvousAsync(
       rendez_, nullptr, {}, {MakeStringKey("hello1"), MakeStringKey("hello2")},
-      &received_keys, [&n](const Status& status) { n.Notify(); });
+      &received_keys, [&n](const absl::Status& status) { n.Notify(); });
   n.WaitForNotification();
 
   EXPECT_EQ(2, received_keys.size());
@@ -70,11 +77,11 @@ TEST_F(RendezvousUtilTest, SendBeforeRecv) {
 
 TEST_F(RendezvousUtilTest, RecvBeforeSend) {
   // Fire off recvs, wait for a notification in the callback.
-  Notification n;
+  absl::Notification n;
   std::vector<Tensor> received_keys;
   RecvOutputsFromRendezvousAsync(
       rendez_, nullptr, {}, {MakeStringKey("hello1"), MakeStringKey("hello2")},
-      &received_keys, [&n](const Status& status) { n.Notify(); });
+      &received_keys, [&n](const absl::Status& status) { n.Notify(); });
 
   TF_ASSERT_OK(SendTensorsToRendezvous(
       rendez_, nullptr, {}, {MakeStringKey("hello1"), MakeStringKey("hello2")},
@@ -101,11 +108,11 @@ TEST(RendezvousUtilCallerThreadTest, RecvBeforeSend) {
   Rendezvous* rendez_ = NewLocalRendezvous();
 
   // Fire off recvs, wait for a notification in the callback.
-  Notification n;
+  absl::Notification n;
   std::vector<Tensor> received_keys;
   RecvOutputsFromRendezvousAsync(
       rendez_, nullptr, {}, {MakeStringKey("hello1"), MakeStringKey("hello2")},
-      &received_keys, [&n, rendez_](const Status& status) {
+      &received_keys, [&n, rendez_](const absl::Status& status) {
         rendez_->Unref();
         n.Notify();
       });

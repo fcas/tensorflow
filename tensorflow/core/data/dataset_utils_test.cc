@@ -15,12 +15,19 @@ limitations under the License.
 
 #include "tensorflow/core/data/dataset_utils.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
+#include "absl/strings/str_join.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/tsl/util/determinism_test_util.h"
 #include "tensorflow/core/data/compression_utils.h"
 #include "tensorflow/core/data/dataset_test_base.h"
@@ -28,6 +35,7 @@ limitations under the License.
 #include "tensorflow/core/data/test_utils.h"
 #include "tensorflow/core/framework/dataset.h"
 #include "tensorflow/core/framework/dataset.pb.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/framework/function.pb.h"
 #include "tensorflow/core/framework/node_def_builder.h"
@@ -39,7 +47,6 @@ limitations under the License.
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/protobuf/error_codes.pb.h"
 #include "tensorflow/core/util/work_sharder.h"
-#include "tsl/platform/status_matchers.h"
 
 namespace tensorflow {
 namespace data {
@@ -58,7 +65,7 @@ TEST(DatasetUtilsTest, MatchesAnyVersion) {
 }
 
 TEST(DatasetUtilsTest, AddToFunctionLibrary) {
-  auto make_fn_a = [](const string& fn_name) {
+  auto make_fn_a = [](const std::string& fn_name) {
     return FunctionDefHelper::Create(
         /*function_name=*/fn_name,
         /*in_def=*/{"arg: int64"},
@@ -68,7 +75,7 @@ TEST(DatasetUtilsTest, AddToFunctionLibrary) {
         /*ret_def=*/{{"ret", "node:output:0"}});
   };
 
-  auto make_fn_b = [](const string& fn_name) {
+  auto make_fn_b = [](const std::string& fn_name) {
     return FunctionDefHelper::Create(
         /*function_name=*/fn_name,
         /*in_def=*/{"arg: int64"},
@@ -125,7 +132,7 @@ TEST(DatasetUtilsTest, AddToFunctionLibraryWithConflictingSignatures) {
       /*ret_def=*/{{"ret", "arg"}, {"ret2", "arg"}});
 
   FunctionLibraryDefinition flib_0(OpRegistry::Global(), fdef_base);
-  Status s = AddToFunctionLibrary(&flib_0, fdef_to_add);
+  absl::Status s = AddToFunctionLibrary(&flib_0, fdef_to_add);
   EXPECT_EQ(error::Code::INVALID_ARGUMENT, s.code());
   EXPECT_EQ(
       "Cannot add function '0' because a different function with the same "
@@ -199,19 +206,19 @@ TEST(DatasetUtilsTest, BoolConstructor) {
 
 class TestSplitProvider : public SplitProvider {
  public:
-  Status GetNext(Tensor* split, bool* end_of_splits) override {
+  absl::Status GetNext(Tensor* split, bool* end_of_splits) override {
     return absl::OkStatus();
   }
 
-  Status Reset() override { return absl::OkStatus(); }
+  absl::Status Reset() override { return absl::OkStatus(); }
 
-  Status Save(std::function<std::string(std::string)> key_name_fn,
-              IteratorStateWriter* writer) override {
+  absl::Status Save(std::function<std::string(std::string)> key_name_fn,
+                    IteratorStateWriter* writer) override {
     return absl::OkStatus();
   }
 
-  Status Restore(std::function<std::string(std::string)> key_name_fn,
-                 IteratorStateReader* reader) override {
+  absl::Status Restore(std::function<std::string(std::string)> key_name_fn,
+                       IteratorStateReader* reader) override {
     return absl::OkStatus();
   }
 };
@@ -246,9 +253,9 @@ REGISTER_DATASET_EXPERIMENT("test_only_task_experiment_100",
                             IndependentHostTasks);
 
 struct GetExperimentsHashTestCase {
-  uint64 hash;
-  std::vector<string> expected_in;
-  std::vector<string> expected_out;
+  uint64_t hash;
+  std::vector<std::string> expected_in;
+  std::vector<std::string> expected_out;
 };
 
 class GetExperimentsHashTest
@@ -256,14 +263,16 @@ class GetExperimentsHashTest
 
 TEST_P(GetExperimentsHashTest, DatasetUtils) {
   const GetExperimentsHashTestCase test_case = GetParam();
-  uint64 hash_result = test_case.hash;
+  uint64_t hash_result = test_case.hash;
   const std::string job_name = "job";
   const int64_t task_id = 0;
-  auto hash_func = [hash_result](const string& str) { return hash_result; };
+  auto hash_func = [hash_result](const std::string& str) {
+    return hash_result;
+  };
   auto experiments = GetExperiments(job_name, task_id, hash_func);
 
-  absl::flat_hash_set<string> experiment_set(experiments.begin(),
-                                             experiments.end());
+  absl::flat_hash_set<std::string> experiment_set(experiments.begin(),
+                                                  experiments.end());
   for (const auto& experiment : test_case.expected_in) {
     EXPECT_TRUE(experiment_set.find(experiment) != experiment_set.end())
         << "experiment=" << experiment << " hash=" << hash_result;
@@ -345,10 +354,10 @@ INSTANTIATE_TEST_SUITE_P(
         }));
 
 struct GetExperimentsOptTestCase {
-  std::vector<string> opt_ins;
-  std::vector<string> opt_outs;
-  std::vector<string> expected_in;
-  std::vector<string> expected_out;
+  std::vector<std::string> opt_ins;
+  std::vector<std::string> opt_outs;
+  std::vector<std::string> expected_in;
+  std::vector<std::string> expected_out;
 };
 
 class GetExperimentsOptTest
@@ -359,31 +368,30 @@ TEST_P(GetExperimentsOptTest, DatasetUtils) {
   auto opt_ins = test_case.opt_ins;
   auto opt_outs = test_case.opt_outs;
   if (!opt_ins.empty()) {
-    setenv("TF_DATA_EXPERIMENT_OPT_IN", str_util::Join(opt_ins, ",").c_str(),
-           1);
+    setenv("TF_DATA_EXPERIMENT_OPT_IN", absl::StrJoin(opt_ins, ",").c_str(), 1);
   }
   if (!opt_outs.empty()) {
-    setenv("TF_DATA_EXPERIMENT_OPT_OUT", str_util::Join(opt_outs, ",").c_str(),
+    setenv("TF_DATA_EXPERIMENT_OPT_OUT", absl::StrJoin(opt_outs, ",").c_str(),
            1);
   }
   const std::string job_name = "job";
   const int64_t task_id = 0;
-  auto hash_func = [](const string& str) { return 0; };
+  auto hash_func = [](const std::string& str) { return 0; };
   auto experiments = GetExperiments(job_name, task_id, hash_func);
 
-  absl::flat_hash_set<string> experiment_set(experiments.begin(),
-                                             experiments.end());
+  absl::flat_hash_set<std::string> experiment_set(experiments.begin(),
+                                                  experiments.end());
   for (const auto& experiment : test_case.expected_in) {
     EXPECT_TRUE(experiment_set.find(experiment) != experiment_set.end())
         << "experiment=" << experiment << " opt_ins={"
-        << str_util::Join(opt_ins, ",") << "} opt_outs={"
-        << str_util::Join(opt_outs, ",") << "}";
+        << absl::StrJoin(opt_ins, ",") << "} opt_outs={"
+        << absl::StrJoin(opt_outs, ",") << "}";
   }
   for (const auto& experiment : test_case.expected_out) {
     EXPECT_TRUE(experiment_set.find(experiment) == experiment_set.end())
         << "experiment=" << experiment << " opt_ins={"
-        << str_util::Join(opt_ins, ",") << "} opt_outs={"
-        << str_util::Join(opt_outs, ",") << "}";
+        << absl::StrJoin(opt_ins, ",") << "} opt_outs={"
+        << absl::StrJoin(opt_outs, ",") << "}";
   }
 
   if (!opt_ins.empty()) {
@@ -489,10 +497,10 @@ INSTANTIATE_TEST_SUITE_P(
 
 struct GetExperimentsJobNameTestCase {
   uint64_t hash;
-  string job_name;
+  std::string job_name;
   int64_t task_id;
-  std::vector<string> expected_in;
-  std::vector<string> expected_out;
+  std::vector<std::string> expected_in;
+  std::vector<std::string> expected_out;
 };
 
 class GetExperimentsJobNameTest
@@ -502,12 +510,14 @@ TEST_P(GetExperimentsJobNameTest, DatasetUtils) {
   const GetExperimentsJobNameTestCase test_case = GetParam();
   auto job_name = test_case.job_name;
   auto task_id = test_case.task_id;
-  uint64 hash_result = test_case.hash;
-  auto hash_func = [hash_result](const string& str) { return hash_result; };
+  uint64_t hash_result = test_case.hash;
+  auto hash_func = [hash_result](const std::string& str) {
+    return hash_result;
+  };
   auto experiments = GetExperiments(job_name, task_id, hash_func);
 
-  absl::flat_hash_set<string> experiment_set(experiments.begin(),
-                                             experiments.end());
+  absl::flat_hash_set<std::string> experiment_set(experiments.begin(),
+                                                  experiments.end());
   for (const auto& experiment : test_case.expected_in) {
     EXPECT_TRUE(experiment_set.find(experiment) != experiment_set.end())
         << "experiment=" << experiment << " job_name=" << job_name;
@@ -518,7 +528,8 @@ TEST_P(GetExperimentsJobNameTest, DatasetUtils) {
   }
 }
 
-// TODO(mpcallanan): Remove randomness from unit tests (see go/python-tips/048).
+// Note: These tests use (deterministic) randomness. The behavior is correct but
+// this approach is generally frowned upon (see go/python-tips/048).
 INSTANTIATE_TEST_SUITE_P(
     Test, GetExperimentsJobNameTest,
     ::testing::Values(
@@ -618,9 +629,9 @@ INSTANTIATE_TEST_SUITE_P(
 
 struct GetOptimizationsTestCase {
   Options options;
-  std::vector<string> expected_enabled;
-  std::vector<string> expected_disabled;
-  std::vector<string> expected_default;
+  std::vector<std::string> expected_enabled;
+  std::vector<std::string> expected_disabled;
+  std::vector<std::string> expected_default;
 };
 
 // Tests the default.
@@ -695,13 +706,15 @@ TEST_P(GetOptimizationsTest, DatasetUtils) {
   absl::flat_hash_set<tstring> actual_enabled, actual_disabled, actual_default;
   GetOptimizations(options, &actual_enabled, &actual_disabled, &actual_default);
 
-  EXPECT_THAT(std::vector<string>(actual_enabled.begin(), actual_enabled.end()),
-              ::testing::UnorderedElementsAreArray(test_case.expected_enabled));
   EXPECT_THAT(
-      std::vector<string>(actual_disabled.begin(), actual_disabled.end()),
+      std::vector<std::string>(actual_enabled.begin(), actual_enabled.end()),
+      ::testing::UnorderedElementsAreArray(test_case.expected_enabled));
+  EXPECT_THAT(
+      std::vector<std::string>(actual_disabled.begin(), actual_disabled.end()),
       ::testing::UnorderedElementsAreArray(test_case.expected_disabled));
-  EXPECT_THAT(std::vector<string>(actual_default.begin(), actual_default.end()),
-              ::testing::UnorderedElementsAreArray(test_case.expected_default));
+  EXPECT_THAT(
+      std::vector<std::string>(actual_default.begin(), actual_default.end()),
+      ::testing::UnorderedElementsAreArray(test_case.expected_default));
 }
 
 INSTANTIATE_TEST_SUITE_P(Test, GetOptimizationsTest,
@@ -711,18 +724,16 @@ INSTANTIATE_TEST_SUITE_P(Test, GetOptimizationsTest,
                                            GetOptimizationTestCase4()));
 
 TEST(DeterministicOpsTest, GetOptimizations) {
-  // TODO(b/259305727): Re-enable for MacOS when the bug is fixed.
-#if !defined(__APPLE__)
   tsl::test::DeterministicOpsScope det_scope;
   Options options;
   // options.deterministic should be ignored when deterministic ops are enabled.
   options.set_deterministic(false);
   absl::flat_hash_set<tstring> actual_enabled, actual_disabled, actual_default;
   GetOptimizations(options, &actual_enabled, &actual_disabled, &actual_default);
-  EXPECT_THAT(std::vector<string>(actual_enabled.begin(), actual_enabled.end()),
-              ::testing::UnorderedElementsAreArray({"make_deterministic"}));
+  EXPECT_THAT(
+      std::vector<std::string>(actual_enabled.begin(), actual_enabled.end()),
+      ::testing::UnorderedElementsAreArray({"make_deterministic"}));
   EXPECT_EQ(actual_disabled.size(), 0);
-#endif
 }
 
 REGISTER_DATASET_EXPERIMENT("test_only_experiment",
@@ -756,17 +767,20 @@ TEST_F(DatasetOpsTestBase, TestVariantEqualityChecking) {
 
   Tensor scalar_1{DT_VARIANT, TensorShape({})};
   scalar_1.scalar<Variant>()() = TestVariant({CreateTensor<int64_t>({}, {1})});
-  EXPECT_THAT(ExpectEqual(scalar_0, scalar_1),
-              StatusIs(tsl::error::INTERNAL, HasSubstr("aren't equal")));
+  EXPECT_THAT(
+      ExpectEqual(scalar_0, scalar_1),
+      absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("aren't equal")));
 
   Tensor nonscalar{DT_VARIANT, TensorShape({2})};
   EXPECT_THAT(ExpectEqual(nonscalar, nonscalar),
-              StatusIs(tsl::error::INTERNAL, HasSubstr("must be scalars")));
+              absl_testing::StatusIs(tsl::error::INTERNAL,
+                                     HasSubstr("must be scalars")));
 
   Tensor unsupported{DT_VARIANT, TensorShape({})};
   unsupported.scalar<Variant>()() = 0;
-  EXPECT_THAT(ExpectEqual(unsupported, unsupported),
-              StatusIs(tsl::error::INTERNAL, HasSubstr("types must be")));
+  EXPECT_THAT(
+      ExpectEqual(unsupported, unsupported),
+      absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("types must be")));
 }
 
 }  // namespace

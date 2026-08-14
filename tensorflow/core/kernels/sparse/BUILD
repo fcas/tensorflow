@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description: Op kernels for sparse matrix operations.
 
 load(
@@ -58,7 +73,6 @@ tf_kernel_library(
         "zeros_op.h",
     ],
     gpu_deps = [
-        "@local_xla//xla/stream_executor/cuda:cuda_activation",
         "//tensorflow/core/kernels:gpu_device_array",
     ],
     gpu_srcs = [
@@ -80,6 +94,7 @@ tf_kernel_library(
         "//tensorflow/core:sendrecv_ops_op_lib",
         "//tensorflow/core:sparse_csr_matrix_ops_op_lib",
         "//tensorflow/core:state_ops_op_lib",
+        "//tensorflow/core/framework:types_proto_cc",
         "//tensorflow/core/kernels:concat_lib",
         "//tensorflow/core/kernels:constant_op",
         "//tensorflow/core/kernels:cwise_op",
@@ -91,6 +106,7 @@ tf_kernel_library(
         "//tensorflow/core/kernels:slice_op",
         "//tensorflow/core/kernels:sparse_utils",
         "//tensorflow/core/kernels:transpose_functor",
+        "@com_google_absl//absl/status",
         "@eigen_archive//:eigen3",
     ] + if_cuda_or_rocm([
         "//tensorflow/core/util:cuda_solvers",
@@ -113,7 +129,9 @@ tf_cc_test(
         "//tensorflow/core:lib",
         "//tensorflow/core:test",
         "//tensorflow/core:testlib",
+        "//tensorflow/core/framework:types_proto_cc",
+        "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
-        "@local_tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )

@@ -16,17 +16,18 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/Transforms/Passes.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
-#include "xla/client/sharding_builder.h"
+#include "xla/hlo/builder/sharding_builder.h"
 #include "tensorflow/dtensor/cc/constants.h"
-#include "tensorflow/dtensor/mlir/dtensor_mlir_passes.h"
-#include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
 
 namespace tensorflow {
 namespace dtensor {
@@ -45,7 +46,7 @@ void SetDefaultSharding(mlir::tf_device::ClusterFuncOp cluster,
     sharding = xla::sharding_builder::Replicate().SerializeAsString();
   } else {
     // Assigns inputs/outputs for TPU computation to logical core 0.
-    sharding = xla::sharding_builder::AssignDevice(0).SerializeAsString();
+    sharding = xla::sharding_builder::SingleDevice(0).SerializeAsString();
   }
 
   llvm::SmallVector<llvm::StringRef, 4> input_sharding(cluster.getNumOperands(),

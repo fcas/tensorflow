@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -43,16 +44,17 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/protobuf/tpu/compile_metadata.pb.h"
-#include "tensorflow/core/tpu/kernels/tpu_compile.pb.h"
 
 namespace tensorflow {
 namespace tpu {
 
 // List of parameters for lowering Mlir to HLO IR.
+// If mlir_module_op is set, it will be used instead of mlir_module.
 struct MlirToHloArgs {
   absl::string_view mlir_module;
   ConfigProto::Experimental::MlirBridgeRollout rollout_state =
       ConfigProto::Experimental::MLIR_BRIDGE_ROLLOUT_ENABLED;
+  std::optional<mlir::ModuleOp> mlir_module_op;
 };
 
 // Variant of guaranteed constant tensors types.
@@ -65,19 +67,6 @@ struct FunctionToHloArgs {
   const FunctionLibraryDefinition* flib_def;
   int graph_def_version;
   GuaranteedConsts guaranteed_constants;
-};
-
-// Persistent cache for compiled TPU program and the related compiler metadata
-// intended for TPU inference.
-// TODO(henrytan): there is an opportunity to consolidate the interface with the
-// `TpuCompilationCacheInterface` once `TpuPersistentCompilationCache` is
-// converted into a ref count based class.
-class TpuPersistentCompilationCacheInterface {
- public:
-  virtual ~TpuPersistentCompilationCacheInterface() = default;
-
-  // Returns the location where cache entries are stored.
-  virtual std::string cache_location() const = 0;
 };
 
 // Describes the position of an argument or return value after the computation
@@ -139,11 +128,6 @@ absl::Status CreateHloModules(
     const XlaCompiler::CompilationResult& compilation_result,
     const std::optional<xla::DeviceAssignment>& device_assignment,
     std::vector<std::unique_ptr<xla::HloModule>>* hlo_modules);
-
-absl::StatusOr<TpuCompilationRequestProto> CreateTpuCompilationRequest(
-    const std::variant<MlirToHloArgs, FunctionToHloArgs>& computation,
-    const TPUCompileMetadataProto& metadata,
-    const std::vector<TensorShape>& arg_shapes);
 
 absl::Status CompileOpMetadataFromContext(OpKernelConstruction* ctx,
                                           TPUCompileMetadataProto* metadata,

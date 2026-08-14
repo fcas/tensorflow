@@ -23,21 +23,21 @@ namespace {
 using tensorflow::errors::InvalidArgument;
 
 // Given lhs and rhs shapes, returns if the shapes are valid for 2D X 2D dot.
-Status DotInputShapeValid(const TensorShape& lhs_shape,
-                          const TensorShape& rhs_shape) {
+absl::Status DotInputShapeValid(const TensorShape& lhs_shape,
+                                const TensorShape& rhs_shape) {
   if (lhs_shape.dims() != 2) {
-    return InvalidArgument("lhs rank must be 2, but given lhs shape ",
-                           lhs_shape.DebugString());
+    return absl::InvalidArgumentError(absl::StrCat(
+        "lhs rank must be 2, but given lhs shape ", lhs_shape.DebugString()));
   }
   if (rhs_shape.dims() != 2) {
-    return InvalidArgument("rhs rank must be 2, but given rhs shape ",
-                           rhs_shape.DebugString());
+    return absl::InvalidArgumentError(absl::StrCat(
+        "rhs rank must be 2, but given rhs shape ", rhs_shape.DebugString()));
   }
   if (lhs_shape.dim_size(1) != rhs_shape.dim_size(0)) {
-    return InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "lhs.dim_size(1) and rhs.dim_size(0) must be equal, but given lhs "
         "shape ",
-        lhs_shape.DebugString(), " and rhs shape ", rhs_shape.DebugString());
+        lhs_shape.DebugString(), " and rhs shape ", rhs_shape.DebugString()));
   }
   return absl::OkStatus();
 }
@@ -80,7 +80,7 @@ void DotWithAccFunctionAndOutputFunction(const Tensor& lhs, const Tensor& rhs,
 
 // Performs dot on per-tensor quantized lhs and per-tensor quantized rhs.
 template <typename Tin, typename Tout>
-Status EvalLhsPerTensorAndRhsPerTensorQuantizedDot(
+absl::Status EvalLhsPerTensorAndRhsPerTensorQuantizedDot(
     const Tensor& lhs, const Tensor& rhs, float lhs_scale,
     int32_t lhs_zero_point, float rhs_scale, int32_t rhs_zero_point,
     float output_scale, int32_t output_zero_point,
@@ -115,7 +115,7 @@ Status EvalLhsPerTensorAndRhsPerTensorQuantizedDot(
 // Performs dot on per-tensor quantized lhs and per-channel (dimension 1)
 // quantized rhs.
 template <typename Tin, typename Tout>
-Status EvalLhsPerTensorAndRhsPerChannelQuantizedDot(
+absl::Status EvalLhsPerTensorAndRhsPerChannelQuantizedDot(
     OpKernelContext* context, const Tensor& lhs, const Tensor& rhs,
     float lhs_scale, int32_t lhs_zero_point, const Tensor& rhs_scales,
     const Tensor& rhs_zero_points, const Tensor& output_scales,
@@ -232,14 +232,15 @@ void EvalLhsPerBatchAndRhsPerChannelQuantizedDot(
 // and produce quantized output. Assumes that output is already allocated with
 // correct size.
 template <typename Tin, typename Tout>
-Status EvalQuantizedDot(OpKernelContext* context, const Tensor& lhs,
-                        const Tensor& rhs, const Tensor& lhs_scales,
-                        const Tensor& lhs_zero_points, const Tensor& rhs_scales,
-                        const Tensor& rhs_zero_points,
-                        const Tensor& output_scales,
-                        const Tensor& output_zero_points,
-                        int output_quantization_min_val,
-                        int output_quantization_max_val, Tensor& output) {
+absl::Status EvalQuantizedDot(OpKernelContext* context, const Tensor& lhs,
+                              const Tensor& rhs, const Tensor& lhs_scales,
+                              const Tensor& lhs_zero_points,
+                              const Tensor& rhs_scales,
+                              const Tensor& rhs_zero_points,
+                              const Tensor& output_scales,
+                              const Tensor& output_zero_points,
+                              int output_quantization_min_val,
+                              int output_quantization_max_val, Tensor& output) {
   const float lhs_scale = lhs_scales.scalar<float>()();
   const int32_t lhs_zero_point = lhs_zero_points.scalar<int32_t>()();
   if (rhs_scales.dims() != 0) {
@@ -265,9 +266,9 @@ Status EvalQuantizedDot(OpKernelContext* context, const Tensor& lhs,
 // For more details on lhs quantization policy, refer to the comment of class
 // UniformQuantizedDotHybridOp below.
 template <typename Trhs>
-Status EvalHybridDot(OpKernelContext* context, const Tensor& lhs,
-                     const Tensor& rhs, const Tensor& rhs_scales,
-                     const Tensor& rhs_zero_points, Tensor& output) {
+absl::Status EvalHybridDot(OpKernelContext* context, const Tensor& lhs,
+                           const Tensor& rhs, const Tensor& rhs_scales,
+                           const Tensor& rhs_zero_points, Tensor& output) {
   const int64_t batches = lhs.dim_size(0);
 
   Tensor lhs_quantized;
@@ -313,9 +314,9 @@ class UniformQuantizedDotOp : public OpKernel {
   explicit UniformQuantizedDotOp(OpKernelConstruction* context)
       : OpKernel(context) {
     OP_REQUIRES(context, (std::is_same<Tin, qint8>()),
-                InvalidArgument("Unsupported lhs/rhs type."));
+                absl::InvalidArgumentError("Unsupported lhs/rhs type."));
     OP_REQUIRES(context, (std::is_same<Tout, qint32>()),
-                InvalidArgument("Unsupported output type."));
+                absl::InvalidArgumentError("Unsupported output type."));
 
     OP_REQUIRES_OK(context, context->GetAttr("output_quantization_min_val",
                                              &output_quantization_min_val_));
@@ -325,17 +326,17 @@ class UniformQuantizedDotOp : public OpKernel {
     int lhs_quantization_axis;
     OP_REQUIRES_OK(context, context->GetAttr("lhs_quantization_axis",
                                              &lhs_quantization_axis));
-    OP_REQUIRES(
-        context, (lhs_quantization_axis == -1),
-        InvalidArgument("lhs_quantization_axis Attr must be -1 (per-tensor)."));
+    OP_REQUIRES(context, (lhs_quantization_axis == -1),
+                absl::InvalidArgumentError(
+                    "lhs_quantization_axis Attr must be -1 (per-tensor)."));
 
     int rhs_quantization_axis;
     OP_REQUIRES_OK(context, context->GetAttr("rhs_quantization_axis",
                                              &rhs_quantization_axis));
-    OP_REQUIRES(context,
-                (rhs_quantization_axis == 1 || rhs_quantization_axis == -1),
-                InvalidArgument("rhs_quantization_axis Attr must be 1 "
-                                "(per-channel) or -1 (per-tensor)."));
+    OP_REQUIRES(
+        context, (rhs_quantization_axis == 1 || rhs_quantization_axis == -1),
+        absl::InvalidArgumentError("rhs_quantization_axis Attr must be 1 "
+                                   "(per-channel) or -1 (per-tensor)."));
 
     int output_quantization_axis;
     OP_REQUIRES_OK(context, context->GetAttr("output_quantization_axis",
@@ -343,8 +344,8 @@ class UniformQuantizedDotOp : public OpKernel {
     OP_REQUIRES(
         context,
         (output_quantization_axis == 1 || output_quantization_axis == -1),
-        InvalidArgument("output_quantization_axis Attr must be 1 "
-                        "(per-channel) or -1 (per-tensor)."));
+        absl::InvalidArgumentError("output_quantization_axis Attr must be 1 "
+                                   "(per-channel) or -1 (per-tensor)."));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -358,12 +359,14 @@ class UniformQuantizedDotOp : public OpKernel {
     const Tensor& output_zero_points = context->input(7);
 
     OP_REQUIRES(context, (AllElementsPositive<float>(lhs_scales)),
-                InvalidArgument("lhs scales elements must be all positive."));
+                absl::InvalidArgumentError(
+                    "lhs scales elements must be all positive."));
     OP_REQUIRES(context, (AllElementsPositive<float>(rhs_scales)),
-                InvalidArgument("rhs scales elements must be all positive."));
-    OP_REQUIRES(
-        context, (AllElementsPositive<float>(output_scales)),
-        InvalidArgument("output scales elements must be all positive."));
+                absl::InvalidArgumentError(
+                    "rhs scales elements must be all positive."));
+    OP_REQUIRES(context, (AllElementsPositive<float>(output_scales)),
+                absl::InvalidArgumentError(
+                    "output scales elements must be all positive."));
 
     // Check lhs and rhs shapes.
     OP_REQUIRES_OK(context, DotInputShapeValid(lhs.shape(), rhs.shape()));
@@ -371,10 +374,10 @@ class UniformQuantizedDotOp : public OpKernel {
     OP_REQUIRES(
         context,
         (lhs_scales.IsSameSize(lhs_zero_points) && lhs_scales.dims() == 0),
-        InvalidArgument(
+        absl::InvalidArgumentError(absl::StrCat(
             "lhs scales/zero_points must be all scalar tensors. Given: ",
             lhs_scales.shape().DebugString(),
-            lhs_zero_points.shape().DebugString()));
+            lhs_zero_points.shape().DebugString())));
 
     // Check rhs scales/zero_points shapes.
     OP_REQUIRES_OK(context,
@@ -391,12 +394,12 @@ class UniformQuantizedDotOp : public OpKernel {
 
     OP_REQUIRES(
         context, (rhs_scales.dims() > 0 || output_scales.dims() == 0),
-        InvalidArgument(
+        absl::InvalidArgumentError(absl::StrCat(
             "If rhs is per-tensor quantized, output must be also per-tensor "
             "quantized. Given rhs scales and zero_points of shape ",
             rhs_scales.shape().DebugString(),
             " but given output scales and zero_points of shape ",
-            output_scales.shape().DebugString()));
+            output_scales.shape().DebugString())));
 
     Tensor* output = nullptr;
     OP_REQUIRES_OK(
@@ -435,19 +438,19 @@ class UniformQuantizedDotHybridOp : public OpKernel {
   explicit UniformQuantizedDotHybridOp(OpKernelConstruction* context)
       : OpKernel(context) {
     OP_REQUIRES(context, (std::is_same<Tlhs, float>()),
-                InvalidArgument("Unsupported lhs type."));
+                absl::InvalidArgumentError("Unsupported lhs type."));
     OP_REQUIRES(context, (std::is_same<Trhs, qint8>()),
-                InvalidArgument("Unsupported rhs type."));
+                absl::InvalidArgumentError("Unsupported rhs type."));
     OP_REQUIRES(context, (std::is_same<Tout, float>()),
-                InvalidArgument("Unsupported output type."));
+                absl::InvalidArgumentError("Unsupported output type."));
 
     int rhs_quantization_axis;
     OP_REQUIRES_OK(context, context->GetAttr("rhs_quantization_axis",
                                              &rhs_quantization_axis));
-    OP_REQUIRES(context,
-                (rhs_quantization_axis == 1 || rhs_quantization_axis == -1),
-                InvalidArgument("rhs_quantization_axis Attr must be 1 "
-                                "(per-channel) or -1 (per-tensor)."));
+    OP_REQUIRES(
+        context, (rhs_quantization_axis == 1 || rhs_quantization_axis == -1),
+        absl::InvalidArgumentError("rhs_quantization_axis Attr must be 1 "
+                                   "(per-channel) or -1 (per-tensor)."));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -464,7 +467,8 @@ class UniformQuantizedDotHybridOp : public OpKernel {
                        rhs.shape(), rhs_scales.shape(), rhs_zero_points.shape(),
                        /*quantization_axis=*/rhs_scales.dims() == 0 ? -1 : 1));
     OP_REQUIRES(context, AllElementsPositive<float>(rhs_scales),
-                InvalidArgument("rhs scales elements must be all positive."));
+                absl::InvalidArgumentError(
+                    "rhs scales elements must be all positive."));
 
     Tensor* output = nullptr;
     OP_REQUIRES_OK(

@@ -21,10 +21,12 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/synchronization/notification.h"
 #include "tensorflow/c/c_api.h"
 #include "tensorflow/c/c_api_internal.h"
 #include "tensorflow/c/c_api_macros.h"
@@ -50,7 +52,6 @@ limitations under the License.
 #include "tensorflow/core/framework/resource_mgr.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/platform/notification.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 
 // Required for IS_MOBILE_PLATFORM definition
@@ -59,11 +60,11 @@ limitations under the License.
 #if !defined(IS_MOBILE_PLATFORM) && !defined(IS_SLIM_BUILD)
 #include "tensorflow/c/experimental/stream_executor/stream_executor_internal.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/framework/device_id_utils.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/common_runtime/next_pluggable_device/c/tf_rendezvous_c_api.h"
 #include "tensorflow/core/common_runtime/next_pluggable_device/c/tf_rendezvous_c_api_internal.h"
 #include "tensorflow/core/framework/device.h"
-#include "tsl/framework/device_id_utils.h"
-#include "tsl/platform/statusor.h"
 #endif  // !defined(IS_MOBILE_PLATFORM) && !defined(IS_SLIM_BUILD)
 
 // This file forms the basis of a stable ABI for third-party kernel
@@ -72,7 +73,9 @@ limitations under the License.
 
 typedef std::function<void()> AsyncOpKernelDoneCallback;
 void TF_RunAsyncOpKernelDoneCallback(TF_AsyncOpKernelDoneCallback* done) {
-  (*reinterpret_cast<AsyncOpKernelDoneCallback*>(done))();
+  auto* callback = reinterpret_cast<AsyncOpKernelDoneCallback*>(done);
+  (*callback)();
+  delete callback;
 }
 
 struct TF_KernelBuilder {
@@ -246,16 +249,18 @@ class CAsyncOpKernel : public AsyncOpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
-    Notification n;
+    absl::Notification n;
     ComputeAsync(ctx, [&n]() { n.Notify(); });
     n.WaitForNotification();
   }
 
   void ComputeAsync(OpKernelContext* ctx,
                     AsyncOpKernelDoneCallback done) override {
+    // The call site needs to manually delete the done callback.
+    auto* done_ptr = new AsyncOpKernelDoneCallback(std::move(done));
     (*compute_async_func_)(
         c_kernel_, reinterpret_cast<TF_OpKernelContext*>(ctx),
-        reinterpret_cast<TF_AsyncOpKernelDoneCallback*>(&done));
+        reinterpret_cast<TF_AsyncOpKernelDoneCallback*>(done_ptr));
   }
 
   CAsyncOpKernel* AsAsync() override { return this; }
@@ -360,7 +365,7 @@ SP_Stream TF_GetStream(TF_OpKernelContext* ctx, TF_Status* status) {
   } else {  // Is a PluggableDevice
     TF_SetStatus(status, TF_OK, "");
     auto c_stream = static_cast<stream_executor::CStream*>(
-        cc_ctx->op_device_context()->stream()->implementation());
+        cc_ctx->op_device_context()->stream());
     return c_stream->Handle();
   }
 #endif  // defined(IS_MOBILE_PLATFORM) || defined(IS_SLIM_BUILD)
@@ -794,10 +799,7 @@ int TF_GetDeviceId(TF_OpKernelContext* ctx) {
 #else
   const auto* device = reinterpret_cast<const tensorflow::Device*>(
       device_base->UnderlyingDevice());
-  const absl::StatusOr<int> id = tsl::GetDeviceIdFromDeviceParsedName(
-      device->parsed_name(), tensorflow::DeviceType(device->device_type()));
-  if (!id.ok()) return -1;
-  return *id;
+  return tsl::GetDeviceIdFromDeviceParsedName(device->parsed_name());
 #endif  // defined(IS_MOBILE_PLATFORM) || defined(IS_SLIM_BUILD)
 }
 
@@ -878,9 +880,9 @@ TF_Tensor* TF_ForwardInputOrAllocateOutput(
   TF_SetStatus(status, TF_OK, "");
   auto* cc_ctx = reinterpret_cast<::tensorflow::OpKernelContext*>(context);
 
-  tensorflow::gtl::ArraySlice<int> input_indices_array(
-      candidate_input_indices, num_candidate_input_indices);
-  tensorflow::gtl::ArraySlice<const int64_t> output_dimarray(
+  absl::Span<const int> input_indices_array(candidate_input_indices,
+                                            num_candidate_input_indices);
+  absl::Span<const int64_t> output_dimarray(
       reinterpret_cast<const int64_t*>(output_dims), output_num_dims);
   tensorflow::Tensor* output_tensor_pointer;
   absl::Status s = cc_ctx->forward_input_or_allocate_output(

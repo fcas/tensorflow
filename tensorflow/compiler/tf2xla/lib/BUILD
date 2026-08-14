@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Utilities for building XLA computations.
 
 load("//tensorflow:tensorflow.default.bzl", "filegroup")
@@ -25,15 +40,16 @@ cc_library(
     deps = [
         "//tensorflow/compiler/tf2xla:common",
         "//tensorflow/core:framework",
+        "//tensorflow/core/platform:errors",
+        "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:statusor",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla:status_macros",
-        "@local_xla//xla:util",
-        "@local_xla//xla/client:xla_builder",
-        "@local_xla//xla/client/lib:broadcast",
+        "@xla//xla/hlo/builder:xla_builder",
+        "@xla//xla/hlo/builder/lib:broadcast",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -46,10 +62,10 @@ cc_library(
         "//tensorflow/compiler/tf2xla:xla_helpers",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/platform:statusor",
-        "@local_xla//xla:status_macros",
-        "@local_xla//xla/client:xla_builder",
-        "@local_xla//xla/client/lib:constants",
-        "@local_xla//xla/client/lib:math",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/hlo/builder:xla_builder",
+        "@xla//xla/hlo/builder/lib:constants",
+        "@xla//xla/hlo/builder/lib:math",
     ],
 )
 
@@ -58,17 +74,17 @@ cc_library(
     srcs = ["scatter.cc"],
     hdrs = ["scatter.h"],
     deps = [
-        ":util",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_xla//xla:literal",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla:status_macros",
-        "@local_xla//xla:statusor",
-        "@local_xla//xla:util",
-        "@local_xla//xla/client:xla_builder",
-        "@local_xla//xla/client:xla_computation",
-        "@local_xla//xla/client/lib:arithmetic",
+        "@xla//xla:shape_util",
+        "@xla//xla:status_macros",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/hlo/builder:xla_builder",
+        "@xla//xla/hlo/builder:xla_computation",
     ],
 )
 
@@ -78,15 +94,14 @@ cc_library(
     hdrs = ["util.h"],
     deps = [
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/types:span",
-        "@local_xla//xla:literal",
-        "@local_xla//xla:literal_util",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla:status_macros",
-        "@local_xla//xla:statusor",
-        "@local_xla//xla:util",
-        "@local_xla//xla/client:xla_builder",
-        "@local_xla//xla/client:xla_computation",
+        "@xla//xla:literal",
+        "@xla//xla:literal_util",
+        "@xla//xla:shape_util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/hlo/builder:xla_builder",
+        "@xla//xla/hlo/builder:xla_computation",
     ],
 )
 
@@ -97,8 +112,11 @@ cc_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
-        "@local_xla//xla:statusor",
-        "@local_xla//xla:util",
-        "@local_xla//xla/client:xla_builder",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@xla//xla:shape_util",
+        "@xla//xla:util",
+        "@xla//xla/hlo/builder:xla_builder",
     ],
 )

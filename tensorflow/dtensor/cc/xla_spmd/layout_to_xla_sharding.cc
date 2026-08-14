@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/dtensor/cc/xla_spmd/layout_to_xla_sharding.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -132,8 +133,8 @@ StatusOr<::xla::OpSharding> ConvertLayoutToXlaOpSharding(const Layout& layout) {
   {
     // Set Tile Assignment Dimensions by handling both partially sharded and
     // fully sharded.
-    int32 product_of_sharded_dimensions = 1;
-    for (int32 dim_size : layout.num_shards()) {
+    int32_t product_of_sharded_dimensions = 1;
+    for (int32_t dim_size : layout.num_shards()) {
       product_of_sharded_dimensions *= dim_size;
       xla_sharding.add_tile_assignment_dimensions(dim_size);
     }

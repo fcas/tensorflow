@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <utility>
 
 #include "mhlo/IR/hlo_ops.h"
@@ -92,17 +91,11 @@ struct CollapseElementwiseMapPass
     MLIRContext *ctx = &getContext();
     RewritePatternSet patterns(ctx);
     patterns.add<ConvertMapOfElementwiseOps>(ctx);
-    if (failed(
-            applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       return signalPassFailure();
   }
 };
 }  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>>
-createCollapseElementwiseMapPass() {
-  return std::make_unique<CollapseElementwiseMapPass>();
-}
 
 }  // namespace mhlo
 }  // namespace mlir

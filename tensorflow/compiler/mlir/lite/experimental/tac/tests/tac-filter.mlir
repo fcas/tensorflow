@@ -1,3 +1,17 @@
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: tac-opt-all-backends -tfl-tac-filter='use-test-setting=true' %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // expected-remark@below {{Tac filter (0): filter type: function filter SKIP_TARGET_ANNOTATION, filter_pattern: "^testFunction"}}
@@ -60,5 +74,25 @@ module {
     // CHECK-SAME: tac.skip_target_annotation
     %2 = "tfl.relu"(%arg0) : (tensor<1xf32>) -> tensor<1xf32> loc("test_op_1")
     func.return
+  }
+}
+
+// -----
+
+// expected-remark@below {{Tac filter (0): filter type: function filter SKIP_TARGET_ANNOTATION, filter_pattern: "^testFunction"}}
+// expected-remark@below {{Tac filter (0) specified but not applied to any op}}
+// expected-remark@below {{Tac filter (1): filter type: function filter INCLUDE_TARGET_ANNOTATION, filter_pattern: "testFunctionInclude"}}
+// expected-remark@below {{Tac filter (1) specified but not applied to any op}}
+// expected-remark@below {{Tac filter (2): filter type: op filter, filter_pattern: "^test_op"}}
+module {
+  // CHECK-LABEL: testOpMultipleResults
+  // expected-remark@+1 {{all ops filtered by tac filter (2): "tfl.split_v"}}
+  func.func @testOpMultipleResults(%arg0: tensor<16x4x4xf32>) -> (tensor<7x4x4xf32>, tensor<3x4x4xf32>, tensor<6x4x4xf32>) {
+    %size_splits = arith.constant dense<[7, 3, 6]> : tensor<3xi32>
+    %split_dim = arith.constant dense<0> : tensor<i32>
+    // CHECK: tfl.split_v
+    // CHECK-SAME: tac.skip_target_annotation
+    %0, %1, %2 = "tfl.split_v"(%arg0, %size_splits, %split_dim) {num_splits = 3 : i32} : (tensor<16x4x4xf32>, tensor<3xi32>, tensor<i32>) -> (tensor<7x4x4xf32>, tensor<3x4x4xf32>, tensor<6x4x4xf32>) loc("test_op_split"("/tmp/test_model.tflite":0:0))
+    func.return %0, %1, %2 : tensor<7x4x4xf32>, tensor<3x4x4xf32>, tensor<6x4x4xf32>
   }
 }

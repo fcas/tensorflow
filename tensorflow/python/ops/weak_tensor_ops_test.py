@@ -748,7 +748,7 @@ class WeakTensorBinaryOpsTest(
       expected_val = a_tensor / b_tensor
       reverse_expected_val = b_tensor / a_tensor
       for x, y in zip(a_list, b_list):
-        # Truediv has a dtype conversion orthagonal to our change. Therefore,
+        # Truediv has a dtype conversion orthogonal to our change. Therefore,
         # we compare our result dtype to Tensor truediv.
         expected_result_dtype = expected_val.dtype
         self.match_expected(
@@ -815,11 +815,11 @@ class WeakTensorBinaryOpsTest(
     run_test_div_no_nan(a=2, b=6)
 
     # Test div_no_nan(x, 0) = 0 even if x is NaN or Inf.
-    x = np.NaN
+    x = np.nan
     y = 0
     self.match_expected(math_ops.div_no_nan(x, y), 0, (dtypes.float32, True))
 
-    x = np.Inf
+    x = np.inf
     self.match_expected(math_ops.div_no_nan(x, y), 0, (dtypes.float32, True))
 
   def test_weak_tensor_multiply_no_nan(self, a_dtype, b_dtype, expected_dtype):
@@ -847,13 +847,13 @@ class WeakTensorBinaryOpsTest(
     run_test_multiply_no_nan(a=2, b=6)
 
     # Test multiply_no_nan(x, 0) = 0 even if x is NaN or Inf.
-    x = np.NaN
+    x = np.nan
     y = 0
     self.match_expected(
         math_ops.multiply_no_nan(x, y), 0, (dtypes.float32, True)
     )
 
-    x = np.Inf
+    x = np.inf
     self.match_expected(
         math_ops.multiply_no_nan(x, y), 0, (dtypes.float32, True)
     )

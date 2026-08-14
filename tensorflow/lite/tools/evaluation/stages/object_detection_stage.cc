@@ -14,15 +14,23 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/tools/evaluation/stages/object_detection_stage.h"
 
+#include <cstddef>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/log/log.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/tools/evaluation/evaluation_delegate_provider.h"
 #include "tensorflow/lite/tools/evaluation/proto/evaluation_config.pb.h"
 #include "tensorflow/lite/tools/evaluation/proto/evaluation_stages.pb.h"
-#include "tensorflow/lite/tools/evaluation/utils.h"
+#include "tensorflow/lite/tools/evaluation/stages/image_preprocessing_stage.h"
+#include "tensorflow/lite/tools/evaluation/stages/object_detection_average_precision_stage.h"
+#include "tensorflow/lite/tools/evaluation/stages/tflite_inference_stage.h"
 
 namespace tflite {
 namespace evaluation {
@@ -102,11 +110,19 @@ TfLiteStatus ObjectDetectionStage::Run() {
   // Preprocessing.
   preprocessing_stage_->SetImagePath(&image_path_);
   TF_LITE_ENSURE_STATUS(preprocessing_stage_->Run());
+  if (preprocessing_stage_->GetPreprocessedImageBytes() <
+      inference_stage_->GetModelInfo()->inputs[0]->bytes) {
+    LOG(ERROR)
+        << "Preprocessed image buffer is smaller than model input tensor size";
+    return kTfLiteError;
+  }
 
   // Inference.
   std::vector<void*> data_ptrs = {};
   data_ptrs.push_back(preprocessing_stage_->GetPreprocessedImageData());
-  inference_stage_->SetInputs(data_ptrs);
+  std::vector<size_t> data_sizes = {
+      preprocessing_stage_->GetPreprocessedImageBytes()};
+  inference_stage_->SetInputs(data_ptrs, data_sizes);
   TF_LITE_ENSURE_STATUS(inference_stage_->Run());
 
   // Convert model output to ObjectsSet.

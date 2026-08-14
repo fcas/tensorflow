@@ -387,7 +387,7 @@ class OpSideEffectCollector {
       AddRegionSideEffectsForOp(func.getBody(), op);
     } else if (auto call = llvm::dyn_cast<CallOpInterface>(op)) {
       func::FuncOp func_op = dyn_cast<func::FuncOp>(
-          call.resolveCallable(&symbol_table_collection_));
+          call.resolveCallableInTable(&symbol_table_collection_));
       if (func_op) {
         AddRegionSideEffectsForOp(func_op.getBody(), op);
       }
@@ -517,7 +517,7 @@ bool OpSideEffectCollector::IsCallToPureFunction(Operation* callOp) const {
   auto call = llvm::dyn_cast<CallOpInterface>(callOp);
   if (!call)
     return false;  // not a call
-  func::FuncOp func_op = dyn_cast<func::FuncOp>(call.resolveCallable(
+  func::FuncOp func_op = dyn_cast<func::FuncOp>(call.resolveCallableInTable(
       &symbol_table_collection_));
   return IsPureFunction(func_op);
 }
@@ -738,7 +738,8 @@ void SideEffectAnalysisInfo::UpdateAccess(ResourceId resource_id,
       }
     } else {
       // Unknown write.
-      for (auto& [id, info] : per_resource_access_info_) {
+      per_resource_access_info_.remove_if([&](auto &entry) {
+        auto& [id, info] = entry;
         if (op_side_effect_collector_.IsOnlySelfDependent(id)) {
           // For self-dependent-only ID, clear unknown access tracking (the new
           // unknown write is not tracked by any other access). Note that we
@@ -749,13 +750,14 @@ void SideEffectAnalysisInfo::UpdateAccess(ResourceId resource_id,
           info.are_last_unknown_reads_tracked = false;
           info.is_last_unknown_write_tracked = false;
           info.is_last_unknown_write_tracked_by_write = false;
+          return false;
         } else {
           // For other IDs, we can delete access info completely (the unknown
           // write acts as a barrier for those IDs).
           VLOG(4) << "      Clearing resource access info for ID " << id;
-          per_resource_access_info_.erase(id);
+          return true;
         }
-      }
+      });
     }
   }
   // Now update access info for `resource_id`.

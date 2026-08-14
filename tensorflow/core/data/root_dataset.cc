@@ -114,24 +114,24 @@ void AddTraceMetadata(const RootDataset::Params& params, const Options& options,
         kAlgorithm, model::AutotuneAlgorithm_Name(params.autotune_algorithm)));
     trace_metadata->push_back(std::make_pair(
         kCpuBudget,
-        strings::Printf("%lld", static_cast<long long>(
+        absl::StrFormat("%lld", static_cast<long long>(
                                     params.autotune_cpu_budget_func()))));
     int64_t ram_budget = params.ComputeInitialAutotuneRamBudget();
     trace_metadata->push_back(std::make_pair(
         kRamBudget,
-        strings::Printf("%lld", static_cast<long long>(ram_budget / 1.0e6))));
+        absl::StrFormat("%lld", static_cast<long long>(ram_budget / 1.0e6))));
   }
   if (params.max_intra_op_parallelism >= 0) {
     trace_metadata->push_back(std::make_pair(
         kIntraOpParallelism,
-        strings::Printf("%lld", static_cast<long long>(value_or_default(
+        absl::StrFormat("%lld", static_cast<long long>(value_or_default(
                                     params.max_intra_op_parallelism, 0,
                                     port::MaxParallelism())))));
   }
   if (params.private_threadpool_size >= 0) {
     trace_metadata->push_back(std::make_pair(
         kPrivateThreadpoolSize,
-        strings::Printf("%lld", static_cast<long long>(value_or_default(
+        absl::StrFormat("%lld", static_cast<long long>(value_or_default(
                                     params.private_threadpool_size, 0,
                                     port::MaxParallelism())))));
   }
@@ -146,27 +146,28 @@ void AddTraceMetadata(const RootDataset::Params& params, const Options& options,
 }  // namespace
 
 // static
-Status RootDataset::FromOptions(const DatasetBase* input,
-                                DatasetBase** output) {
+absl::Status RootDataset::FromOptions(const DatasetBase* input,
+                                      DatasetBase** output) {
   Params params;
   SetRootDatasetParams(input->options(), &params);
   *output = new RootDataset(input, params);
-  (*output)->Initialize(/*metadata=*/{});
+  (*output)->Initialize(input->metadata());
   for (const auto& framework : input->options().framework_type()) {
     metrics::RecordTFDataFrameworkType(framework);
   }
   return absl::OkStatus();
 }
 
-Status RootDataset::FromOptions(core::RefCountPtr<DatasetBase> input,
-                                DatasetBase** output) {
+absl::Status RootDataset::FromOptions(core::RefCountPtr<DatasetBase> input,
+                                      DatasetBase** output) {
   Params params;
   for (const auto& framework : input->options().framework_type()) {
     metrics::RecordTFDataFrameworkType(framework);
   }
   SetRootDatasetParams(input->options(), &params);
+  Metadata metadata = input->metadata();
   *output = new RootDataset(std::move(input), params);
-  (*output)->Initialize(/*metadata=*/{});
+  (*output)->Initialize(metadata);
   return absl::OkStatus();
 }
 
@@ -194,7 +195,7 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
 
   bool SymbolicCheckpointCompatible() const override { return true; }
 
-  Status Initialize(IteratorContext* ctx) override {
+  absl::Status Initialize(IteratorContext* ctx) override {
     // prefetch_autotuner.h currently disregards `autotune` parameter
     // so no matter whether dataset()->params_.autotune is on or not
     // we need to pass ram_budget_manager_ to the downstream dataset operations
@@ -209,7 +210,7 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
         ctx->SetModel(model_);
       }
 
-      absl::flat_hash_set<string> experiments = GetExperiments();
+      absl::flat_hash_set<std::string> experiments = GetExperiments();
       if (experiments.contains("stage_based_autotune_v2")) {
         model_->AddExperiment("stage_based_autotune_v2");
       }
@@ -230,8 +231,9 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
     return absl::OkStatus();
   }
 
-  Status GetNextInternal(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
-                         bool* end_of_sequence) override {
+  absl::Status GetNextInternal(IteratorContext* ctx,
+                               std::vector<Tensor>* out_tensors,
+                               bool* end_of_sequence) override {
     {
       tf_shared_lock l(mu_);
       if (model_ != nullptr && end_time_usec_ > 0) {
@@ -258,14 +260,14 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
     return model::MakeKnownRatioNode(std::move(args), /*ratio=*/1);
   }
 
-  Status SaveInternal(SerializationContext* ctx,
-                      IteratorStateWriter* writer) override {
+  absl::Status SaveInternal(SerializationContext* ctx,
+                            IteratorStateWriter* writer) override {
     TF_RETURN_IF_ERROR(SaveInput(ctx, writer, input_impl_));
     return absl::OkStatus();
   }
 
-  Status RestoreInternal(IteratorContext* ctx,
-                         IteratorStateReader* reader) override {
+  absl::Status RestoreInternal(IteratorContext* ctx,
+                               IteratorStateReader* reader) override {
     IteratorContext iter_ctx(CreateParams(ctx));
     TF_RETURN_IF_ERROR(RestoreInput(&iter_ctx, reader, input_impl_));
     ctx->MergeCheckpoint(iter_ctx.checkpoint());
@@ -279,13 +281,13 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
     if (mem_bw != INT64_MAX) {
       traceme_metadata.push_back(std::make_pair(
           kMemBandwidth,
-          strings::Printf("%lld", static_cast<long long>(mem_bw))));
+          absl::StrFormat("%lld", static_cast<long long>(mem_bw))));
     }
     const auto memory_info = port::GetMemoryInfo();
     const auto memory_usage = memory_info.total - memory_info.free;
     traceme_metadata.push_back(std::make_pair(
         kRamUsage,
-        strings::Printf("%lld out of %lld (%.2f%%)",
+        absl::StrFormat("%lld out of %lld (%.2f%%)",
                         static_cast<long long>(memory_usage / 1.0e6),
                         static_cast<long long>(memory_info.total / 1.0e6),
                         static_cast<double>(100 * memory_usage) /
@@ -294,7 +296,7 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
     if (io_statistics.roundtrip_latency_usec.count > 0) {
       traceme_metadata.push_back(std::make_pair(
           kReadRoundtripLatency,
-          strings::Printf(
+          absl::StrFormat(
               "(count: %lld, mean: %lld, std dev: %lld)",
               static_cast<long long>(
                   io_statistics.roundtrip_latency_usec.count),
@@ -305,7 +307,7 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
     if (io_statistics.response_bytes.count > 0) {
       traceme_metadata.push_back(std::make_pair(
           kReadResponseBytes,
-          strings::Printf(
+          absl::StrFormat(
               "(count: %lld, mean: %lld, std dev: %lld)",
               static_cast<long long>(io_statistics.response_bytes.count),
               static_cast<long long>(io_statistics.response_bytes.mean),
@@ -340,7 +342,7 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
     return params;
   }
 
-  Status EnsureModelThreadStarted(IteratorContext* ctx) {
+  absl::Status EnsureModelThreadStarted(IteratorContext* ctx) {
     mutex_lock l(mu_);
     if (!model_thread_) {
       RunMode run_mode = ctx->run_mode();
@@ -354,7 +356,7 @@ class RootDataset::Iterator : public DatasetIterator<RootDataset> {
           // Dynamic RAM budget should only apply to tf.data service.
           raw_ram_budget = params.ComputeInitialAutotuneRamBudget();
         }
-        Status status = model_->OptimizeLoop(
+        absl::Status status = model_->OptimizeLoop(
             params.autotune_algorithm, params.autotune_cpu_budget_func,
             params.ram_budget_share, raw_ram_budget, *ram_budget_manager_,
             cancellation_manager_.get());
@@ -411,7 +413,7 @@ RootDataset::RootDataset(core::RefCountPtr<DatasetBase> input,
 RootDataset::~RootDataset() = default;
 
 std::unique_ptr<IteratorBase> RootDataset::MakeIteratorInternal(
-    const string& prefix) const {
+    const std::string& prefix) const {
   return std::make_unique<Iterator>(
       Iterator::Params{this, name_utils::IteratorPrefix(kDatasetType, prefix)});
 }
@@ -424,7 +426,7 @@ const std::vector<PartialTensorShape>& RootDataset::output_shapes() const {
   return input_->output_shapes();
 }
 
-string RootDataset::DebugString() const {
+std::string RootDataset::DebugString() const {
   return name_utils::DatasetDebugString(kDatasetType);
 }
 
@@ -432,32 +434,46 @@ int64_t RootDataset::CardinalityInternal(CardinalityOptions options) const {
   return input_->Cardinality(options);
 }
 
-Status RootDataset::Get(OpKernelContext* ctx, int64 index,
-                        std::vector<Tensor>* out_tensors) const {
+absl::Status RootDataset::Get(OpKernelContext* ctx, int64_t index,
+                              std::vector<Tensor>* out_tensors) const {
   std::vector<const DatasetBase*> inputs;
   TF_RETURN_IF_ERROR(this->InputDatasets(&inputs));
   return inputs[0]->Get(ctx, index, out_tensors);
 }
 
-Status RootDataset::InputDatasets(
+absl::Status RootDataset::InputDatasets(
     std::vector<const DatasetBase*>* inputs) const {
   inputs->push_back(input_);
   return absl::OkStatus();
 }
 
-Status RootDataset::CheckExternalState() const {
+absl::Status RootDataset::CheckExternalState() const {
   return input_->CheckExternalState();
 }
 
-Status RootDataset::AsGraphDefInternal(SerializationContext* ctx,
-                                       DatasetGraphDefBuilder* b,
-                                       Node** output) const {
-  return errors::Unimplemented("RootDataset does not support serialization.");
+absl::Status RootDataset::AsGraphDefInternal(SerializationContext* ctx,
+                                             DatasetGraphDefBuilder* b,
+                                             Node** output) const {
+  return absl::UnimplementedError(
+      "RootDataset does not support serialization.");
 }
 
 #if !defined(IS_MOBILE_PLATFORM)
-Status FinalizeDataset(OpKernelContext* ctx, const DatasetBase* input,
-                       DatasetBase** output) {
+
+namespace {
+// Initialize the rewritten output dataset with the metadata from the input
+// dataset. Note: Do not override the `name` field in the metadata.
+void InitializeRewrittenDatasetMetadata(const DatasetBase* input,
+                                        DatasetBase* rewritten_output) {
+  Metadata rewritten_output_metadata = rewritten_output->metadata();
+  rewritten_output_metadata.set_data_service_address(
+      input->metadata().data_service_address());
+  rewritten_output->Initialize(rewritten_output_metadata);
+}
+}  // namespace
+
+absl::Status FinalizeDataset(OpKernelContext* ctx, const DatasetBase* input,
+                             DatasetBase** output) {
   const Options& options = input->options();
   absl::flat_hash_set<tstring> optimizations_enabled;
   absl::flat_hash_set<tstring> optimizations_disabled;
@@ -481,12 +497,13 @@ Status FinalizeDataset(OpKernelContext* ctx, const DatasetBase* input,
     return CreateRewriterConfig(optimizations, optimization_configs);
   };
   core::RefCountPtr<DatasetBase> rewritten_output;
-  Status s = RewriteDataset(ctx, input, std::move(config_factory),
-                            /*record_fingerprint=*/false, &rewritten_output);
+  absl::Status s =
+      RewriteDataset(ctx, input, std::move(config_factory),
+                     /*record_fingerprint=*/false, &rewritten_output);
 
   *output = rewritten_output.get();
   bool rewritten = (*output != input);
-  if (errors::IsDeadlineExceeded(s)) {
+  if (absl::IsDeadlineExceeded(s)) {
     // Ignore DeadlineExceeded as it implies that the attempted rewrite took too
     // long which should not prevent further computation.
     LOG(WARNING) << s;
@@ -496,6 +513,7 @@ Status FinalizeDataset(OpKernelContext* ctx, const DatasetBase* input,
   if (!rewritten) {
     return RootDataset::FromOptions(input, output);
   } else {
+    InitializeRewrittenDatasetMetadata(input, rewritten_output.get());
     return RootDataset::FromOptions(std::move(rewritten_output), output);
   }
   return absl::OkStatus();

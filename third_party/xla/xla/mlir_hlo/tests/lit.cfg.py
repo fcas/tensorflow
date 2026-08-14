@@ -16,6 +16,7 @@
 # pylint: disable=undefined-variable
 
 import os
+import sys
 
 import lit.formats
 from lit.llvm import llvm_config
@@ -27,7 +28,7 @@ import lit.util
 # name: The name of this test suite.
 config.name = 'MLIR_HLO_OPT'
 
-config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
+config.test_format = lit.formats.ShTest()
 
 # suffixes: A list of file extensions to treat as test files.
 config.suffixes = ['.mlir']
@@ -40,6 +41,11 @@ config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 
 llvm_config.with_system_environment(['HOME', 'INCLUDE', 'LIB', 'TMP', 'TEMP'])
 
+# Adjusted the PATH to correctly detect the tools on Windows
+if sys.platform == 'win32':
+  llvm_config.config.llvm_tools_dir = r'..\llvm-project\llvm'
+  llvm_config.config.mlir_binary_dir = r'..\llvm-project\mlir'
+
 llvm_config.use_default_substitutions()
 
 # Tweak the PATH to include the tools dir.
@@ -51,7 +57,7 @@ tool_dirs = [
 ]
 tools = [
     'mlir-hlo-opt',
-    'mlir-cpu-runner',
+    'mlir-runner',
     ToolSubst('%mlir_lib_dir', config.mlir_lib_dir, unresolved='ignore'),
 ]
 llvm_config.add_tool_substitutions(tools, tool_dirs)

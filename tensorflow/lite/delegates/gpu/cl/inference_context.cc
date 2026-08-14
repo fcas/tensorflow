@@ -142,7 +142,7 @@ void GetUsages(const GpuModel& model,
   }
 }
 
-absl::Status GetBufferAsignment(
+absl::Status GetBufferAssignment(
     const GpuModel& gpu_model, const CreateGpuModelInfo* create_info,
     const GpuInfo& gpu_info,
     std::vector<TensorUsageRecord<size_t>>* buffer_usage_records,
@@ -176,8 +176,9 @@ absl::Status GetBufferAsignment(
           (descriptor.GetStorageType() == TensorStorageType::TEXTURE_2D
                ? 4
                : shape.c);
-      const size_t width = shape.b * shape.w;
-      const size_t height = shape.h * DivideRoundUp(shape.c, 4);
+      const size_t width = static_cast<size_t>(shape.b) * shape.w;
+      const size_t height =
+          static_cast<size_t>(shape.h) * DivideRoundUp(shape.c, 4);
       size_t width_pixel_alignment = gpu_info.opencl_info.image_pitch_alignment;
       if (gpu_info.IsAdreno() && width_pixel_alignment % bytes_per_pixel == 0) {
         width_pixel_alignment /= bytes_per_pixel;
@@ -188,8 +189,8 @@ absl::Status GetBufferAsignment(
       if (descriptor.GetStorageType() == TensorStorageType::IMAGE_BUFFER) {
         has_buffer_based_images = true;
       }
-      buffer_size =
-          shape.b * shape.w * shape.h * AlignByN(shape.c, 4) * element_size;
+      buffer_size = static_cast<size_t>(shape.b) * shape.w * shape.h *
+                    AlignByN(shape.c, 4) * element_size;
     }
     if (graph_ids_to_shared_buffer_tensors) {
       (*graph_ids_to_shared_buffer_tensors)[usage.first] =
@@ -239,7 +240,7 @@ absl::Status ClarifyWithCommandBuffer(ProfilingCommandQueue* queue,
       RETURN_IF_ERROR(cb.Init(queue, /*simultaneous_use=*/false));
       const int num_kernels_in_cb = get_tasks_count(node_index);
       for (int j = 0; j < num_kernels_in_cb; ++j) {
-        RETURN_IF_ERROR(nodes[node_index]->cl_operation.AddToCommanBuffer(
+        RETURN_IF_ERROR(nodes[node_index]->cl_operation.AddToCommandBuffer(
             cb.GetCommandBuffer()));
       }
       RETURN_IF_ERROR(cb.Finalize());
@@ -316,7 +317,9 @@ absl::Status InferenceContext::InitFromGpuModel(
   shared_buffers_parent_ptr_ = shared_buffer;
   RETURN_IF_ERROR(AllocateMemory(*gpu_model, env->GetDevicePtr()->GetInfo(),
                                  &create_info, &env->context()));
-  InitFromGpuModel(gpu_model);
+
+  gpu_info_ = env->device().GetInfo();
+  InitFromGpuModel(gpu_info_, gpu_model);
 
   CreationContext creation_context;
   creation_context.device = env->GetDevicePtr();
@@ -368,8 +371,6 @@ absl::Status InferenceContext::InitFromGpuModel(
     external_tensor.second = nullptr;
   }
 
-  gpu_info_ = env->device().GetInfo();
-
   if (serialized_model) {
     auto encoded_fb = Encode(*env->GetDevicePtr(), *env->program_cache(),
                              gpu_model_fb, &builder);
@@ -381,9 +382,9 @@ absl::Status InferenceContext::InitFromGpuModel(
   return absl::OkStatus();
 }
 
-absl::Status InferenceContext::AddToCommanBuffer(cl_command_buffer_khr cb) {
+absl::Status InferenceContext::AddToCommandBuffer(cl_command_buffer_khr cb) {
   for (auto& node : nodes_) {
-    RETURN_IF_ERROR(node.cl_operation.AddToCommanBuffer(cb));
+    RETURN_IF_ERROR(node.cl_operation.AddToCommandBuffer(cb));
   }
   return absl::OkStatus();
 }
@@ -408,7 +409,7 @@ absl::Status InferenceContext::RestoreDeserialized(
   RETURN_IF_ERROR(tflite::gpu::Decode(decoded_fb->gpu_model(), &gpu_model));
   RETURN_IF_ERROR(AllocateMemory(gpu_model, env->GetDevicePtr()->GetInfo(),
                                  create_info, &env->context()));
-  InitFromGpuModel(&gpu_model);
+  InitFromGpuModel(env->GetDevicePtr()->GetInfo(), &gpu_model);
 
   // deserializing kernels into program_cache
   for (auto binary_program_fb : *decoded_fb->binary_programs()) {
@@ -463,12 +464,18 @@ absl::Status InferenceContext::RestoreDeserialized(
   return absl::OkStatus();
 }
 
-void InferenceContext::InitFromGpuModel(GpuModel* gpu_model) {
+void InferenceContext::InitFromGpuModel(const GpuInfo& gpu_info,
+                                        GpuModel* gpu_model) {
   for (const auto& input : gpu_model->input_ids_and_refs) {
     input_ids_.push_back(input.first);
   }
   for (const auto& output : gpu_model->output_ids_and_refs) {
     output_ids_.push_back(output.first);
+  }
+  if (gpu_info.opencl_info.IsCLVK() &&
+      gpu_info.SupportsExtension("cl_khr_command_buffer")) {
+    use_command_buffer_ = true;
+    command_buffer_ = nullptr;
   }
   nodes_.resize(gpu_model->nodes.size());
   for (int i = 0; i < gpu_model->nodes.size(); ++i) {
@@ -547,7 +554,7 @@ absl::Status InferenceContext::AllocateBufferBasedTensors(
   OffsetsAssignment offset_assignment;
   bool use_offset_assignment;
   bool is_sub_buffers_supported;
-  RETURN_IF_ERROR(GetBufferAsignment(
+  RETURN_IF_ERROR(GetBufferAssignment(
       gpu_model, create_info, gpu_info, &buffer_usage_records,
       &graph_ids_to_shared_buffer_tensors_, &buffer_assignment,
       &offset_assignment, &use_offset_assignment, &is_sub_buffers_supported));
@@ -596,7 +603,7 @@ absl::Status InferenceContext::AllocateBufferBasedTensors(
 
       shared_buffers_.resize(buffer_assignment.object_sizes.size());
       size_t offset = 0;
-      for (int i = 0; i < buffer_assignment.object_sizes.size(); ++i) {
+      for (size_t i = 0; i < buffer_assignment.object_sizes.size(); ++i) {
         const size_t aligned_size =
             AlignByN(buffer_assignment.object_sizes[i], base_align_bytes);
         RETURN_IF_ERROR(CreateReadWriteSubBuffer(*shared_buffers_parent_ptr_,
@@ -606,7 +613,7 @@ absl::Status InferenceContext::AllocateBufferBasedTensors(
       }
     } else {
       shared_buffers_.resize(buffer_assignment.object_sizes.size());
-      for (int i = 0; i < buffer_assignment.object_sizes.size(); ++i) {
+      for (size_t i = 0; i < buffer_assignment.object_sizes.size(); ++i) {
         RETURN_IF_ERROR(CreateReadWriteBuffer(buffer_assignment.object_sizes[i],
                                               context, &shared_buffers_[i]));
       }
@@ -840,6 +847,23 @@ void InferenceContext::PrepareExternal() {
   }
 }
 
+absl::Status InferenceContext::AddCommandBufferToQueue(CLCommandQueue* queue) {
+  if (command_buffer_ == nullptr) {
+    command_buffer_ = std::make_unique<CLCommandBuffer>();
+    RETURN_IF_ERROR(command_buffer_->Init(queue));
+    RETURN_IF_ERROR(AddToCommandBuffer(command_buffer_->GetCommandBuffer()));
+    RETURN_IF_ERROR(command_buffer_->Finalize());
+  }
+  RETURN_IF_ERROR(command_buffer_->Enqueue(queue));
+  return absl::OkStatus();
+}
+
+void InferenceContext::FlushQueue(CLCommandQueue* queue) {
+  if (!gpu_info_.opencl_info.IsCLVK()) {
+    clFlush(queue->queue());
+  }
+}
+
 absl::Status InferenceContext::AddToQueue(CLCommandQueue* queue) {
   if (recordable_queue_ && recordable_queue_->IsSupported()) {
     return recordable_queue_->Execute(queue);
@@ -851,13 +875,17 @@ absl::Status InferenceContext::AddToQueue(CLCommandQueue* queue) {
     RETURN_IF_ERROR(
         queue->EnqueueEvent(&execution_hints_.prev_enqueue_start_point));
   }
-  int counter = 0;
-  for (auto& node : nodes_) {
-    RETURN_IF_ERROR(node.cl_operation.AddToQueue(queue));
-    counter++;
-    if (execution_hints_.flush_periodically &&
-        counter % execution_hints_.flush_period == 0) {
-      clFlush(queue->queue());
+  if (use_command_buffer_) {
+    RETURN_IF_ERROR(AddCommandBufferToQueue(queue));
+  } else {
+    int counter = 0;
+    for (auto& node : nodes_) {
+      RETURN_IF_ERROR(node.cl_operation.AddToQueue(queue));
+      counter++;
+      if (execution_hints_.flush_periodically &&
+          counter % execution_hints_.flush_period == 0) {
+        clFlush(queue->queue());
+      }
     }
   }
   if (execution_hints_.need_flush) {
@@ -1123,7 +1151,7 @@ absl::Status GetTotalBufferSizeForTensors(const GpuModel& gpu_model,
   OffsetsAssignment offset_assignment;
   bool use_offset_assignment;
   bool is_sub_buffers_supported;
-  RETURN_IF_ERROR(GetBufferAsignment(
+  RETURN_IF_ERROR(GetBufferAssignment(
       gpu_model, &create_info, gpu_info, &buffer_usage_records, nullptr,
       &buffer_assignment, &offset_assignment, &use_offset_assignment,
       &is_sub_buffers_supported));

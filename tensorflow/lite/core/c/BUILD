@@ -1,4 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load(
     "//tensorflow/lite:build_def.bzl",
@@ -13,13 +30,18 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow/lite:__subpackages__"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
+    default_visibility = [
+        # "//litert:__subpackages__",  # copybara:uncomment
+        # copybara:uncomment "//third_party/odml/litert:__subpackages__",
+        "//tensorflow/lite:__subpackages__",
+    ],
     licenses = ["notice"],
 )
 
 exports_files(
     srcs = [
+        "builtin_op_data.h",
         "c_api.h",
         "c_api_experimental.h",
         "c_api_opaque.h",
@@ -41,17 +63,24 @@ bzl_library(
 filegroup(
     name = "headers_filegroup",
     srcs = [
+        "builtin_op_data.h",
         "c_api.h",
         "c_api_types.h",
         "common.h",
         "operator.h",
+        "//tensorflow/compiler/mlir/lite/core/c:lite_headers_filegroup",
+        "//tensorflow/lite/core/async/c:types.h",
+    ],
+    visibility = [
+        # Temporary workaround to make visible to litert in OSS (default vis is not transformed correctly.)
+        "//visibility:public",
     ],
 )
 
 filegroup(
     name = "tflite_internal_cc_3p_api_deps_src",
     srcs = [
-        "builtin_op_data.h",
+        "allocator_internal.h",
         "common.cc",
         "common.h",
     ],
@@ -94,16 +123,23 @@ tflite_cc_library_with_c_headers_test(
     deps = [
         ":c_api_types",
         ":operator",
+        "//tensorflow/compiler/mlir/lite:allocation",
         "//tensorflow/lite:builtin_ops",
+        "//tensorflow/lite:mutable_op_resolver",
+        "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:version",
         "//tensorflow/lite/c:c_api_internal",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core:create_op_resolver_header",
-        "//tensorflow/lite/core:framework",
+        "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core:signature_runner",
+        "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/async/c:types",
         "//tensorflow/lite/delegates:interpreter_utils",
         "//tensorflow/lite/delegates/nnapi:nnapi_delegate",
         "//tensorflow/lite/kernels/internal:compatibility",
+        "//tensorflow/lite/profiling/telemetry:profiler",
+        "//tensorflow/lite/schema:schema_fbs",
     ],
     alwayslink = 1,  # Why?? TODO(b/161243354): eliminate this.
 )
@@ -139,17 +175,22 @@ tflite_cc_library_with_c_headers_test(
         ":c_api_types",
         ":operator_without_alwayslink",
         "//tensorflow/lite:builtin_ops",
-        "//tensorflow/lite:framework",
+        "//tensorflow/lite:mutable_op_resolver",
+        "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:version",
         "//tensorflow/lite/c:c_api_internal",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core:create_op_resolver_header",
-        "//tensorflow/lite/core:framework",
+        "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core:signature_runner",
+        "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/async/c:types",
         "//tensorflow/lite/delegates:interpreter_utils",
         "//tensorflow/lite/delegates/nnapi:nnapi_delegate",
         "//tensorflow/lite/kernels:kernel_util",
         "//tensorflow/lite/kernels/internal:compatibility",
+        "//tensorflow/lite/profiling/telemetry:profiler",
+        "//tensorflow/lite/schema:schema_fbs",
     ],
 )
 
@@ -260,7 +301,7 @@ cc_test(
 )
 
 # This is a private target, its visibility is set to public only to be
-# used by "tflite_custom_c_library".
+# used by "tflite_custom_c_library" and LiteRT dependencies.
 # Do not use this target directly and don't consider it as a part of the public API.
 alias(
     name = "private_c_api_types",
@@ -277,8 +318,14 @@ tflite_cc_library_with_c_headers_test(
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts(),
     visibility = [
+        # "//litert:__subpackages__",  # copybara:uncomment
+        # copybara:uncomment "//third_party/odml/litert/litert:__subpackages__",
+        "//tensorflow/compiler/mlir/lite/experimental/lrt:__subpackages__",
         "//tensorflow/lite:__subpackages__",
     ] + c_api_visibility_allowlist(),
+    deps = [
+        "//tensorflow/compiler/mlir/lite/core/c:tflite_common",
+    ],
 )
 
 # Test the C extension API code.
@@ -289,7 +336,10 @@ cc_test(
     deps = [
         ":c_api_types",
         ":common",
+        "//tensorflow/lite:array",
+        "//tensorflow/lite:test_util",
         "//tensorflow/lite:util",
+        "//tensorflow/lite/c:c_api_types",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -304,6 +354,7 @@ cc_test(
     ],
     data = [
         "//tensorflow/lite:testdata/custom_sinh.bin",
+        "//tensorflow/lite:testdata/with_metadata.bin",
     ],
     deps = [
         ":c_api",
@@ -314,6 +365,7 @@ cc_test(
         "//tensorflow/lite:string_util",
         "//tensorflow/lite:util",
         "//tensorflow/lite/c:c_api_opaque_internal",
+        "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/c:common",
         "//tensorflow/lite/core:subgraph",
         "//tensorflow/lite/kernels:kernel_util",
@@ -321,21 +373,33 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "allocator_internal",
+    hdrs = ["allocator_internal.h"],
+    compatible_with = get_compatible_with_portable(),
+    copts = tflite_copts(),
+    visibility = ["//tensorflow/lite:__subpackages__"],
+    deps = [":common"],
+)
+
 tflite_cc_library_with_c_headers_test(
     name = "common",
-    srcs = ["common.cc"],
+    srcs = [
+        "common.cc",
+    ],
     hdrs = [
         "builtin_op_data.h",
         "common.h",
     ],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts(),
-    visibility = [
-        "//tensorflow/lite:__subpackages__",
-        "@org_tensorflow_lite_support//tensorflow_lite_support/custom_ops:__subpackages__",
-    ] + common_header_visibility_allowlist(),
+    textual_hdrs = [
+        "allocator_internal.h",
+    ],
+    visibility = ["//tensorflow/lite:__subpackages__"] + common_header_visibility_allowlist(),
     deps = [
         ":c_api_types",
+        "//tensorflow/compiler/mlir/lite/core/c:tflite_common",
         "//tensorflow/lite:tflite_kernel_use_xnnpack_optional",
     ] + select({
         "//tensorflow/lite:tensorflow_profiler_config": [
@@ -384,13 +448,8 @@ tflite_cc_library_with_c_headers_test(
         ":operator",
         "//tensorflow/lite:builtin_ops",
         "//tensorflow/lite:signature_runner",
-        "//tensorflow/lite/c:c_api_internal",
-        "//tensorflow/lite/c:c_api_opaque_internal",
         "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/core:framework",
-        "//tensorflow/lite/kernels:kernel_util",
-        "//tensorflow/lite/profiling/telemetry:profiler",
-        "//tensorflow/lite/profiling/telemetry/c:profiler",
     ],
 )
 
@@ -420,16 +479,10 @@ tflite_cc_library_with_c_headers_test(
         ":operator",
         "//tensorflow/lite:builtin_ops",
         "//tensorflow/lite:framework",
-        "//tensorflow/lite:kernel_api",
-        "//tensorflow/lite:string_util",
-        "//tensorflow/lite:util",
         "//tensorflow/lite/c:c_api_internal",
-        "//tensorflow/lite/c:c_api_opaque_internal",
         "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/core:framework",
-        "//tensorflow/lite/kernels:kernel_util",
         "//tensorflow/lite/profiling/telemetry:profiler",
-        "//tensorflow/lite/profiling/telemetry/c:profiler",
     ],
     alwayslink = 1,  # Why?? TODO(b/161243354): eliminate this.
 )
@@ -474,15 +527,10 @@ tflite_cc_library_with_c_headers_test(
         ":operator_without_alwayslink",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:kernel_api",
-        "//tensorflow/lite:string_util",
-        "//tensorflow/lite:util",
         "//tensorflow/lite/c:c_api_internal",
-        "//tensorflow/lite/c:c_api_opaque_internal_without_alwayslink",
         "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/core:framework",
-        "//tensorflow/lite/kernels:kernel_util",
         "//tensorflow/lite/profiling/telemetry:profiler",
-        "//tensorflow/lite/profiling/telemetry/c:profiler",
     ],
 )
 
@@ -514,11 +562,7 @@ tflite_cc_library_with_c_headers_test(
         ":c_api_types",
         ":common",
         ":operator",
-        "//tensorflow/lite:string_util",
-        "//tensorflow/lite:util",
-        "//tensorflow/lite/c:c_api_opaque_internal",
         "//tensorflow/lite/core:framework",
-        "//tensorflow/lite/kernels:kernel_util",
     ],
 )
 
@@ -547,7 +591,7 @@ tflite_cc_library_with_c_headers_test(
 )
 
 # This is a private target, its visibility is set to public only to be
-# used by "custom_c_library_with_tflite".
+# used by "custom_c_library_with_tflite" and LiteRT dependencies.
 # Do not use this target directly and don't consider it as a part of the public API.
 alias(
     name = "private_c_api_opaque_without_op_resolver",
@@ -613,6 +657,7 @@ cc_test(
         "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/delegates:delegate_test_util",
         "//tensorflow/lite/testing:util",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

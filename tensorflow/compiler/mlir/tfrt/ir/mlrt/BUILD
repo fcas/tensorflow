@@ -1,4 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -12,9 +28,7 @@ td_library(
         "mlrt_ops.td",
     ],
     includes = ["."],
-    visibility = [
-        # copybara:uncomment "//learning/brain/tfrt/mlir:__subpackages__",
-    ],
+    visibility = ["//visibility:private"],
     deps = [
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
@@ -23,16 +37,10 @@ td_library(
 
 gentbl_cc_library(
     name = "mlrt_ops_inc_gen",
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "mlrt_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "mlrt_ops.cpp.inc",
-        ),
-    ],
+    tbl_outs = {
+        "mlrt_ops.h.inc": ["-gen-op-decls"],
+        "mlrt_ops.cpp.inc": ["-gen-op-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "mlrt_ops.td",
     deps = [":mlrt_td_files"],
@@ -48,10 +56,7 @@ cc_library(
         "mlrt_dialect.h",
         "mlrt_ops.h",
     ],
-    visibility = [
-        # copybara:uncomment "//learning/brain/tfrt/mlir:__subpackages__",
-        "//tensorflow/compiler/mlir/tfrt:__subpackages__",
-    ],
+    visibility = ["//tensorflow/compiler/mlir/tfrt:__subpackages__"],
     deps = [
         ":mlrt_ops_inc_gen",
         "@llvm-project//mlir:FuncDialect",
@@ -96,16 +101,10 @@ td_library(
 
 gentbl_cc_library(
     name = "tf_mlrt_ops_inc_gen",
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "tf_mlrt_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "tf_mlrt_ops.cpp.inc",
-        ),
-    ],
+    tbl_outs = {
+        "tf_mlrt_ops.h.inc": ["-gen-op-decls"],
+        "tf_mlrt_ops.cpp.inc": ["-gen-op-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "tf_mlrt_ops.td",
     deps = [":tf_mlrt_td_files"],
@@ -113,16 +112,10 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "tf_mlrt_tpu_ops_inc_gen",
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "tf_mlrt_tpu_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "tf_mlrt_tpu_ops.cpp.inc",
-        ),
-    ],
+    tbl_outs = {
+        "tf_mlrt_tpu_ops.h.inc": ["-gen-op-decls"],
+        "tf_mlrt_tpu_ops.cpp.inc": ["-gen-op-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "tf_mlrt_tpu_ops.td",
     deps = [":tf_mlrt_tpu_td_files"],
@@ -130,16 +123,10 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "tf_ops_inc_gen",
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "tf_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "tf_ops.cpp.inc",
-        ),
-    ],
+    tbl_outs = {
+        "tf_ops.h.inc": ["-gen-op-decls"],
+        "tf_ops.cpp.inc": ["-gen-op-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "tf_ops.td",
     deps = [":tf_mlrt_td_files"],

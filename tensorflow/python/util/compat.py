@@ -78,8 +78,12 @@ def as_bytes(bytes_or_text, encoding='utf-8'):
   elif isinstance(bytes_or_text, bytes):
     return bytes_or_text
   else:
-    raise TypeError('Expected binary or unicode string, got %r' %
-                    (bytes_or_text,))
+    try:
+      return bytes(memoryview(bytes_or_text))
+    except TypeError as e:
+      raise TypeError(
+          'Expected binary or unicode string, got %r' % (bytes_or_text,)
+      ) from e
 
 
 def as_text(bytes_or_text, encoding='utf-8'):
@@ -109,6 +113,21 @@ def as_text(bytes_or_text, encoding='utf-8'):
 
 
 def as_str(bytes_or_text, encoding='utf-8'):
+  """Acts as an alias for the `as_text` function..
+
+  Args:
+    bytes_or_text: The input value to be converted. A bytes or unicode object.
+    encoding: Optional string. The encoding to use if bytes_or_text is a bytes
+      object. Defaults to 'utf-8'.
+
+  Returns:
+    A unicode string.
+
+  Raises:
+    TypeError: If bytes_or_text is not a bytes or unicode object.
+    UnicodeDecodeError: If bytes_or_text is a bytes object and cannot be
+                        decoded using the specified encoding.
+  """
   return as_text(bytes_or_text, encoding)
 
 tf_export('compat.as_text')(as_text)

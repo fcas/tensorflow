@@ -66,11 +66,33 @@ REGISTER_OP("BatchFunction")
     // same batch, i.e., no low priority input padding high priority batches.
     // Low priority inputs get scheduled only as part of low priority only
     // batches as described above.
+    // priority_merge: High and low priority inputs are queued separately but
+    // when a batch needs to be scheduled, the two queues are treated as one
+    // merged flat list of inputs with high priority inputs at the front of the
+    // list of tasks to use for the next batch. If all inputs are of the same
+    // priority, the behavior is the same as disabling prioritization.
     .Attr(
         "mixed_priority_policy: "
         "{'low_priority_padding_with_max_batch_size', "
         "'low_priority_padding_with_next_allowed_batch_size', "
-        "'priority_isolation'} = 'low_priority_padding_with_max_batch_size'")
+        "'priority_isolation', 'priority_merge'} = "
+        "'low_priority_padding_with_max_batch_size'")
+    // The policy that a batch scheduler is using when deciding what to do when,
+    // say, 18 requests need to be batched, but only 16 and 32 batch sizes are
+    // allowed. The following options are available.
+    //
+    //   - PAD_UP: pad to size 32.
+    //   - BATCH_DOWN: schedule a batch of size 16 and leave 2 requests in the
+    //     batch buffer.
+    //   - MINIMIZE_TPU_COST_PER_REQUEST: a smarter greedy policy that chooses
+    //     to either PAD_UP or BATCH_DOWN so as to minimize the TPU costs per
+    //     real request. In this case, it would compare (batch_16_cost / 16) and
+    //     (batch_32_cost / 18).
+    //
+    // WARNING: Not all batch schedulers might support this attribute.
+    .Attr(
+        "batch_padding_policy: "
+        "{'PAD_UP', 'BATCH_DOWN', 'MINIMIZE_TPU_COST_PER_REQUEST'} = 'PAD_UP'")
     .Attr("Tin: list(type)")
     .Attr("Tcaptured: list(type) >= 0")
     .Attr("Tout: list(type)")
@@ -80,6 +102,19 @@ REGISTER_OP("BatchFunction")
     // NOTE: Support for `enable_large_batch_splitting == true` is still
     // developed in progress.
     .Attr("enable_large_batch_splitting: bool = false")
+    // If true, the queue implementation will have a separate subqueue for each
+    // criticality.
+    .Attr("enable_priority_aware_batch_scheduler: bool = false")
+    // If true, the queue implementation will re-split tasks into subtasks with
+    // priority aware batch scheduler.
+    .Attr("enable_priority_aware_batch_scheduler_resplit: bool = false")
+    // If true, the priority aware batch scheduler will lazily filter out and
+    // cancel tasks that have been cancelled or have exceeded their deadline
+    // before batch formation.
+    .Attr("enable_batching_task_lazy_cancellation: bool = false")
+    // If greater than zero, a separate thread pool with this number of threads
+    // is used for processing warmup requests.
+    .Attr("num_warmup_batch_threads: int = 0")
     // TODO(apassos): Fix this shape inference function. It requires shape
     // inference of function calls.
     .SetShapeFn(shape_inference::UnknownShape)

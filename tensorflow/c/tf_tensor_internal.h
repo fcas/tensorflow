@@ -96,9 +96,9 @@ void deallocate_buffer(void* data, size_t len, void* arg);
 
 class TensorInterface : public AbstractTensorInterface {
  public:
-  TensorInterface() {}
+  TensorInterface() = default;
   explicit TensorInterface(tensorflow::Tensor t) : tensor_(std::move(t)) {}
-  ~TensorInterface() override {}
+  ~TensorInterface() override = default;
 
   void Release() override;
 
@@ -113,10 +113,10 @@ class TensorInterface : public AbstractTensorInterface {
   std::string SummarizeValue() const override;
 
   void SetShape(const int64_t* dims, int num_dims);
-  Status ToTensor(tensorflow::Tensor* dst) const;
-  Status BitcastFrom(const TensorInterface& from, DataType type,
-                     const int64_t* new_dims, int num_new_dims);
-  Status FromProto(const tensorflow::TensorProto& from);
+  absl::Status ToTensor(tensorflow::Tensor* dst) const;
+  absl::Status BitcastFrom(const TensorInterface& from, DataType type,
+                           const int64_t* new_dims, int num_new_dims);
+  absl::Status FromProto(const tensorflow::TensorProto& from);
 
   tensorflow::Tensor& Tensor() { return tensor_; }
 
@@ -125,11 +125,11 @@ class TensorInterface : public AbstractTensorInterface {
 };
 
 inline Tensor& TensorFromInterface(AbstractTensorInterface* tensor) {
-  return down_cast<TensorInterface*>(tensor)->Tensor();
+  return absl::down_cast<TensorInterface*>(tensor)->Tensor();
 }
 
 AbstractTensorInterface* TensorInterfaceFromTensor(const Tensor& src,
-                                                   Status* status);
+                                                   absl::Status* status);
 
 }  // namespace tensorflow
 

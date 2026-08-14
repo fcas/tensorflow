@@ -15,39 +15,42 @@ limitations under the License.
 #include <sys/mman.h>
 
 #include <memory>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "tensorflow/lite/core/c/common.h"
-#include "tensorflow/lite/core/model.h"
 #include "tensorflow/lite/core/subgraph.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate_mock_test.h"
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/test_util.h"
-#include "tensorflow/lite/nnapi/NeuralNetworksTypes.h"
 #include "tensorflow/lite/nnapi/nnapi_implementation.h"
+#include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 namespace {
+
+void StatefulNnApiDelegateDelete(TfLiteDelegate* delegate) {
+  delete static_cast<StatefulNnApiDelegate*>(delegate);
+}
 
 class SingleOpModelWithNNAPI : public SingleOpModel {
  public:
   explicit SingleOpModelWithNNAPI(const NnApi* nnapi) {
     options_.disallow_nnapi_cpu = false;
-    stateful_delegate_ =
-        std::make_unique<StatefulNnApiDelegate>(nnapi, options_);
-    this->SetDelegate(stateful_delegate_.get());
+    this->SetDelegate({new StatefulNnApiDelegate(nnapi, options_),
+                       StatefulNnApiDelegateDelete});
   }
-  ~SingleOpModelWithNNAPI() { stateful_delegate_.reset(); }
 
-  StatefulNnApiDelegate* GetDelegate() { return stateful_delegate_.get(); }
+  StatefulNnApiDelegate* GetDelegate() {
+    return static_cast<StatefulNnApiDelegate*>(delegate_.get());
+  }
 
   void SetBufferHandle(int index, TfLiteBufferHandle handle) {
-    interpreter_->SetBufferHandle(index, handle, stateful_delegate_.get());
+    interpreter_->SetBufferHandle(index, handle, delegate_.get());
   }
 
  private:
-  std::unique_ptr<StatefulNnApiDelegate> stateful_delegate_;
   StatefulNnApiDelegate::Options options_;
 };
 

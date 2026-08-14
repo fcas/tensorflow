@@ -16,20 +16,75 @@ limitations under the License.
 
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "tensorflow/core/platform/types.h"
+#include "absl/strings/str_cat.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/xla_data.pb.h"
 
 namespace tensorflow {
 namespace {
 
+using ::tsl::testing::IsOk;
+
+TEST(SetSparseCoreFrontendAttributesTest, Basic) {
+  xla::FrontendAttributes attributes;
+  ASSERT_THAT(
+      SetSparseCoreFrontendAttributes(&attributes,
+                                      /*max_ids_per_partition=*/100,
+                                      /*max_unique_ids_per_partition=*/20,
+                                      /*num_sparsecores_per_device=*/4,
+                                      /*vocab_size=*/4000,
+                                      /*feature_width=*/64,
+                                      /*input_size=*/128,
+                                      /*table_name=*/"test_table"),
+      absl_testing::IsOk());
+  const auto& attr_map = attributes.map();
+  EXPECT_EQ(attr_map.at("_xla_compute_type"), "sparse");
+  EXPECT_EQ(attr_map.at("_xla_sharding_strategy"), "mod");
+  EXPECT_EQ(attr_map.at("_xla_pad_value"), absl::StrCat(kXlaPadValue));
+  EXPECT_EQ(attr_map.at("_xla_max_ids_per_partition"), "100");
+  EXPECT_EQ(attr_map.at("_xla_max_unique_ids_per_partition"), "20");
+  EXPECT_EQ(attr_map.at("_xla_table_name"), "test_table");
+  EXPECT_EQ(attr_map.at("_xla_vocab_size"), "1000");
+  EXPECT_EQ(attr_map.at("_xla_feature_width"), "64");
+  EXPECT_EQ(attr_map.at("_xla_sample_count"), "32");
+}
+
+TEST(SetSparseCoreFrontendAttributesTest, WithOptionals) {
+  xla::FrontendAttributes attributes;
+  ASSERT_THAT(SetSparseCoreFrontendAttributes(
+                  &attributes, /*max_ids_per_partition=*/100,
+                  /*max_unique_ids_per_partition=*/20,
+                  /*num_sparsecores_per_device=*/4,
+                  /*vocab_size=*/4000,
+                  /*feature_width=*/64,
+                  /*input_size=*/128,
+                  /*table_name=*/"test_table",
+                  /*max_valency=*/16,
+                  /*quantization_config_low=*/-1.5f,
+                  /*quantization_config_high=*/1.5f,
+                  /*quantization_config_num_buckets=*/256),
+              absl_testing::IsOk());
+  const auto& attr_map = attributes.map();
+  EXPECT_EQ(attr_map.at("_xla_vocab_size"), "1000");
+  EXPECT_EQ(attr_map.at("_xla_feature_width"), "64");
+  EXPECT_EQ(attr_map.at("_xla_sample_count"), "32");
+  EXPECT_EQ(attr_map.at("_xla_max_valency"), "16");
+  EXPECT_EQ(attr_map.at("_xla_quantization_low_value"), "-1.5");
+  EXPECT_EQ(attr_map.at("_xla_quantization_high_value"), "1.5");
+  EXPECT_EQ(attr_map.at("_xla_quantization_num_buckets_value"), "256");
+  EXPECT_EQ(attr_map.at("_xla_enable_full_hbm_sort"), "false");
+}
+
 TEST(ConvertSplitsAndBackTest, Split0) {
   const int max_division_level = 6;
 
-  int64 original_split = 0;
+  int64_t original_split = 0;
   std::vector<int> actual_buckets =
       ConvertBinarySplitsToBucketSplits(original_split, max_division_level);
   std::vector<int> expected_buckets = {};
-  int64 re_split =
+  int64_t re_split =
       ConvertBucketSplitsToBinarySplits(expected_buckets, max_division_level);
   ASSERT_EQ(re_split, original_split);
 }
@@ -37,11 +92,11 @@ TEST(ConvertSplitsAndBackTest, Split0) {
 TEST(ConvertSplitsAndBackTest, Split2) {
   const int max_division_level = 6;
 
-  int64 original_split = 2;
+  int64_t original_split = 2;
   std::vector<int> actual_buckets =
       ConvertBinarySplitsToBucketSplits(original_split, max_division_level);
   std::vector<int> expected_buckets = {16};
-  int64 re_split =
+  int64_t re_split =
       ConvertBucketSplitsToBinarySplits(expected_buckets, max_division_level);
   ASSERT_EQ(re_split, original_split);
 }
@@ -49,11 +104,11 @@ TEST(ConvertSplitsAndBackTest, Split2) {
 TEST(ConvertSplitsAndBackTest, Split3) {
   const int max_division_level = 6;
 
-  int64 original_split = 3;
+  int64_t original_split = 3;
   std::vector<int> actual_buckets =
       ConvertBinarySplitsToBucketSplits(original_split, max_division_level);
   std::vector<int> expected_buckets = {16, 32};
-  int64 re_split =
+  int64_t re_split =
       ConvertBucketSplitsToBinarySplits(expected_buckets, max_division_level);
   ASSERT_EQ(re_split, original_split);
 }

@@ -17,14 +17,23 @@ limitations under the License.
 
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/client/local_client.h"
+#include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
+#include "xla/tsl/framework/allocator.h"
+#include "tensorflow/core/framework/resource_base.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/platform/status.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -36,7 +45,7 @@ using PjRtClientsMap = std::map<DeviceType, std::unique_ptr<xla::PjRtClient>>;
 struct PjRtGpuClientCreationInfo {
   std::set<int> allowed_devices;
   std::unique_ptr<se::MultiDeviceAdapter> allocator;
-  std::unique_ptr<tsl::Allocator> host_memory_allocator;
+  std::unique_ptr<xla::HostMemoryAllocator> host_memory_allocator;
   std::map<int, std::unique_ptr<xla::LocalDeviceState>> local_device_states;
   xla::LocalClient* local_client;
 };
@@ -49,12 +58,12 @@ class PjRtState : public ResourceBase {
   absl::StatusOr<xla::PjRtClient*> GetPjRtClient(const DeviceType& device_type);
   absl::StatusOr<xla::PjRtClient*> GetOrCreatePjRtClient(
       const DeviceType& device_type);
-  Status SetPjRtClient(const DeviceType& device_type,
-                       std::unique_ptr<xla::PjRtClient> client);
+  absl::Status SetPjRtClient(const DeviceType& device_type,
+                             std::unique_ptr<xla::PjRtClient> client);
   // Moves PJRT client to `unused_`. The PJRT client moved to `unused_` will not
   // be returned by `GetPjRtClient`.
-  Status MovePjRtClientToUnused(const DeviceType& device_type);
-  string DebugString() const override;
+  absl::Status MovePjRtClientToUnused(const DeviceType& device_type);
+  std::string DebugString() const override;
 
   // Saves information needed to create a PJRT client (to enable creating a
   // client with remote devices).
@@ -66,7 +75,7 @@ class PjRtState : public ResourceBase {
   PjRtGpuClientCreationInfo* GetPjRtGpuClientCreationInfo();
 
  private:
-  explicit PjRtState() {}
+  explicit PjRtState() = default;
   absl::Mutex mu_;
   PjRtClientsMap clients_ ABSL_GUARDED_BY(mu_);
   // Store the PJRT clients that are no longer used to guarantee that PJRT

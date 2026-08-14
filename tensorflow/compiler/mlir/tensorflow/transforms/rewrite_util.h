@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_TENSORFLOW_TRANSFORMS_REWRITE_UTIL_H_
 #define TENSORFLOW_COMPILER_MLIR_TENSORFLOW_TRANSFORMS_REWRITE_UTIL_H_
 
+#include <complex>
+
 #include "mlir/IR/Matchers.h"  // from @llvm-project
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
@@ -78,6 +80,15 @@ void CopyDeviceAndUnderscoredAttributesAdaptor(mlir::Operation *src,
                                                mlir::OpResult dest);
 void CopyDeviceAndUnderscoredAttributesAdaptor(mlir::Operation *src,
                                                mlir::Operation *dest);
+
+// Wrappers for CopyXlaOutsideCompilationAttributes
+void CopyXlaOutsideCompilationAttributesAdaptor(mlir::OpResult src,
+                                                mlir::OpResult dest);
+void CopyXlaOutsideCompilationAttributesAdaptor(mlir::Operation *src,
+                                                mlir::OpResult dest);
+void CopyXlaOutsideCompilationAttributesAdaptor(mlir::Operation *src,
+                                                mlir::Operation *dest);
+
 }  // namespace TF
 }  // namespace mlir
 

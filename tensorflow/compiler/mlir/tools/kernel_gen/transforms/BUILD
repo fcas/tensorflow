@@ -1,10 +1,26 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
-    "@local_tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "@xla//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
@@ -85,13 +101,10 @@ cc_library(
 gentbl_cc_library(
     name = "kernel_gen_passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [(
-        [
-            "-gen-pass-decls",
-            "-name=KernelGen",
-        ],
-        "kernel_gen_passes.h.inc",
-    )],
+    tbl_outs = {"kernel_gen_passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=KernelGen",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "passes.td",
     deps = ["@llvm-project//mlir:PassBaseTdFiles"],
@@ -113,6 +126,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core/platform:errors",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:ArithDialect",
@@ -158,19 +172,21 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorToLLVM",
         "@llvm-project//mlir:VectorTransforms",
-        "@local_xla//xla:debug_options_flags",
-        "@local_xla//xla:xla_proto_cc",
-        "@local_xla//xla/mlir_hlo",
-        "@local_xla//xla/mlir_hlo:mhlo_passes",
-        "@local_xla//xla/mlir_hlo:type_conversion",
-        "@local_xla//xla/service/gpu:gpu_asm_opts_util",
-        "@local_xla//xla/service/gpu:target_constants",
-        "@local_xla//xla/service/gpu/llvm_gpu_backend",
+        "@xla//xla:debug_options_flags",
+        "@xla//xla:xla_proto_cc",
+        "@xla//xla/mlir_hlo",
+        "@xla//xla/mlir_hlo:mhlo_passes",
+        "@xla//xla/mlir_hlo:type_conversion",
+        "@xla//xla/service/gpu:gpu_asm_opts_util",
+        "@xla//xla/service/gpu:target_constants",
+        "@xla//xla/stream_executor:device_description",
     ] + if_cuda_is_configured([
-        "@local_tsl//tsl/platform:cuda_libdevice_path",
-        "@local_xla//xla/stream_executor/cuda:cuda_asm_compiler",
+        "@tsl//tsl/platform:cuda_root_path",
+        "@xla//xla/stream_executor/cuda:cuda_asm_compiler",
+        "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
     ]) + if_rocm_is_configured([
-        "@local_xla//xla/stream_executor/gpu:asm_compiler",
+        "@xla//xla/stream_executor/gpu:asm_compiler",
+        "@xla//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
         "//tensorflow/core/platform:rocm_rocdl_path",
     ]),
 )
@@ -178,15 +194,19 @@ cc_library(
 cc_library(
     name = "passes",
     srcs = [
+        "broadcast_propagation_pass.cc",
         "buffer_reuse_pass.cc",
         "bufferize_pass.cc",
         "copy_cleanup_pass.cc",
         "embed_tf_framework_pass.cc",
         "func_to_jit_invocations.cc",
         "fuse_inner_parallel_loops_pass.cc",
+        "legalize_tensor_reshape_pass.cc",
+        "merge_assuming_ops_pass.cc",
         "parallel_loops_to_sequential.cc",
         "rewrite_tf_framework_assert.cc",
         "same_shape_propagation.cc",
+        "shape_simplification_pass.cc",
         "shape_to_descriptors_pass.cc",
         "tensorflow_abi_knowledge_propagation.cc",
     ],
@@ -197,8 +217,6 @@ cc_library(
         ":embed_tf_framework",  # buildcleaner: keep
         ":kernel_gen_passes_inc_gen",
         ":tf_framework_legalize_to_llvm",  # buildcleaner: keep
-        ":utils",
-        "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tools/kernel_gen/ir:tf_framework_ops",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",
@@ -208,6 +226,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:MathDialect",
@@ -223,7 +242,9 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
-        "@llvm-project//mlir:Transforms",
-        "@local_xla//xla/mlir_hlo:transforms_passes",
+        "@stablehlo//:base",
+        "@xla//xla/mlir_hlo",
+        "@xla//xla/mlir_hlo:mhlo_passes",
+        "@xla//xla/mlir_hlo:transforms_passes",
     ],
 )

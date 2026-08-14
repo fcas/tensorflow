@@ -27,20 +27,20 @@ namespace tensorflow {
 
 using errors::InvalidArgument;
 
-tensorflow::Status GetRowPartitionTypesHelper(
-    const std::vector<string>& row_partition_type_strings,
+absl::Status GetRowPartitionTypesHelper(
+    const std::vector<std::string>& row_partition_type_strings,
     std::vector<RowPartitionType>* row_partition_types) {
   *row_partition_types = GetRowPartitionTypesHelper(row_partition_type_strings);
   if (row_partition_types->size() != row_partition_type_strings.size()) {
     // Something was not converted, return error status.
-    return InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Unknown string for partition info type: ",
-        row_partition_type_strings.at(row_partition_types->size()));
+        row_partition_type_strings.at(row_partition_types->size())));
   }
   return absl::OkStatus();
 }
 
-tensorflow::Status CombineRaggedTensorToTensorShapes(
+absl::Status CombineRaggedTensorToTensorShapes(
     int ragged_rank, const TensorShapeProto& shape,
     const TensorShapeProto& value_shape, TensorShapeProto* output_shape) {
   // Test for consistency of value_shape and shape specified.
@@ -66,11 +66,11 @@ tensorflow::Status CombineRaggedTensorToTensorShapes(
   }
   // At this point, value_shape and output_shape have known ranks.
   if (ragged_rank + value_shape.dim_size() != output_shape->dim_size()) {
-    return InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "rt_input.shape and shape=", TensorShape::DebugString(shape),
         " are incompatible: rt_input.rank = ",
         ragged_rank + value_shape.dim_size(),
-        " but shape.rank = ", output_shape->dim_size());
+        " but shape.rank = ", output_shape->dim_size()));
   }
 
   for (int i = 1; i < value_shape.dim_size(); ++i) {
@@ -81,11 +81,11 @@ tensorflow::Status CombineRaggedTensorToTensorShapes(
     if (value_dim.size() >= 0) {
       if (output_shape_dim->size() >= 0) {
         if (output_shape_dim->size() != value_dim.size()) {
-          return InvalidArgument(
+          return absl::InvalidArgumentError(absl::StrCat(
               "rt_input.shape and shape=", TensorShape::DebugString(shape),
               " are incompatible: rt_input.shape[", i + ragged_rank,
               "] = ", value_dim.size(), " but shape[", i + ragged_rank,
-              "] = ", output_shape_dim->size());
+              "] = ", output_shape_dim->size()));
         }
       } else {
         output_shape_dim->set_size(value_dim.size());
@@ -95,7 +95,7 @@ tensorflow::Status CombineRaggedTensorToTensorShapes(
   return absl::OkStatus();
 }
 
-tensorflow::Status ValidateDefaultValueShape(
+absl::Status ValidateDefaultValueShape(
     const TensorShapeProto& default_value_shape,
     const TensorShapeProto& value_shape) {
   if (default_value_shape.unknown_rank() || value_shape.unknown_rank()) {
@@ -105,12 +105,12 @@ tensorflow::Status ValidateDefaultValueShape(
   int default_ndims = default_value_shape.dim_size();
   int values_ndims = value_shape.dim_size();
   if (default_ndims >= values_ndims) {
-    return InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "default_value.shape=", TensorShape::DebugString(default_value_shape),
         " and rt_input.flat_values.shape=",
         TensorShape::DebugString(value_shape),
         " are incompatible: default_value.rank = ", default_ndims,
-        "  must be less than rt_input.flat_values.rank = ", values_ndims);
+        "  must be less than rt_input.flat_values.rank = ", values_ndims));
   }
   for (int i = 0; i < std::min(default_ndims, values_ndims - 1); ++i) {
     int default_dim = default_value_shape.dim(i).size();

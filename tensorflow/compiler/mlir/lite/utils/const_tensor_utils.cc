@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/lite/utils/const_tensor_utils.h"
 
+#include <algorithm>
 #include <cassert>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -24,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "Eigen/Core"  // from @eigen_archive
 #include "llvm/ADT/APInt.h"
@@ -31,17 +34,20 @@ limitations under the License.
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/TypeUtilities.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/schema/schema_generated.h"
 #include "tensorflow/compiler/mlir/lite/utils/convert_type.h"
 #include "tensorflow/compiler/mlir/lite/utils/low_bit_utils.h"
+#include "tensorflow/compiler/mlir/lite/utils/string_utils.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
-#include "tensorflow/lite/string_util.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
 #include "tsl/platform/statusor.h"
 
 namespace mlir {
@@ -61,14 +67,14 @@ template <typename T>
 llvm::SmallVector<mlir::APInt> ReadAsHostEndian(ArrayRef<uint8_t> bytes) {
   llvm::SmallVector<mlir::APInt> ret;
   size_t read_size = sizeof(T);
-  int bytes_len = bytes.size();
+  size_t bytes_len = bytes.size();
   assert(bytes_len % read_size == 0);
 
-  int elem_count = bytes_len / read_size;
+  size_t elem_count = bytes_len / read_size;
   ret.reserve(elem_count);
 
   const char* data_ptr = reinterpret_cast<const char*>(bytes.data());
-  for (int i = 0; i < elem_count; i++) {
+  for (size_t i = 0; i < elem_count; i++) {
     T val = llvm::support::endian::readNext<T, llvm::endianness::native,
                                             llvm::support::unaligned>(data_ptr);
     ret.push_back(mlir::APInt(sizeof(T) * 8, val));
@@ -127,6 +133,9 @@ StatusOr<QuantizedType> GetQuantizedType(const TensorT& tensor, Builder builder,
   if (tensor.type == tflite::TensorType_UINT8) {
     is_signed = false;
     storage_type = mlir::IntegerType::get(builder.getContext(), 8);
+  } else if (tensor.type == tflite::TensorType_UINT4) {
+    is_signed = false;
+    storage_type = mlir::IntegerType::get(builder.getContext(), 4);
   }
 
   if (!storage_type) {
@@ -272,11 +281,14 @@ StatusOr<mlir::ElementsAttr> ConvertIntBuffer(
     bool truncate) {
   mlir::Type elem_type = shaped_type.getElementType();
   unsigned bit_width;
+  bool is_signed;
   if (auto itype = mlir::dyn_cast<mlir::IntegerType>(elem_type)) {
     bit_width = itype.getWidth();
+    is_signed = !itype.isUnsigned();
   } else if (auto qtype =
                  mlir::dyn_cast<mlir::quant::QuantizedType>(elem_type)) {
     bit_width = qtype.getStorageTypeIntegralWidth();
+    is_signed = qtype.isSigned();
     shaped_type = tensorflow::GetTypeFromTFTensorShape(shaped_type.getShape(),
                                                        qtype.getStorageType());
   } else {
@@ -295,13 +307,29 @@ StatusOr<mlir::ElementsAttr> ConvertIntBuffer(
       return mlir::ElementsAttr(
           DenseElementsAttr::get(shaped_type, ArrayRef<bool>(boolValues)));
     }
-    case 4: {
-      auto i4Values =
-          tflite::UnpackDenseInt4IntoInt8(buffer, shaped_type.getNumElements());
+    case 2: {
+      auto i2Values = tflite::UnpackDenseLowBitIntoInt8(
+          buffer, shaped_type.getNumElements(), /*bit_width=*/2);
       // Use `getFromRawBuffer()` instead of `get()` to bypass a templated size
-      // check which doesn't work with int4 because int4_t doesn't exist.
+      // check which doesn't work with int2 because int2_t doesn't exist.
       return mlir::ElementsAttr(DenseElementsAttr::getFromRawBuffer(
-          shaped_type, ArrayRef<char>(i4Values)));
+          shaped_type, ArrayRef<char>(i2Values)));
+    }
+    case 4: {
+      if (is_signed) {
+        auto i4Values = tflite::UnpackDenseLowBitIntoInt8(
+            buffer, shaped_type.getNumElements(), /*bit_width=*/4);
+        // Use `getFromRawBuffer()` instead of `get()` to bypass a templated
+        // size check which doesn't work with int4 because int4_t doesn't
+        // exist.
+        return mlir::ElementsAttr(DenseElementsAttr::getFromRawBuffer(
+            shaped_type, ArrayRef<char>(i4Values)));
+      } else {
+        auto ui4Values = tflite::UnpackDenseLowBitIntoUint8(
+            buffer, shaped_type.getNumElements(), /*bit_width=*/4);
+        return mlir::ElementsAttr(DenseElementsAttr::getFromRawBuffer(
+            shaped_type, ArrayRef<char>(ui4Values)));
+      }
     }
     case 8: {
       return mlir::ElementsAttr(
@@ -344,11 +372,20 @@ StatusOr<mlir::ElementsAttr> ConvertFloatBuffer(
 
   // The bytes of floats are stored little-endian.
   switch (elem_type.getIntOrFloatBitWidth()) {
+    case 8: {
+      assert(bytes_len == shaped_type.getNumElements());
+      assert(mlir::isa<mlir::Float8E4M3FNType>(elem_type) ||
+             mlir::isa<mlir::Float8E5M2Type>(elem_type));
+      return mlir::ElementsAttr(DenseElementsAttr::getFromRawBuffer(
+          shaped_type,
+          llvm::ArrayRef<char>(reinterpret_cast<const char*>(buffer.data()),
+                               bytes_len)));
+    }
     case 16: {
       assert(bytes_len % 2 == 0);
       // Supports both BF16 and F16.
       assert(elem_type.isF16() || elem_type.isBF16());
-      int elem_count = bytes_len / 2;
+      size_t elem_count = bytes_len / 2;
 
       if (elem_type.isF16()) {
         std::vector<Eigen::half> values;
@@ -356,7 +393,7 @@ StatusOr<mlir::ElementsAttr> ConvertFloatBuffer(
 
         const char* data = reinterpret_cast<const char*>(buffer.data());
 
-        for (int i = 0; i < elem_count; i++) {
+        for (size_t i = 0; i < elem_count; i++) {
           uint16_t bit_repr = llvm::support::endian::readNext<
               uint16_t, llvm::endianness::native, llvm::support::unaligned>(
               data);
@@ -371,7 +408,7 @@ StatusOr<mlir::ElementsAttr> ConvertFloatBuffer(
 
         const char* data = reinterpret_cast<const char*>(buffer.data());
 
-        for (int i = 0; i < elem_count; i++) {
+        for (size_t i = 0; i < elem_count; i++) {
           uint16_t bit_repr = llvm::support::endian::readNext<
               uint16_t, llvm::endianness::native, llvm::support::unaligned>(
               data);
@@ -384,13 +421,13 @@ StatusOr<mlir::ElementsAttr> ConvertFloatBuffer(
     }
     case 32: {
       assert(bytes_len % 4 == 0);
-      int elem_count = bytes_len / 4;
+      size_t elem_count = bytes_len / 4;
       std::vector<float> values;
       values.reserve(elem_count);
 
       const char* data = reinterpret_cast<const char*>(buffer.data());
 
-      for (int i = 0; i < elem_count; i++) {
+      for (size_t i = 0; i < elem_count; i++) {
         uint32_t bit_repr =
             llvm::support::endian::readNext<uint32_t, llvm::endianness::native,
                                             llvm::support::unaligned>(data);
@@ -401,13 +438,13 @@ StatusOr<mlir::ElementsAttr> ConvertFloatBuffer(
     }
     case 64: {
       assert(bytes_len % 8 == 0);
-      int elem_count = bytes_len / 8;
+      size_t elem_count = bytes_len / 8;
       std::vector<double> values;
       values.reserve(elem_count);
 
       const char* data = reinterpret_cast<const char*>(buffer.data());
 
-      for (int i = 0; i < elem_count; i++) {
+      for (size_t i = 0; i < elem_count; i++) {
         uint64_t bit_repr =
             llvm::support::endian::readNext<uint64_t, llvm::endianness::native,
                                             llvm::support::unaligned>(data);
@@ -433,8 +470,8 @@ tensorflow::TensorProto ConvertTfliteConstTensor(
   }
   // TensorFlow Lite uses tflite::DynamicBufer to encode vector of strings.
   if (tensor.type == tflite::TensorType_STRING) {
-    for (int i = 0; i < tflite::GetStringCount(buffer.data()); ++i) {
-      tflite::StringRef str = tflite::GetString(buffer.data(), i);
+    for (int i = 0; i < mlir::TFL::GetStringCount(buffer.data()); ++i) {
+      mlir::TFL::StringRef str = mlir::TFL::GetString(buffer.data(), i);
       ret.add_string_val(str.str, str.len);
     }
     return ret;
@@ -443,6 +480,49 @@ tensorflow::TensorProto ConvertTfliteConstTensor(
   content.assign(reinterpret_cast<const char*>(buffer.data()), buffer.size());
   ret.set_tensor_content(content);
   return ret;
+}
+
+int64_t GetSizeInBits(mlir::ShapedType shaped_type) {
+  if (!shaped_type.hasStaticShape()) return 0;
+  return GetSizeInBits(shaped_type.getElementType()) *
+         shaped_type.getNumElements();
+}
+
+int64_t GetSizeInBits(mlir::quant::QuantizedType quant_type) {
+  const int64_t bits = std::max(quant_type.getStorageTypeIntegralWidth(),
+                                static_cast<uint32_t>(CHAR_BIT));
+  assert(IsPowerOfTwo(bits));
+  return bits;
+}
+
+int64_t GetSizeInBits(mlir::Type type) {
+  if (type.isIntOrFloat()) {
+    const int64_t bits =
+        std::max(type.getIntOrFloatBitWidth(), static_cast<uint32_t>(CHAR_BIT));
+    assert(IsPowerOfTwo(bits));
+    return bits;
+  }
+  if (mlir::isa<mlir::ShapedType>(type)) {
+    auto shaped_type = mlir::cast<mlir::ShapedType>(type);
+    if (mlir::isa<mlir::ComplexType>(shaped_type.getElementType())) {
+      auto complex_type =
+          mlir::cast<mlir::ComplexType>(shaped_type.getElementType());
+      return GetSizeInBits(complex_type.getElementType()) * 2;
+    } else if (mlir::isa<mlir::quant::QuantizedType>(
+                   shaped_type.getElementType())) {
+      auto quant_type =
+          mlir::cast<mlir::quant::QuantizedType>(shaped_type.getElementType());
+      return GetSizeInBits(quant_type);
+    } else {
+      return GetSizeInBits(shaped_type);
+    }
+  }
+
+  return 0;
+}
+
+int64_t GetSizeInBytes(mlir::Type type) {
+  return ExactIntegerDivide(GetSizeInBits(type), CHAR_BIT);
 }
 
 }  // namespace TFL

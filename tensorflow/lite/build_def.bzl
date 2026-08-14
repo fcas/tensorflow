@@ -1,15 +1,44 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Build macros for TF Lite."""
 
-load("//tensorflow:strict.default.bzl", "py_strict_test")
-load("//tensorflow:tensorflow.bzl", "clean_dep", "if_oss", "tf_binary_additional_srcs", "tf_cc_shared_object")
+load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
+load("//tensorflow:tensorflow.bzl", "if_oss", "tf_binary_additional_srcs", "tf_cc_shared_object")
 load("//tensorflow/lite:special_rules.bzl", "tflite_copts_extra")
 load("//tensorflow/lite/java:aar_with_jni.bzl", "aar_with_jni")
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 # buildifier: disable=out-of-order-load
 def register_extension_info(**kwargs):
     pass
+
+def clean_dep(target):
+    """Returns string to 'target' in @litert repository.
+
+    Use this function when referring to targets in the @litert
+    repository from macros that may be called from external repositories.
+    """
+
+    # A repo-relative label is resolved relative to the file in which the
+    # Label() call appears, i.e. @tsl.
+    return str(Label(target))
 
 def tflite_copts():
     """Defines common compile time flags for TFLite libraries."""
@@ -181,13 +210,32 @@ def tflite_linkopts_no_undefined():
         }),
     )
 
+def tflite_pagesize_linkopts():
+    """Defines linker flags for setting the page size."""
+    return select({
+        clean_dep("//tensorflow:android"): [
+            "-Wl,-z,max-page-size=16384",
+        ],
+        "//conditions:default": [],
+    })
+
 def tflite_linkopts():
     """Defines linker flags for linking TFLite binary."""
-    return tflite_linkopts_unstripped() + tflite_symbol_opts()
+    return tflite_linkopts_unstripped() + tflite_symbol_opts() + tflite_pagesize_linkopts()
 
 def tflite_jni_linkopts():
     """Defines linker flags for linking TFLite binary with JNI."""
-    return tflite_jni_linkopts_unstripped() + tflite_symbol_opts()
+    return tflite_jni_linkopts_unstripped() + tflite_symbol_opts() + tflite_pagesize_linkopts()
+
+def tflite_exec_properties(memory = "20g"):
+    """Defines exec_properties for TFLite targets."""
+    return if_oss(
+        None,
+        select({
+            "@bazel_tools//tools/cpp:asan_build": {"cpp_link.mem": memory},
+            "//conditions:default": None,
+        }),
+    )
 
 def tflite_jni_binary(
         name,
@@ -195,6 +243,7 @@ def tflite_jni_binary(
         linkopts = tflite_jni_linkopts(),
         linkscript = LINKER_SCRIPT,
         exported_symbols = EXPORTED_SYMBOLS,
+        stamp = -1,
         linkshared = 1,
         linkstatic = 1,
         testonly = 0,
@@ -202,7 +251,8 @@ def tflite_jni_binary(
         tags = [],
         srcs = [],
         visibility = None,  # 'None' means use the default visibility.
-        local_defines = []):
+        local_defines = [],
+        exec_properties = {}):
     """Builds a jni binary for TFLite."""
     linkopts = linkopts + select({
         clean_dep("//tensorflow:macos"): [
@@ -212,17 +262,16 @@ def tflite_jni_binary(
         clean_dep("//tensorflow:windows"): [],
         "//conditions:default": [
             "-Wl,--version-script,$(location {})".format(linkscript),
-            # copybara:uncomment_begin(google-only)
-            # "-Wl,--undefined-version",
-            # copybara:uncomment_end
+            "-Wl,--undefined-version",
             "-Wl,-soname," + name,
         ],
     })
-    native.cc_binary(
+    cc_binary(
         name = name,
         copts = copts,
         linkshared = linkshared,
         linkstatic = linkstatic,
+        stamp = stamp,
         deps = deps + [linkscript, exported_symbols],
         srcs = srcs,
         tags = tags,
@@ -230,6 +279,7 @@ def tflite_jni_binary(
         testonly = testonly,
         visibility = visibility,
         local_defines = local_defines,
+        exec_properties = exec_properties,
     )
 
 def tflite_cc_shared_object(
@@ -367,6 +417,7 @@ def _gen_selected_ops_impl(ctx):
         executable = ctx.executable._generate_op_registrations,
         mnemonic = "OpRegistration",
         progress_message = "gen_selected_ops",
+        use_default_shell_env = True,
     )
 
 gen_selected_ops_rule = rule(
@@ -456,7 +507,7 @@ def gen_model_coverage_test(
 
         # Avoid coverage timeouts for large/enormous tests.
         coverage_tags = ["nozapfhahn"] if size in ["large", "enormous"] else []
-        py_strict_test(
+        py_test(
             name = "model_coverage_test_%s_%s" % (name, target_op_sets.lower().replace(",", "_")),
             srcs = [src],
             main = src,
@@ -502,7 +553,7 @@ def tflite_custom_cc_library(
         deps: Additional dependencies to build all the custom operators.
         visibility: Visibility setting for the generated target. Default to private.
         experimental: Whether to include experimental APIs or not.
-        **kwargs: Additional arguments for native.cc_library.
+        **kwargs: Additional arguments for cc_library.
     """
     real_srcs = []
     real_srcs.extend(srcs)
@@ -525,7 +576,7 @@ def tflite_custom_cc_library(
         framework = "//tensorflow/lite:framework_experimental"
     else:
         framework = "//tensorflow/lite:framework_stable"
-    native.cc_library(
+    cc_library(
         name = name,
         srcs = real_srcs,
         hdrs = [
@@ -599,7 +650,7 @@ def tflite_custom_android_library(
         ] + delegate_deps,
     )
 
-    native.cc_library(
+    cc_library(
         name = "%s_jni" % name,
         srcs = ["libtensorflowlite_jni.so"],
         visibility = visibility,
@@ -657,7 +708,7 @@ def tflite_custom_c_library(
         else:
             framework = "//tensorflow/lite:framework_stable"
 
-        native.cc_library(
+        cc_library(
             name = "%s_create_op_resolver" % name,
             srcs = [
                 ":%s_registration" % name,
@@ -702,7 +753,7 @@ def tflite_custom_c_library(
             "//tensorflow/lite/c:c_api_opaque_without_op_resolver_without_alwayslink",
             "//tensorflow/lite/core/c:private_c_api_opaque_without_op_resolver_without_alwayslink",
         ]
-    native.cc_library(
+    cc_library(
         name = name,
         hdrs = hdrs,
         copts = tflite_copts(),
@@ -719,12 +770,15 @@ def tflite_custom_c_library(
         **kwargs
     )
 
+def _is_bzlmod_enabled():
+    """Check if with bzlmod enabled"""
+    return str(Label("@//:BUILD.bazel")).startswith("@@")
+
 # TODO(b/254126721): Move tflite_combine_cc_tests macro to lite/testing/build_def.bzl.
 def tflite_combine_cc_tests(
         name,
         deps_conditions,
-        extra_cc_test_tags = [],
-        extra_build_test_tags = [],
+        build_test_tags = [],
         generate_cc_library = False,
         **kwargs):
     """Combine certain cc_tests into a single cc_test and a build_test.
@@ -748,6 +802,10 @@ def tflite_combine_cc_tests(
           can plugin their own test driver and entry point.
       **kwargs: kwargs to pass to the cc_test rule of the test suite.
     """
+    cc_test_args = dict(kwargs)
+    size = cc_test_args.pop("size", "large")
+    extra_deps = cc_test_args.pop("deps", [])
+
     combined_test_srcs = {}
     combined_test_deps = {}
     for r in native.existing_rules().values():
@@ -777,24 +835,30 @@ def tflite_combine_cc_tests(
         combined_test_deps.update({d: True for d in r["deps"]})
 
     if combined_test_srcs:
-        native.cc_test(
+        # Using native.existing_rule to combine cc_test's deps duplicates link_extra_lib. Remove it.
+        if _is_bzlmod_enabled():
+            combined_test_deps.pop(str(Label("@rules_cc" + "//:link_extra_lib")), None)
+        else:
+            combined_test_deps.pop("@@rules_cc" + "//:link_extra_lib", None)
+
+        # Merge explicitly provided extra dependencies
+        for d in extra_deps:
+            combined_test_deps[d] = True
+
+        cc_test(
             name = name,
-            size = "large",
+            size = size,
             srcs = list(combined_test_srcs),
-            tags = ["manual", "notap"] + extra_cc_test_tags,
             deps = list(combined_test_deps),
-            **kwargs
+            **cc_test_args
         )
         build_test(
             name = "%s_build_test" % name,
             targets = [":%s" % name],
-            tags = [
-                "manual",
-                "tflite_portable_build_test",
-            ] + extra_build_test_tags,
+            tags = build_test_tags,
         )
         if generate_cc_library:
-            native.cc_library(
+            cc_library(
                 name = "%s_lib" % name,
                 srcs = list(combined_test_srcs),
                 deps = [d for d in combined_test_deps if d not in deps_conditions],
@@ -849,7 +913,7 @@ def _label(target):
     Args:
       target: (string) a relative or absolute build target.
     """
-    if target[0:2] == "//":
+    if target[0:2] == "//" or "@org_tensorflow//" in target:
         return Label(target)
     if target[0] == ":":
         return Label("//" + native.package_name() + target)
@@ -868,12 +932,12 @@ def tflite_cc_library_with_c_headers_test(name, hdrs, **kwargs):
       hdrs: (list of string) as per cc_library.
       **kwargs: Additional kwargs to pass to cc_library.
     """
-    native.cc_library(name = name, hdrs = hdrs, **kwargs)
+    cc_library(name = name, hdrs = hdrs, **kwargs)
 
     build_tests = []
     for hdr in hdrs:
         label = _label(hdr)
-        basename = "%s__test_self_contained_c__%s" % (name, label.name)
+        basename = "%s__test_self_contained_c__%s__%s" % (name, label.package, label.name)
         compatible_with = kwargs.pop("compatible_with", [])
         native.genrule(
             name = "%s_gen" % basename,
@@ -888,7 +952,7 @@ def tflite_cc_library_with_c_headers_test(name, hdrs, **kwargs):
         kwargs.pop("srcs", [])
         kwargs.pop("tags", [])
         kwargs.pop("testonly", [])
-        native.cc_library(
+        cc_library(
             name = "%s_lib" % basename,
             srcs = ["%s.c" % basename],
             deps = [":" + name],
@@ -915,3 +979,8 @@ register_extension_info(
     extension = tflite_cc_library_with_c_headers_test,
     label_regex_for_dep = "{extension_name}",
 )
+
+# Workaround bug in Bazel before 8.0 where --cxxopt didn't apply to objc++ compilations.
+CXX17_BAZEL_ONLY_COPTS = [
+    "-std=c++17",  # copybara:comment
+]

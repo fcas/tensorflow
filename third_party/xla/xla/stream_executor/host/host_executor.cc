@@ -13,296 +13,170 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Implementation of HostExecutor class [of those methods not defined in the
+/// Implementation of HostExecutor class [of those methods not defined in the
 // class declaration].
 #include "xla/stream_executor/host/host_executor.h"
 
-#include <stdint.h>
-#include <string.h>
-
 #include <cstdint>
+#include <cstring>
 #include <memory>
-#include <string>
+#include <new>
+#include <optional>
 #include <utility>
+#include <variant>
 
-#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "absl/synchronization/notification.h"
-#include "absl/types/span.h"
+#include "absl/strings/str_format.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
-#include "xla/stream_executor/event_interface.h"
-#include "xla/stream_executor/host/host_execution_engine.h"
-#include "xla/stream_executor/host/host_kernel.h"
+#include "xla/stream_executor/generic_memory_allocation.h"
+#include "xla/stream_executor/generic_memory_allocator.h"
+#include "xla/stream_executor/host/host_event.h"
 #include "xla/stream_executor/host/host_stream.h"
+#include "xla/stream_executor/host/host_stream_factory.h"
+#include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
-#include "xla/stream_executor/launch_dim.h"
-#include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_interface.h"
+#include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_space.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/profile_utils/cpu_utils.h"
 #include "tsl/platform/mem.h"
-#include "tsl/platform/profile_utils/cpu_utils.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace host {
 
-HostStream* AsHostStream(Stream* stream) {
-  DCHECK(stream != nullptr);
-  return dynamic_cast<HostStream*>(stream->implementation());
+absl::Status HostExecutor::Init() {
+  return absl::OkStatus();
 }
 
-absl::Status HostExecutor::Init() { return absl::OkStatus(); }
-
-absl::StatusOr<std::unique_ptr<Kernel>> HostExecutor::CreateKernel() {
-  return std::make_unique<HostKernel>();
-}
-
-absl::Status HostExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
-                                     Kernel* kernel) {
-  HostKernel* host_kernel = AsHostKernel(kernel);
-  host_kernel->SetArity(spec.arity());
-
-  VLOG(3) << "GetKernel on kernel " << kernel << " : " << kernel->name();
-
-  if (spec.has_llvm_host_kernel()) {
-    const LlvmHostKernel& llvm_host_kernel = spec.llvm_host_kernel();
-    const absl::string_view name = llvm_host_kernel.kernel_name();
-    const absl::string_view entry = llvm_host_kernel.entrypoint();
-    const absl::string_view ir = llvm_host_kernel.ir();
-    const absl::Span<const std::string> options = llvm_host_kernel.options();
-
-    TF_ASSIGN_OR_RETURN(
-        auto execution_engine,
-        LlvmExecutionEngine::CreateFromLlvmIr(name, entry, ir, options));
-    host_kernel->SetExecutionEngine(std::move(execution_engine));
-    return absl::OkStatus();
-  } else if (false /* TODO(tsilytskyi): Implement CppHostKernel */) {
-    // host_kernel->SetExecutionEngine(std::make_unique<CppExecutionEngine>());
-  } else {
-    return absl::InternalError("No method of loading host kernel provided");
-  }
-
-  return absl::UnimplementedError("Not Implemented");
-}
-
-absl::Status HostExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
-                                  const BlockDim& block_dims,
-                                  const Kernel& kernel,
-                                  const KernelArgs& args) {
-  // const HostKernel* host_kernel = AsHostKernel(&kernel);
-
-  // TODO(tsilytskyi): convert args into proper format
-  // host_kernel->Launch(thread_dims, args);
-  return absl::UnimplementedError("Not Implemented");
+absl::StatusOr<std::unique_ptr<Kernel>> HostExecutor::LoadKernel(
+    const KernelLoaderSpec& /*spec*/) {
+  return absl::UnimplementedError("No method of loading host kernel provided");
 }
 
 bool HostExecutor::DeviceMemoryUsage(int64_t* free, int64_t* total) const {
   tsl::port::MemoryInfo mem_info = tsl::port::GetMemoryInfo();
-  *free = (mem_info.free != INT64_MAX) ? mem_info.free : -1;
-  *total = (mem_info.total != INT64_MAX) ? mem_info.total : -1;
+  if (mem_info.free == INT64_MAX || mem_info.total == INT64_MAX) {
+    *free = -1;
+    *total = -1;
+    return false;
+  }
+  *free = mem_info.free;
+  *total = mem_info.total;
   return true;
 }
 
-DeviceMemoryBase HostExecutor::Allocate(uint64_t size, int64_t memory_space) {
+DeviceAddressBase HostExecutor::Allocate(uint64_t size, int64_t memory_space) {
   CHECK_EQ(memory_space, 0);
-  // Use a minimum alignment of 64 bytes to be friendly to AVX512 code.
-  // This should probably be kept in sync with
-  // tsl::Allocator::kAllocatorAlignment.
-  return DeviceMemoryBase(
-      tsl::port::AlignedMalloc(size, /*minimum_alignment=*/64), size);
+  void* ptr = tsl::port::AlignedMalloc(
+      size, static_cast<std::align_val_t>(kHostAlignment));
+  if (size > 0 && ptr == nullptr) {
+    return DeviceAddressBase();
+  }
+  return DeviceAddressBase(ptr, size);
 }
 
-void HostExecutor::Deallocate(DeviceMemoryBase* mem) {
-  tsl::port::AlignedFree(mem->opaque());
+void HostExecutor::Deallocate(DeviceAddressBase* mem) {
+  if (mem != nullptr && mem->opaque() != nullptr) {
+    tsl::port::AlignedFree(mem->opaque());
+  }
 }
 
-absl::Status HostExecutor::SynchronousMemZero(DeviceMemoryBase* location,
-                                              uint64_t size) {
-  memset(location->opaque(), 0, size);
-  return absl::OkStatus();
+absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+HostExecutor::HostMemoryAllocate(uint64_t size) {
+  void* ptr = tsl::port::AlignedMalloc(
+      size, static_cast<std::align_val_t>(kHostAlignment));
+  if (size > 0 && ptr == nullptr) {
+    return absl::ResourceExhaustedError(absl::StrFormat(
+        "Failed to allocate %u bytes of aligned host memory", size));
+  }
+  return std::make_unique<GenericMemoryAllocation>(
+      ptr, size, [](void* location, uint64_t /*size*/) {
+        tsl::port::AlignedFree(location);
+      });
 }
 
-absl::Status HostExecutor::Memcpy(Stream* stream, void* host_dst,
-                                  const DeviceMemoryBase& gpu_src,
-                                  uint64_t size) {
-  // Enqueue the [asynchronous] memcpy on the stream (HostStream) associated
-  // with the HostExecutor.
-  void* src_mem = const_cast<void*>(gpu_src.opaque());
-  AsHostStream(stream)->EnqueueTask(
-      [host_dst, src_mem, size]() { memcpy(host_dst, src_mem, size); });
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
-                                  const void* host_src, uint64_t size) {
-  void* dst_mem = gpu_dst->opaque();
-  // Enqueue the [asynchronous] memcpy on the stream (HostStream) associated
-  // with the HostExecutor.
-  AsHostStream(stream)->EnqueueTask(
-      [dst_mem, host_src, size]() { memcpy(dst_mem, host_src, size); });
-  return absl::OkStatus();
-}
-
-bool HostExecutor::MemcpyDeviceToDevice(Stream* stream,
-                                        DeviceMemoryBase* gpu_dst,
-                                        const DeviceMemoryBase& gpu_src,
-                                        uint64_t size) {
-  void* dst_mem = gpu_dst->opaque();
-  void* src_mem = const_cast<void*>(gpu_src.opaque());
-  // Enqueue this [asynchronous] "device-to-device" (i.e., host-to-host, given
-  // the nature of the HostExecutor) memcpy  on the stream (HostStream)
-  // associated with the HostExecutor.
-  AsHostStream(stream)->EnqueueTask(
-      [src_mem, dst_mem, size]() { memcpy(dst_mem, src_mem, size); });
-  return true;
-}
-
-absl::Status HostExecutor::MemZero(Stream* stream, DeviceMemoryBase* location,
-                                   uint64_t size) {
-  void* gpu_mem = location->opaque();
-  // Enqueue the [asynchronous] memzero on the stream (HostStream) associated
-  // with the HostExecutor.
-  AsHostStream(stream)->EnqueueTask(
-      [gpu_mem, size]() { memset(gpu_mem, 0, size); });
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::Memset(Stream* stream, DeviceMemoryBase* location,
-                                  uint8 pattern, uint64_t size) {
-  void* gpu_mem = location->opaque();
-  // Enqueue the [asynchronous] memzero on the stream (HostStream) associated
-  // with the HostExecutor.
-  AsHostStream(stream)->EnqueueTask(
-      [gpu_mem, size, pattern]() { memset(gpu_mem, pattern, size); });
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::Memset32(Stream* stream, DeviceMemoryBase* location,
-                                    uint32_t pattern, uint64_t size) {
-  void* gpu_mem = location->opaque();
-  // Enqueue the [asynchronous] memzero on the stream (HostStream) associated
-  // with the HostExecutor.
-  AsHostStream(stream)->EnqueueTask(
-      [gpu_mem, size, pattern]() { memset(gpu_mem, pattern, size); });
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
+absl::Status HostExecutor::SynchronousMemcpy(DeviceAddressBase* device_dst,
                                              const void* host_src,
                                              uint64_t size) {
-  memcpy(gpu_dst->opaque(), host_src, size);
+  if (device_dst == nullptr || device_dst->opaque() == nullptr ||
+      host_src == nullptr) {
+    if (size == 0) {
+      return absl::OkStatus();
+    }
+    return absl::InvalidArgumentError(
+        "Null pointer passed to SynchronousMemcpy");
+  }
+  std::memcpy(device_dst->opaque(), host_src, size);
   return absl::OkStatus();
 }
 
-absl::Status HostExecutor::SynchronousMemcpy(void* host_dst,
-                                             const DeviceMemoryBase& gpu_src,
-                                             uint64_t size) {
-  memcpy(host_dst, gpu_src.opaque(), size);
+absl::Status HostExecutor::SynchronousMemcpy(
+    void* host_dst, const DeviceAddressBase& device_src, uint64_t size) {
+  if (host_dst == nullptr || device_src.opaque() == nullptr) {
+    if (size == 0) {
+      return absl::OkStatus();
+    }
+    return absl::InvalidArgumentError(
+        "Null pointer passed to SynchronousMemcpy");
+  }
+  std::memcpy(host_dst, device_src.opaque(), size);
   return absl::OkStatus();
 }
 
-bool HostExecutor::HostCallback(
-    Stream* stream, absl::AnyInvocable<absl::Status() &&> callback) {
-  AsHostStream(stream)->EnqueueTaskWithStatus(std::move(callback));
-  return true;
-}
+void HostExecutor::DeallocateStream(Stream* /*stream*/) {}
 
-void HostExecutor::DeallocateStream(Stream* stream) {}
-
-bool HostExecutor::CreateStreamDependency(Stream* dependent, Stream* other) {
-  auto event = std::make_shared<absl::Notification>();
-  AsHostStream(other)->EnqueueTask([event]() { event->Notify(); });
-  AsHostStream(dependent)->EnqueueTask(
-      [event]() { event->WaitForNotification(); });
-  return true;
-}
-
-class HostEvent : public EventInterface {
- public:
-  HostEvent() : notification_(std::make_shared<absl::Notification>()) {}
-
-  std::shared_ptr<absl::Notification>& notification() { return notification_; }
-
- private:
-  // We use a std::shared_ptr here because the client may delete the HostEvent
-  // object while there are still RecordEvent and WaitForEvent callbacks pending
-  // on a stream.
-  std::shared_ptr<absl::Notification> notification_;
-};
-
-std::unique_ptr<EventInterface> HostExecutor::CreateEventImplementation() {
-  return std::unique_ptr<EventInterface>(new HostEvent());
-}
-
-static HostEvent* AsHostEvent(Event* event) {
-  DCHECK(event != nullptr);
-  return static_cast<HostEvent*>(event->implementation());
-}
-
-absl::Status HostExecutor::AllocateEvent(Event* /*event*/) {
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::DeallocateEvent(Event* /*event*/) {
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::RecordEvent(Stream* stream, Event* event) {
-  std::shared_ptr<absl::Notification> notification =
-      AsHostEvent(event)->notification();
-  AsHostStream(stream)->EnqueueTask([notification]() {
-    CHECK(!notification->HasBeenNotified());
-    notification->Notify();
-  });
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::WaitForEvent(Stream* stream, Event* event) {
-  std::shared_ptr<absl::Notification> notification =
-      AsHostEvent(event)->notification();
-  AsHostStream(stream)->EnqueueTask(
-      [notification]() { notification->WaitForNotification(); });
-  return absl::OkStatus();
-}
-
-Event::Status HostExecutor::PollForEventStatus(Event* event) {
-  absl::Notification& notification = *AsHostEvent(event)->notification();
-  return notification.HasBeenNotified() ? Event::Status::kComplete
-                                        : Event::Status::kPending;
-}
-
-absl::Status HostExecutor::BlockHostUntilDone(Stream* stream) {
-  return AsHostStream(stream)->BlockUntilDone();
+absl::StatusOr<std::unique_ptr<Event>> HostExecutor::CreateEvent() {
+  return std::make_unique<HostEvent>();
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
-HostExecutor::CreateDeviceDescription(int device_ordinal) {
-  internal::DeviceDescriptionBuilder builder;
+HostExecutor::CreateDeviceDescription(int /*device_ordinal*/) {
+  DeviceDescription desc;
 
-  builder.set_device_address_bits(64);
+  desc.set_device_address_bits(64);
 
-  // TODO(rspringer): How to report a value that's based in reality but that
-  // doesn't result in thrashing or other badness? 4GiB chosen arbitrarily.
-  builder.set_device_memory_size(static_cast<uint64_t>(4) * 1024 * 1024 * 1024);
+  // TODO: b/511236711 - How to report a value that's based in reality but
+  // that doesn't result in thrashing or other badness? 4GiB chosen arbitrarily.
+  desc.set_device_memory_size(int64_t{4} * 1024 * 1024 * 1024);
 
-  float cycle_counter_frequency = static_cast<float>(
-      tsl::profile_utils::CpuUtils::GetCycleCounterFrequency());
-  builder.set_clock_rate_ghz(cycle_counter_frequency / 1e9);
+  int64_t cycle_counter_frequency =
+      tsl::profile_utils::CpuUtils::GetCycleCounterFrequency();
+  if (cycle_counter_frequency <= 0) {
+    desc.set_clock_rate_ghz(
+        1.0f);  // Fallback reasonable clock rate if unavailable
+  } else {
+    desc.set_clock_rate_ghz(static_cast<float>(cycle_counter_frequency) / 1e9f);
+  }
 
-  builder.set_name("Host");
-  builder.set_platform_version("Default Version");
+  desc.set_name("Host");
+  desc.set_platform_version("Default Version");
 
-  return builder.Build();
+  return std::make_unique<DeviceDescription>(std::move(desc));
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> HostExecutor::CreateStream(
-    std::optional<std::variant<StreamPriority, int>> priority) {
-  return std::make_unique<Stream>(this, std::make_unique<HostStream>());
+    std::optional<std::variant<StreamPriority, int>> /*priority*/) {
+  std::shared_ptr<HostStreamFactory> factory = HostStreamFactory::GetFactory();
+  if (factory != nullptr) {
+    return factory->CreateStream(this);
+  }
+  return std::make_unique<HostStream>(this);
+}
+
+absl::StatusOr<std::unique_ptr<MemoryAllocator>>
+HostExecutor::CreateMemoryAllocator(MemorySpace type) {
+  if (type == MemorySpace::kHost) {
+    return std::make_unique<GenericMemoryAllocator>(
+        [this](uint64_t size) { return HostMemoryAllocate(size); });
+  }
+  return absl::UnimplementedError(
+      absl::StrFormat("Unsupported memory type %d", static_cast<int>(type)));
 }
 
 }  // namespace host

@@ -87,9 +87,9 @@ inline bool ConvBackpropExists(const TransposeContext& context,
       continue;
     }
 
-    const string& device_name = GetDeviceName(*node_def);
-    string device_type;
-    string task;
+    const std::string& device_name = GetDeviceName(*node_def);
+    std::string device_type;
+    std::string task;
     if (!DeviceNameUtils::SplitDeviceName(device_name, &task, &device_type) ||
         !absl::StrContains(absl::AsciiStrToLower(device_type),
                            absl::AsciiStrToLower(device))) {
@@ -107,10 +107,10 @@ inline bool ConvBackpropExists(const TransposeContext& context,
   return false;
 }
 
-inline std::pair<string, string> GetSrcAndDstDataFormats(
+inline std::pair<std::string, std::string> GetSrcAndDstDataFormats(
     const TransposeContext& context, GpuStats gpu_stats) {
-  string src_format = kNHWC;
-  string dst_format = kNCHW;
+  std::string src_format = kNHWC;
+  std::string dst_format = kNCHW;
 
   const bool is_NHWC_enforced =
       (!context.enforced_layout.empty() && context.enforced_layout == "NHWC");
@@ -135,9 +135,9 @@ inline std::pair<string, string> GetSrcAndDstDataFormats(
     if (!IsConv2D(*node_def) && !IsConv3D(*node_def)) {
       continue;
     }
-    const string& device_name = GetDeviceName(*node_def);
-    string device_type;
-    string task;
+    const std::string& device_name = GetDeviceName(*node_def);
+    std::string device_type;
+    std::string task;
     if (!DeviceNameUtils::SplitDeviceName(device_name, &task, &device_type) ||
         !absl::StrContains(absl::AsciiStrToLower(device_type),
                            absl::AsciiStrToLower(kGPU))) {
@@ -175,8 +175,8 @@ inline std::pair<string, string> GetSrcAndDstDataFormats(
   return {src_format, dst_format};
 }
 
-Status ExpandLayoutSensitiveOp(TransposeContext* context,
-                               TransposerFactory* transposer_factory) {
+absl::Status ExpandLayoutSensitiveOp(TransposeContext* context,
+                                     TransposerFactory* transposer_factory) {
   const int num_nodes = context->num_nodes;
   for (int i = 0; i < num_nodes; ++i) {
     auto* node_view = context->graph_view->GetNode(i);
@@ -185,7 +185,7 @@ Status ExpandLayoutSensitiveOp(TransposeContext* context,
       std::shared_ptr<Transposer> transposer =
           transposer_factory->GetTransposer(*node_def);
       if (transposer == nullptr) {
-        return Status(
+        return absl::Status(
             absl::StatusCode::kNotFound,
             absl::StrCat(
                 "Layout sensitive operation should have a transposer. Node: ",
@@ -197,8 +197,8 @@ Status ExpandLayoutSensitiveOp(TransposeContext* context,
   return absl::OkStatus();
 }
 
-Status ExpandLayoutAgnosticOp(TransposeContext* context,
-                              TransposerFactory* transposer_factory) {
+absl::Status ExpandLayoutAgnosticOp(TransposeContext* context,
+                                    TransposerFactory* transposer_factory) {
   const int num_nodes = context->num_nodes;
   for (int i = 0; i < num_nodes; ++i) {
     auto* node_view = context->graph_view->GetNode(i);
@@ -206,7 +206,7 @@ Status ExpandLayoutAgnosticOp(TransposeContext* context,
     if (IsLayoutAgnosticOp(*node_def)) {
       const auto& transposer = transposer_factory->GetTransposer(*node_def);
       if (transposer == nullptr) {
-        return Status(
+        return absl::Status(
             absl::StatusCode::kNotFound,
             absl::StrCat(
                 "Layout agnostic operation should have a transposer. Node: ",
@@ -237,8 +237,8 @@ inline bool IsCancellableConstPermTransposeNodePair(
 
   // Using dst->src to permute on src->dst will result in
   // seq(0, ..., num_elements - 1) if they are cancellable.
-  const auto& fanout_tensor_data = fanout_tensor.unaligned_flat<int32>();
-  const auto& fanin_tensor_data = fanin_tensor.unaligned_flat<int32>();
+  const auto& fanout_tensor_data = fanout_tensor.unaligned_flat<int32_t>();
+  const auto& fanin_tensor_data = fanin_tensor.unaligned_flat<int32_t>();
   const int num_elements = fanout_tensor.NumElements();
   for (int i = 0; i < num_elements; ++i) {
     if (fanout_tensor_data(fanin_tensor_data(i)) != i) {
@@ -282,7 +282,7 @@ inline bool IsCancellableNodePair(
          IsCancellableDataFormatNodePair(fanout_transpose, fanin_transpose);
 }
 
-Status EraseCancellableNodes(TransposeContext* context) {
+absl::Status EraseCancellableNodes(TransposeContext* context) {
   const int original_num_nodes = context->num_nodes;
   utils::MutableGraphView* graph_view = context->graph_view.get();
   utils::Mutation* mutation = graph_view->GetMutationBuilder();
@@ -329,7 +329,7 @@ Status EraseCancellableNodes(TransposeContext* context) {
 //
 // From: Transpose[NHWC->NCHW] -> Pad[paddings] -> Transpose[NCHW->NHWC]
 // To:   Pad[Permute(paddings)]
-Status EraseCancellableNodesAroundPad(TransposeContext* context) {
+absl::Status EraseCancellableNodesAroundPad(TransposeContext* context) {
   utils::MutableGraphView* graph_view = context->graph_view.get();
   utils::Mutation* mutation = graph_view->GetMutationBuilder();
 
@@ -407,10 +407,10 @@ Status EraseCancellableNodesAroundPad(TransposeContext* context) {
                              MutableNodeViewFormatter());
 
     // Permute paddings in place according to permutation in second transpose.
-    auto permutation_s = absl::Span<int32>(permute_t.flat<int32>().data(),
-                                           permute_t.NumElements());
-    auto paddings_s = absl::Span<int32>(paddings_t.flat<int32>().data(),
-                                        paddings_t.NumElements());
+    auto permutation_s = absl::Span<int32_t>(permute_t.flat<int32_t>().data(),
+                                             permute_t.NumElements());
+    auto paddings_s = absl::Span<int32_t>(paddings_t.flat<int32_t>().data(),
+                                          paddings_t.NumElements());
     TF_RETURN_IF_ERROR(
         PermuteDouble(absl::StrCat("paddings in ", pad->GetName()),
                       permutation_s, &paddings_s));
@@ -437,7 +437,7 @@ Status EraseCancellableNodesAroundPad(TransposeContext* context) {
   return mutation->Apply();
 }
 
-Status EraseOutputShapeAttrs(TransposeContext* context) {
+absl::Status EraseOutputShapeAttrs(TransposeContext* context) {
   utils::MutableGraphView* graph_view = context->graph_view.get();
   utils::Mutation* mutation = graph_view->GetMutationBuilder();
   const int num_nodes = graph_view->NumNodes();
@@ -458,17 +458,17 @@ Status EraseOutputShapeAttrs(TransposeContext* context) {
 // When there is only CPU, there will be no conversion by default, unless user
 // chose to convert the graph to a desired format. Currently, NCHW -> NHWC
 // format conversion is available on CPU.
-Status GenericLayoutOptimizer::Optimize(Cluster* cluster,
-                                        const GrapplerItem& item,
-                                        GraphDef* output) {
+absl::Status GenericLayoutOptimizer::Optimize(Cluster* cluster,
+                                              const GrapplerItem& item,
+                                              GraphDef* output) {
   if (cluster == nullptr) {
     LOG(WARNING)
         << "generic layout optimizer was called with cluster == nullptr";
-    return errors::Aborted("cluster == nullptr.");
+    return absl::AbortedError("cluster == nullptr.");
   }
   if (!enforced_layout_.empty() && enforced_layout_ != "NHWC" &&
       enforced_layout_ != "NCHW") {
-    return Status(
+    return absl::Status(
         absl::StatusCode::kInvalidArgument,
         absl::StrCat("Invalid value for enforced_layout: ", enforced_layout_,
                      ". Supported layouts: 'NHWC', 'NCHW'."));
@@ -497,7 +497,7 @@ Status GenericLayoutOptimizer::Optimize(Cluster* cluster,
       // TODO(intel-tf): Add functionality for NHWC_TO_NCHW layout conversion on
       // CPU.
       case RewriterConfig::NHWC_TO_NCHW:
-        return errors::Aborted(
+        return absl::AbortedError(
             "Conversion from NHWC to NCHW is currently not  available for "
             "CPU.");
       default:
@@ -520,7 +520,7 @@ Status GenericLayoutOptimizer::Optimize(Cluster* cluster,
   }
   TF_RETURN_IF_ERROR(EraseOutputShapeAttrs(&context));
 
-  *output = context.graph;
+  *output = std::move(context.graph);
   return absl::OkStatus();
 }
 

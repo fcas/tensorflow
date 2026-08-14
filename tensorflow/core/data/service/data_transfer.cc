@@ -91,8 +91,9 @@ void DataTransferServer::Register(std::string name, ServerFactoryT factory) {
   }
 }
 
-Status DataTransferServer::Build(std::string name, GetElementT get_element,
-                                 std::shared_ptr<DataTransferServer>* out) {
+absl::Status DataTransferServer::Build(
+    std::string name, GetElementT get_element,
+    std::shared_ptr<DataTransferServer>* out) {
   mutex_lock l(*get_lock());
   auto it = transfer_server_factories().find(name);
   if (it != transfer_server_factories().end()) {
@@ -104,10 +105,10 @@ Status DataTransferServer::Build(std::string name, GetElementT get_element,
     available_names.push_back(factory.first);
   }
 
-  return errors::NotFound(
+  return absl::NotFoundError(absl::StrCat(
       "No data transfer server factory has been registered for name ", name,
       ". The available names are: [ ", absl::StrJoin(available_names, ", "),
-      " ]");
+      " ]"));
 }
 
 void DataTransferClient::Register(std::string name, ClientFactoryT factory) {
@@ -119,23 +120,23 @@ void DataTransferClient::Register(std::string name, ClientFactoryT factory) {
   }
 }
 
-Status DataTransferClient::Build(std::string name, Config config,
-                                 std::unique_ptr<DataTransferClient>* out) {
+absl::Status DataTransferClient::Build(
+    std::string name, Config config, std::unique_ptr<DataTransferClient>* out) {
   mutex_lock l(*get_lock());
   auto it = transfer_client_factories().find(name);
   if (it != transfer_client_factories().end()) {
     return it->second(config, out);
   }
 
-  std::vector<string> available_names;
+  std::vector<std::string> available_names;
   for (const auto& factory : transfer_client_factories()) {
     available_names.push_back(factory.first);
   }
 
-  return errors::NotFound(
+  return absl::NotFoundError(absl::StrCat(
       "No data transfer client factory has been registered for name ", name,
       ". The available names are: [ ", absl::StrJoin(available_names, ", "),
-      " ]");
+      " ]"));
 }
 
 }  // namespace data

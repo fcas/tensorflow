@@ -1,7 +1,25 @@
-load("//tensorflow:strict.default.bzl", "py_strict_binary", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.bzl", "if_not_windows")
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "get_compatible_with_portable", "tf_py_strict_test", "tf_pybind_cc_library_wrapper", "tf_python_pybind_extension")
 load("//tensorflow/core/platform:build_config.bzl", "tf_protos_grappler")
+load("//tensorflow/core/platform:build_config_root.bzl", "if_pywrap")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -25,6 +43,8 @@ cc_library(
         "//tensorflow/core/grappler/costs:cost_estimator",
         "//tensorflow/core/grappler/costs:measuring_cost_estimator",
         "//tensorflow/core/grappler/costs:utils",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
     ] + tf_protos_grappler(),
     alwayslink = 1,
 )
@@ -54,15 +74,33 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "_pywrap_cost_analyzer.pyi",
     ],
+    starlark_only = True,
     deps = [
         ":cost_analyzer_headers",
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:framework",
         "//tensorflow/core:framework_headers_lib",
+        "//tensorflow/core:framework_lite",
+        "//tensorflow/core:lib",
         "//tensorflow/core:lib_headers_for_pybind",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/common_runtime:core_cpu_headers_lib",
+        "//tensorflow/core/common_runtime:device_set",
         "//tensorflow/core/common_runtime/gpu:gpu_id",
+        "//tensorflow/core/framework:allocator",
+        "//tensorflow/core/framework:tensor",
+        "//tensorflow/core/platform:threadpool_options",
         "//tensorflow/python/lib/core:pybind11_status",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@pybind11",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:thread_annotations",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -76,6 +114,7 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/grappler:grappler_item",
         "//tensorflow/core/grappler/costs:graph_properties",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -90,19 +129,26 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "_pywrap_model_analyzer.pyi",
     ],
+    starlark_only = True,
     deps = [
         "//tensorflow/core:framework_headers_lib",
+        "//tensorflow/core:lib",
         "//tensorflow/core:lib_headers_for_pybind",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/framework:tensor",
         "//tensorflow/python/lib/core:pybind11_status",
+        "@com_google_absl//absl/status",
         "@pybind11",
-    ],
+        "@tsl//tsl/platform:platform_port",
+    ] + if_pywrap(["//tensorflow/python/grappler:model_analyzer_lib"]),
 )
 
-py_strict_library(
+py_library(
     name = "tf_item",
     srcs = ["item.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         ":_pywrap_tf_item",
@@ -126,12 +172,31 @@ tf_python_pybind_extension(
         "_pywrap_tf_item.pyi",
     ],
     deps = [
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:framework",
         "//tensorflow/core:framework_headers_lib",
+        "//tensorflow/core:framework_lite",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:session_options",
         "//tensorflow/core/common_runtime:core_cpu_headers_lib",
+        "//tensorflow/core/common_runtime:device_set",
         "//tensorflow/core/common_runtime/gpu:gpu_id",
+        "//tensorflow/core/framework:allocator",
+        "//tensorflow/core/framework:tensor",
+        "//tensorflow/core/grappler:utils",
         "//tensorflow/python/lib/core:pybind11_status",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
         "@pybind11",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:thread_annotations",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ] + if_not_windows(["//tensorflow/core/grappler/costs:graph_properties"]),  # b/148556093,
 )
 
@@ -139,7 +204,6 @@ tf_py_strict_test(
     name = "item_test",
     size = "small",
     srcs = ["item_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
         "no_pip",  # tf_optimizer is not available in pip.
@@ -165,7 +229,6 @@ tf_py_strict_test(
     name = "datasets_test",
     size = "medium",
     srcs = ["datasets_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
         "no_pip",  # tf_optimizer is not available in pip.
@@ -184,10 +247,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "tf_cluster",
     srcs = ["cluster.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         ":_pywrap_tf_cluster",
@@ -201,32 +264,59 @@ tf_python_pybind_extension(
     srcs = ["cluster_wrapper.cc"],
     hdrs = [
         "//tensorflow/cc:pywrap_required_hdrs",
-        "//tensorflow/core/grappler:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/clusters:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/costs:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/utils:pywrap_required_hdrs",
-    ],
+    ] + if_pywrap(
+        if_false = [
+            "//tensorflow/core/grappler:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/clusters:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/costs:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/utils:pywrap_required_hdrs",
+        ],
+    ),
     enable_stub_generation = True,
     pytype_srcs = [
         "_pywrap_tf_cluster.pyi",
     ],
     deps = [
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:framework",
         "//tensorflow/core:framework_headers_lib",
+        "//tensorflow/core:framework_lite",
+        "//tensorflow/core:lib",
         "//tensorflow/core:lib_headers_for_pybind",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:session_options",
         "//tensorflow/core/common_runtime:core_cpu_headers_lib",
+        "//tensorflow/core/common_runtime:device_set",
         "//tensorflow/core/common_runtime/gpu:gpu_id",
+        "//tensorflow/core/framework:allocator",
+        "//tensorflow/core/framework:tensor",
+        "//tensorflow/core/grappler:utils",
+        "//tensorflow/core/platform:status",
         "//tensorflow/python/lib/core:pybind11_status",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@pybind11",
-    ],
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:thread_annotations",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
+    ] + if_pywrap(
+        if_true = [
+            "//tensorflow/core/grappler/costs:measuring_cost_estimator",
+            "//tensorflow/core/grappler/clusters:single_machine",
+        ],
+    ),
 )
 
 cuda_py_strict_test(
     name = "cluster_test",
     size = "small",
     srcs = ["cluster_test.py"],
-    python_version = "PY3",
     shard_count = 5,
     tags = [
         "grappler",
@@ -249,10 +339,10 @@ cuda_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "tf_optimizer",
     srcs = ["tf_optimizer.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         ":_pywrap_tf_optimizer",
@@ -265,14 +355,16 @@ py_strict_library(
 tf_python_pybind_extension(
     name = "_pywrap_tf_optimizer",
     srcs = ["tf_optimizer_wrapper.cc"],
-    hdrs = [
-        "//tensorflow/cc:pywrap_required_hdrs",
-        "//tensorflow/core/grappler:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/clusters:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/costs:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/optimizers:pywrap_required_hdrs",
-        "//tensorflow/core/grappler/verifiers:pywrap_required_hdrs",
-    ],
+    hdrs = if_pywrap(
+        if_false = [
+            "//tensorflow/cc:pywrap_required_hdrs",
+            "//tensorflow/core/grappler:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/clusters:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/costs:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/optimizers:pywrap_required_hdrs",
+            "//tensorflow/core/grappler/verifiers:pywrap_required_hdrs",
+        ],
+    ),
     enable_stub_generation = True,
     pytype_srcs = [
         "_pywrap_tf_optimizer.pyi",
@@ -285,22 +377,51 @@ tf_python_pybind_extension(
     #    }),
     #    static_deps = tf_python_pybind_static_deps(),
     deps = [
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:framework",
         "//tensorflow/core:framework_headers_lib",
+        "//tensorflow/core:framework_lite",
+        "//tensorflow/core:lib",
         "//tensorflow/core:lib_headers_for_pybind",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:session_options",
         "//tensorflow/core/common_runtime:core_cpu_headers_lib",
+        "//tensorflow/core/common_runtime:device",
+        "//tensorflow/core/common_runtime:device_factory",
+        "//tensorflow/core/common_runtime:device_set",
         "//tensorflow/core/common_runtime/gpu:gpu_id",
+        "//tensorflow/core/framework:allocator",
+        "//tensorflow/core/framework:tensor",
+        "//tensorflow/core/platform:errors",
+        "//tensorflow/core/platform:status",
         "//tensorflow/python/lib/core:pybind11_status",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@pybind11",
         "@pybind11_protobuf//pybind11_protobuf:native_proto_caster",
-    ],
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:thread_annotations",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
+    ] + if_pywrap(
+        if_true = [
+            "//tensorflow/core/grappler/clusters:cluster",
+            "//tensorflow/core/grappler/clusters:utils",
+            "//tensorflow/core/grappler:grappler_item_builder",
+            "//tensorflow/core/grappler/optimizers:meta_optimizer",
+            "//tensorflow/core/grappler/optimizers:graph_optimizer",
+            "//tensorflow/core/grappler/verifiers:graph_verifier",
+        ],
+    ),
 )
 
 tf_py_strict_test(
     name = "tf_optimizer_test",
     size = "small",
     srcs = ["tf_optimizer_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
         "no_pip",  # tf_optimizer is not available in pip.
@@ -327,7 +448,6 @@ tf_py_strict_test(
     name = "memory_optimizer_test",
     size = "medium",
     srcs = ["memory_optimizer_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
     ],
@@ -353,7 +473,6 @@ cuda_py_strict_test(
     name = "constant_folding_test",
     size = "medium",
     srcs = ["constant_folding_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
     ],
@@ -378,7 +497,6 @@ cuda_py_strict_test(
     name = "arithmetic_optimizer_test",
     size = "small",
     srcs = ["arithmetic_optimizer_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
     ],
@@ -426,10 +544,10 @@ cuda_py_strict_test(
 #     xla_enable_strict_auto_jit = False,
 # )
 
-py_strict_library(
+py_library(
     name = "cost_analyzer",
     srcs = ["cost_analyzer.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":_pywrap_cost_analyzer",
         ":tf_cluster",
@@ -437,11 +555,10 @@ py_strict_library(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "cost_analyzer_tool",
     srcs = ["cost_analyzer_tool.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":cost_analyzer",
         ":tf_optimizer",
@@ -458,7 +575,6 @@ tf_py_strict_test(
     name = "cost_analyzer_test",
     size = "small",
     srcs = ["cost_analyzer_test.py"],
-    python_version = "PY3",
     tags = [
         "grappler",
         "no_cuda_on_cpu_tap",
@@ -484,12 +600,12 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "model_analyzer",
     srcs = [
         "model_analyzer.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":_pywrap_model_analyzer"],
 )
 
@@ -518,7 +634,6 @@ cuda_py_strict_test(
     srcs = [
         "auto_mixed_precision_test.py",
     ],
-    python_version = "PY3",
     tags = ["grappler"],
     # This test analyzes the graph, but XLA changes the names of nodes.
     xla_enable_strict_auto_jit = False,
@@ -557,7 +672,6 @@ cuda_py_strict_test(
     name = "remapper_test",
     size = "medium",
     srcs = ["remapper_test.py"],
-    python_version = "PY3",
     tags = ["grappler"],
     # This test analyzes the graph, but XLA changes the names of nodes.
     xla_enable_strict_auto_jit = False,
@@ -597,11 +711,10 @@ tf_python_pybind_extension(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "graph_analyzer",
     srcs = ["graph_analyzer.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":_pywrap_graph_analyzer",
         "@absl_py//absl:app",

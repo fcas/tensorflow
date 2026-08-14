@@ -1,8 +1,24 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 #   Doc generator
 
-load("//tensorflow:py.default.bzl", "py_library")
-load("//tensorflow:strict.default.bzl", "py_strict_binary", "py_strict_library", "py_strict_test")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load(
     "//tensorflow/core/platform:build_config_root.bzl",
@@ -33,10 +49,10 @@ distribute_module = [
     "distribute.",
 ]
 
-py_strict_library(
+py_library(
     name = "tf_doctest_lib",
     srcs = ["tf_doctest_lib.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = [
         "//tensorflow:__subpackages__",
         "//tensorflow_text/google:__pkg__",
@@ -46,12 +62,12 @@ py_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "tf_doctest",
     srcs = ["tf_doctest.py"],
     args = ["--module_prefix_skip=" + ",".join(tpu_module + distribute_module + keras_module)],
-    python_version = "PY3",
     shard_count = 4,
+    strict_deps = True,
     tags = [
         "no_oss",  # b/275546007
         "no_pip",
@@ -78,7 +94,6 @@ tpu_py_strict_test(
     disable_tfrt = True,
     disable_v3 = True,
     main = "tf_doctest.py",
-    python_version = "PY3",
     tags = ["no_oss"],
     deps = [
         ":tf_doctest_lib",
@@ -91,7 +106,7 @@ tpu_py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "tf_doctest_gpu",
     srcs = ["tf_doctest.py"],
     args = [
@@ -100,7 +115,7 @@ py_strict_test(
         "--required_gpus=2",
     ],
     main = "tf_doctest.py",
-    python_version = "PY3",
+    strict_deps = True,
     tags = [
         "no_pip",
         "no_rocm",
@@ -120,10 +135,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "tf_doctest_test",
     srcs = ["tf_doctest_test.py"],
-    python_version = "PY3",
+    strict_deps = True,
     tags = ["no_pip"],
     deps = [
         ":tf_doctest_lib",
@@ -132,18 +147,20 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "fenced_doctest_lib",
     srcs = ["fenced_doctest_lib.py"],
+    strict_deps = True,
     deps = [
         ":tf_doctest_lib",
-        "@pypi_astor//:pkg",
+        "@pypi//astor",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "fenced_doctest_test",
     srcs = ["fenced_doctest_test.py"],
+    strict_deps = True,
     tags = [
         "no_oss",
         "no_pip",
@@ -155,20 +172,19 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "doc_controls",
     srcs = ["doc_controls.py"],
     compatible_with = get_compatible_with_portable(),
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:public"],
 )
 
-py_strict_test(
+py_test(
     name = "generate2_test",
     size = "medium",
     srcs = ["generate2_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     tags = [
         "manual",
         "optonly",
@@ -177,15 +193,14 @@ py_strict_test(
         ":generate2_lib",
         "//tensorflow:tensorflow_py",
         "//tensorflow/python/platform:test",
-        "@pypi_packaging//:pkg",
+        "@pypi//packaging",
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "generate2",
     srcs = ["generate2.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":generate2_lib",
     ],
@@ -195,14 +210,14 @@ py_library(
     # Opensource only
     name = "base_dir_oss",
     srcs = ["base_dir.py"],
-    srcs_version = "PY3",
+    strict_deps = False,
     deps = [],
 )
 
-py_strict_library(
+py_library(
     name = "generate2_lib",
     srcs = ["generate2.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":base_dir_oss",
         "//tensorflow:tensorflow_py_no_contrib",
@@ -212,24 +227,24 @@ py_strict_library(
         "//tensorflow/python/util:tf_inspect",
         "@absl_py//absl:app",
         "@absl_py//absl/flags",
-        "@pypi_packaging//:pkg",
+        "@pypi//packaging",
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "build_cc_api_headers",
     srcs = ["build_cc_api_headers.py"],
+    strict_deps = True,
     deps = [
         "@absl_py//absl:app",
         "@absl_py//absl/flags",
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "build_java_api_docs",
     srcs = ["build_java_api_docs.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "@absl_py//absl:app",
         "@absl_py//absl/flags",

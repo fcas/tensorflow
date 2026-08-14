@@ -16,7 +16,9 @@ limitations under the License.
 #define TENSORFLOW_LITE_SIMPLE_PLANNER_H_
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -65,6 +67,14 @@ struct SimpleAlloc {
       ::free(ptr);
     }
     reset();
+  }
+
+  // Free allocated heap memory but preserve size and node information.
+  void release() {
+    if (ptr) {
+      ::free(ptr);
+      ptr = nullptr;
+    }
   }
 };
 

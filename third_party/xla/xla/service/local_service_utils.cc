@@ -20,20 +20,23 @@ limitations under the License.
 #include <string>
 
 #include "absl/log/check.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
-#include "xla/client/xla_computation.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/backend.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/service.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
@@ -70,7 +73,8 @@ absl::StatusOr<std::unique_ptr<HloModuleConfig>> GetHloModuleConfig(
     Backend* backend) {
   const HloModuleProto& proto = computation.proto();
   TF_RET_CHECK(proto.has_host_program_shape());
-  ProgramShape program_shape(proto.host_program_shape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                   ProgramShape::FromProto(proto.host_program_shape()));
 
   // Validate incoming layouts.
   if (argument_layouts.size() != program_shape.parameters_size()) {
@@ -81,8 +85,7 @@ absl::StatusOr<std::unique_ptr<HloModuleConfig>> GetHloModuleConfig(
 
   for (int i = 0; i < argument_layouts.size(); ++i) {
     const Shape& argument_shape = *argument_layouts[i];
-    TF_RETURN_IF_ERROR(
-        ShapeUtil::ValidateShapeWithOptionalLayout(argument_shape));
+    ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(argument_shape));
     if (!ShapeUtil::Compatible(argument_shape, program_shape.parameters(i))) {
       std::optional<const OpMetadata*> metadata =
           ParameterMetadata(computation, /*parameter_number=*/i);
@@ -105,8 +108,8 @@ absl::StatusOr<std::unique_ptr<HloModuleConfig>> GetHloModuleConfig(
     }
   }
   if (build_options.result_layout() != nullptr) {
-    TF_RETURN_IF_ERROR(Service::ValidateResultShape(
-        *build_options.result_layout(), program_shape.result()));
+    ABSL_RETURN_IF_ERROR(Service::ValidateResultShape(*build_options.result_layout(),
+                                                 program_shape.result()));
   }
 
   ExecutionOptions execution_options =

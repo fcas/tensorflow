@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,8 +37,8 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/memory_space_assignment.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/logging.h"
 
 namespace xla {
@@ -56,7 +57,7 @@ const int kNumExploredDecreasingIntervals = 100;
 }  // namespace
 
 bool InstructionCountPrefetchIntervalPicker::CanAllocateInAlternateMemoryNoCopy(
-    const Shape& shape, int64_t start_time, int64_t end_time) const {
+    int64_t shape_size, int64_t start_time, int64_t end_time) const {
   return end_time - start_time <= max_overlap_count_;
 }
 
@@ -66,7 +67,7 @@ int64_t InstructionCountPrefetchIntervalPicker::PreferredEvictionEndTime(
 }
 
 int64_t InstructionCountPrefetchIntervalPicker::LatestPrefetchStartTime(
-    const Shape& shape, int64_t start_time, int64_t end_time,
+    int64_t shape_size, int64_t start_time, int64_t end_time,
     const HloUse* use) const {
   return end_time - min_overlap_count_;
 }
@@ -131,7 +132,7 @@ CostAnalysisPrefetchIntervalPicker::CostAnalysisPrefetchIntervalPicker(
     const CostAnalysis& cost_analysis, float min_overlap_to_async_copy_ratio,
     float preferred_overlap_to_async_copy_ratio,
     float max_overlap_to_mem_size_async_copy_ratio, int64_t mem_size_bytes,
-    const Shape* shape_override)
+    std::optional<int64_t> size_override)
     : while_nest_level_(
           cost_analysis.hlo_live_range().instruction_schedule().size() + 1, 0),
       computation_nest_level_(
@@ -140,12 +141,11 @@ CostAnalysisPrefetchIntervalPicker::CostAnalysisPrefetchIntervalPicker(
       min_overlap_to_async_copy_ratio_(min_overlap_to_async_copy_ratio),
       preferred_overlap_to_async_copy_ratio_(
           preferred_overlap_to_async_copy_ratio),
-      max_async_copy_elapsed_(
-          cost_analysis_.GetAsyncCopyElapsed(
-              ShapeUtil::MakeShape(S32, {mem_size_bytes / 4})) *
-          max_overlap_to_mem_size_async_copy_ratio),
-      shape_override_(shape_override ? std::optional(*shape_override)
-                                     : std::nullopt) {
+      size_override_(size_override) {
+  max_async_copy_elapsed_ =
+      cost_analysis_.GetAsyncCopyElapsed(cost_analysis_.GetShapeSizeBytes(
+          ShapeUtil::MakeShape(S32, {mem_size_bytes / 4}))) *
+      max_overlap_to_mem_size_async_copy_ratio;
   instruction_schedule_ =
       &cost_analysis_.hlo_live_range().instruction_schedule();
 
@@ -225,12 +225,14 @@ float CostAnalysisPrefetchIntervalPicker::GetMaxElapsedInAlternateMemory(
 }
 
 bool CostAnalysisPrefetchIntervalPicker::CanAllocateInAlternateMemoryNoCopy(
-    const Shape& shape, int64_t start_time, int64_t end_time) const {
+    int64_t shape_size, int64_t start_time, int64_t end_time) const {
   // Even though this method returns if we allow the buffer in alternate memory
   // _without_ asynchronous copies, calculate how long it would have taken to
   // copy it and compare it to the elapsed time in the logical interval.
-  float async_copy_elapsed = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+  int64_t effective_size = size_override_ ? *size_override_ : shape_size;
+  float async_copy_elapsed = static_cast<float>(effective_size) /
+                             cost_analysis_.DefaultMemBandwidthBytesPerSecond(
+                                 /*use_scaling_factor=*/true);
   float logical_interval_elapsed =
       GetLogicalIntervalElapsed(start_time, end_time);
   return GetMaxElapsedInAlternateMemory(async_copy_elapsed) >
@@ -240,7 +242,8 @@ bool CostAnalysisPrefetchIntervalPicker::CanAllocateInAlternateMemoryNoCopy(
 int64_t CostAnalysisPrefetchIntervalPicker::PreferredEvictionEndTime(
     const Shape& shape, int64_t start_time, int64_t latest_end_time) const {
   float async_copy_elapsed = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+      size_override_ ? *size_override_
+                     : cost_analysis_.GetShapeSizeBytes(shape));
   int64_t end_time;
   for (end_time = start_time + 1; end_time <= latest_end_time; ++end_time) {
     float logical_interval_elapsed =
@@ -255,11 +258,11 @@ int64_t CostAnalysisPrefetchIntervalPicker::PreferredEvictionEndTime(
 }
 
 int64_t CostAnalysisPrefetchIntervalPicker::LatestPrefetchStartTime(
-    const Shape& shape, int64_t start_time, int64_t end_time,
+    int64_t shape_size, int64_t start_time, int64_t end_time,
     const HloUse* use) const {
   // Find the earliest time that satisfies max_overlap_to_async_copy_ratio_.
   float async_copy_elapsed = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+      size_override_ ? *size_override_ : shape_size);
   // If there is a use, estimate the time we would save by having this op in
   // alternate memory.
   float inst_elapsed_reduction = 0.0f;
@@ -297,7 +300,8 @@ int64_t CostAnalysisPrefetchIntervalPicker::PreferredPrefetchStartTime(
   // Between the earliest and latest prefetch interval, find the interval
   // closest to the preferred interval and start iterating from there.
   float async_copy_elapsed = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+      size_override_ ? *size_override_
+                     : cost_analysis_.GetShapeSizeBytes(shape));
   int64_t preferred_prefetch_start_time = earliest_prefetch_start_time;
   float preferred_interval =
       preferred_overlap_to_async_copy_ratio_ * async_copy_elapsed;
@@ -337,7 +341,8 @@ int64_t CostAnalysisPrefetchIntervalPicker::LatestPrefetchEndTime(
 int64_t CostAnalysisPrefetchIntervalPicker::EstimatedPrefetchEndTime(
     const Shape& shape, int64_t start_time, int64_t end_time) const {
   float async_copy_elapsed = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+      size_override_ ? *size_override_
+                     : cost_analysis_.GetShapeSizeBytes(shape));
   int64_t estimated_end_time;
   for (estimated_end_time = start_time + 1; estimated_end_time < end_time;
        ++estimated_end_time) {
@@ -354,9 +359,10 @@ void CostAnalysisPrefetchIntervalPicker::Begin(
     std::optional<int64_t> preferred_time) {
   const Shape& shape = ShapeUtil::GetSubshape(
       use.instruction->operand(use.operand_number)->shape(), use.operand_index);
+  int64_t shape_size = size_override_ ? *size_override_
+                                      : cost_analysis_.GetShapeSizeBytes(shape);
   // Find the earliest time that satisfies max_overlap_to_async_copy_ratio_.
-  async_copy_elapsed_ = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+  async_copy_elapsed_ = cost_analysis_.GetAsyncCopyElapsed(shape_size);
   // Estimate the time we would save by having this op in alternate memory.
   float elapsed_time = cost_analysis_.GetInstructionElapsed(*use.instruction);
   float elapsed_time_in_alternate_mem =
@@ -371,7 +377,7 @@ void CostAnalysisPrefetchIntervalPicker::Begin(
   // Find the latest time we're allowed to start prefetching.
   float min_interval = min_overlap_to_async_copy_ratio_ * async_copy_elapsed_;
   latest_prefetch_time_ =
-      LatestPrefetchStartTime(shape, start_time, end_time, &use);
+      LatestPrefetchStartTime(shape_size, start_time, end_time, &use);
 
   // Find the earliest time we're allowed to start prefetching.
   float max_interval = GetMaxElapsedInAlternateMemory(async_copy_elapsed_);
@@ -534,7 +540,8 @@ std::string CostAnalysisPrefetchIntervalPicker::ToDebugString() const {
 std::string CostAnalysisPrefetchIntervalPicker::ToNoCopyDebugString(
     const Shape& shape, int64_t start_time, int64_t end_time) const {
   float async_copy_elapsed = cost_analysis_.GetAsyncCopyElapsed(
-      shape_override_ ? *shape_override_ : shape);
+      size_override_ ? *size_override_
+                     : cost_analysis_.GetShapeSizeBytes(shape));
   float logical_interval_elapsed =
       GetLogicalIntervalElapsed(start_time, end_time);
   return absl::StrCat(

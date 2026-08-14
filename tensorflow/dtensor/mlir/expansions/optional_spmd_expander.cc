@@ -15,14 +15,21 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/optional_spmd_expander.h"
 
+#include <vector>
+
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/FormatVariadic.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "tensorflow/dtensor/cc/constants.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/dtensor_location.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
+#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/mlir/value_utils.h"
 
 namespace tensorflow {
@@ -47,8 +54,8 @@ StatusOr<mlir::Operation*> OptionalGetValueSPMDExpander::ExpandOp(
     local_types[i] = local_type;
   }
 
-  auto new_op = builder.create<mlir::TF::OptionalGetValueOp>(
-      DT_LOC(op->getLoc()), local_types, original_op->getOperand(0));
+  auto new_op = mlir::TF::OptionalGetValueOp::create(
+      builder, DT_LOC(op->getLoc()), local_types, original_op->getOperand(0));
 
   for (int i = 0; i < original_op->getNumResults(); ++i) {
     original_op.getResult(i).replaceAllUsesWith(new_op.getResult(i));

@@ -21,13 +21,14 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/delegates/xnnpack/test_util.h"
 #include "tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 namespace xnnpack {
 
-class Conv2DTester {
+class Conv2DTester : public ModelCache<Conv2DTester> {
  public:
   enum class WeightsType {
     kFP32,
@@ -43,6 +44,14 @@ class Conv2DTester {
   Conv2DTester() = default;
   Conv2DTester(const Conv2DTester&) = delete;
   Conv2DTester& operator=(const Conv2DTester&) = delete;
+
+  Conv2DTester& RelativeTolerance(float relative_tolerance) {
+    EXPECT_GT(relative_tolerance, 0.0f);
+    relative_tolerance_ = relative_tolerance;
+    return *this;
+  }
+
+  float RelativeTolerance() const { return relative_tolerance_; }
 
   inline Conv2DTester& BatchSize(int32_t batch_size) {
     EXPECT_GT(batch_size, 0);
@@ -241,9 +250,15 @@ class Conv2DTester {
     return *this;
   }
 
-  void Test(TfLiteDelegate* delegate) const;
+  Conv2DTester& ExpectFp16Precision(bool fp16_precision = true) {
+    yield_fp16_precision_ = fp16_precision;
+    return *this;
+  }
+  bool ExpectFp16Precision() const { return yield_fp16_precision_; }
 
-  std::vector<char> CreateTfLiteModel() const;
+  void Test(TfLiteDelegate* delegate);
+
+  std::vector<char> CreateTfLiteModel() const override;
 
  private:
   inline WeightsType WeightsType() const { return weights_type_; }
@@ -275,6 +290,8 @@ class Conv2DTester {
   ::tflite::ActivationFunctionType activation_ =
       ::tflite::ActivationFunctionType_NONE;
   TfLiteXNNPackDelegateWeightsCache* weights_cache_ = nullptr;
+  float relative_tolerance_ = 3.0e-6f;
+  bool yield_fp16_precision_ = false;
 };
 
 }  // namespace xnnpack

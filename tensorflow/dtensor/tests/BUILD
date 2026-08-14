@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Tests for DTensor interfaces.
 
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
@@ -24,8 +39,9 @@ tf_cc_test(
         "//tensorflow/dtensor/cc:slice_util",
         "//tensorflow/dtensor/cc:tensor_layout",
         "//tensorflow/dtensor/proto:layout_proto_cc",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:status_matchers",
+        "@xla//xla/tsl/platform:status_matchers",
     ],
 )
 
@@ -40,12 +56,13 @@ tf_cc_test(
         "//tensorflow/dtensor/cc:tensor_layout",
         "//tensorflow/dtensor/proto:layout_proto_cc",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:status_matchers",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -61,9 +78,9 @@ tf_cc_test(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_benchmark//:benchmark",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla/hlo/ir:hlo",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/hlo/ir:hlo",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -77,9 +94,10 @@ tf_cc_test(
         "//tensorflow/dtensor/cc:dtensor_device_util",
         "//tensorflow/dtensor/cc:dtensor_operation",
         "//tensorflow/dtensor/cc:tensor_layout",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@xla//xla/tsl/platform:status_matchers",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -93,6 +111,7 @@ tf_cc_test(
         "//tensorflow/dtensor/cc:dstatus",
         "//tensorflow/dtensor/cc:tensor_layout",
         "//tensorflow/dtensor/mlir:spmd_expander",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",

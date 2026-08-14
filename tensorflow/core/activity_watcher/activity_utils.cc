@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors All Rights Reserved.
+/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,16 +16,20 @@ limitations under the License.
 #include "tensorflow/core/activity_watcher/activity_utils.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "xla/tsl/platform/types.h"
+#include "tensorflow/core/activity_watcher/activity.h"
 #include "tensorflow/core/framework/op_kernel.h"
 
 namespace tensorflow {
 namespace activity_watcher {
 
 std::unique_ptr<Activity> ActivityFromContext(
-    OpKernelContext* context, tsl::string name, ActivityCategory category,
+    OpKernelContext* context, std::string name, ActivityCategory category,
     Activity::Attributes additional_attributes) {
   Activity::Attributes attributes(std::move(additional_attributes));
   if (context) {

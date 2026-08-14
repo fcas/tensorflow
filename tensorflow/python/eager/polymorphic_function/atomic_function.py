@@ -55,7 +55,7 @@ class CallOptions:
   # Used by ACD to list Ops/Tensors/Callables that must be called in advance.
   control_captures: List[Any] = dataclasses.field(default_factory=list)
 
-  # Determines what kind of partitoned call is used for this function.
+  # Determines what kind of partitioned call is used for this function.
   is_stateful: bool = False
 
 
@@ -286,6 +286,9 @@ class AtomicFunction(core.AtomicFunction):
   def __del__(self):
     if self._generated_graph:
       func_graph_module.dismantle_func_graph(self._generated_graph)
+
+    if RUNTIME_FUNCTION_REFS is None:
+      return
 
     key = (self._bound_context.function_scope_id, self.name)
     RUNTIME_FUNCTION_REFS[key] -= 1

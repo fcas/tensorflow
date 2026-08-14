@@ -15,14 +15,22 @@ limitations under the License.
 
 #include "tsl/platform/cpu_info.h"
 
+// Required for cross compile with clang
+#ifdef PLATFORM_WINDOWS
+#include <intrin.h>
+#endif
+
+#include <string>
+
 #include "absl/base/call_once.h"
-#include "tsl/platform/logging.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/types.h"
 #include "tsl/platform/platform.h"
-#include "tsl/platform/types.h"
 #if defined(PLATFORM_IS_X86)
 #include <mutex>  // NOLINT
 #endif
 #if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#include <asm/hwcap.h> /* Get HWCAP bits from asm/hwcap.h */
 #include <sys/auxv.h>
 #ifndef HWCAP_CPUID
 #define HWCAP_CPUID (1 << 11)
@@ -132,7 +140,7 @@ class CPUIDInfo {
     CHECK(cpuid == nullptr) << __func__ << " ran more than once";
     cpuid = new CPUIDInfo;
 
-    uint32 eax, ebx, ecx, edx;
+    uint32_t eax, ebx, ecx, edx;
 
     // Get vendor string (issue CPUID with eax = 0)
     GETCPUID(eax, ebx, ecx, edx, 0, 0);
@@ -165,15 +173,15 @@ class CPUIDInfo {
     cpuid->have_ssse3_ = (ecx >> 9) & 0x1;
     cpuid->have_hypervisor_ = (ecx >> 31) & 1;
 
-    const uint64 xcr0_xmm_mask = 0x2;
-    const uint64 xcr0_ymm_mask = 0x4;
-    const uint64 xcr0_maskreg_mask = 0x20;
-    const uint64 xcr0_zmm0_15_mask = 0x40;
-    const uint64 xcr0_zmm16_31_mask = 0x80;
+    const uint64_t xcr0_xmm_mask = 0x2;
+    const uint64_t xcr0_ymm_mask = 0x4;
+    const uint64_t xcr0_maskreg_mask = 0x20;
+    const uint64_t xcr0_zmm0_15_mask = 0x40;
+    const uint64_t xcr0_zmm16_31_mask = 0x80;
 
-    const uint64 xcr0_avx_mask = xcr0_xmm_mask | xcr0_ymm_mask;
-    const uint64 xcr0_avx512_mask = xcr0_avx_mask | xcr0_maskreg_mask |
-                                    xcr0_zmm0_15_mask | xcr0_zmm16_31_mask;
+    const uint64_t xcr0_avx_mask = xcr0_xmm_mask | xcr0_ymm_mask;
+    const uint64_t xcr0_avx512_mask = xcr0_avx_mask | xcr0_maskreg_mask |
+                                      xcr0_zmm0_15_mask | xcr0_zmm16_31_mask;
 
     const bool have_avx =
         // Does the OS support XGETBV instruction use by applications?
@@ -199,7 +207,7 @@ class CPUIDInfo {
     // Architectures Software Developer's Manual Volume 2A: Instruction Set
     // Reference, A-M CPUID).
     GETCPUID(eax, ebx, ecx, edx, 7, 0);
-    const uint32 kMaxNumSubLeaves = eax;
+    const uint32_t kMaxNumSubLeaves = eax;
 
     cpuid->have_adx_ = (ebx >> 19) & 0x1;
     cpuid->have_avx2_ = have_avx && ((ebx >> 5) & 0x1);
@@ -304,7 +312,7 @@ class CPUIDInfo {
     return false;
   }
 
-  string vendor_str() const { return vendor_str_; }
+  std::string vendor_str() const { return vendor_str_; }
   int family() const { return family_; }
   int model_num() { return model_num_; }
 
@@ -356,7 +364,7 @@ class CPUIDInfo {
   int have_sse4_2_ : 1;
   int have_ssse3_ : 1;
   int have_hypervisor_ : 1;
-  string vendor_str_;
+  std::string vendor_str_;
   int family_;
   int model_num_;
 };
@@ -375,6 +383,7 @@ void InitCPUIDInfo() {
 
 class CPUIDInfo;
 void InitCPUIDInfo();
+void InitCPUIDFeatureInfo();
 
 CPUIDInfo *cpuid = nullptr;
 
@@ -386,7 +395,8 @@ class CPUIDInfo {
         variant_(0),
         cpunum_(0),
         is_arm_neoverse_v1_(0),
-        is_arm_neoverse_n1_(0) {}
+        is_arm_neoverse_n1_(0),
+        has_bf16_(0) {}
 
   static void Initialize() {
     // Initialize CPUIDInfo pointer.
@@ -458,32 +468,65 @@ class CPUIDInfo {
     }
 #endif  // !PLATFORM_WINDOWS
   }
+  static void InitializeCPUFeature() {
+    // Initialize CPUIDInfo pointer.
+    if (cpuid == nullptr) {
+      CPUIDInfo::Initialize();
+    }
+
+    const uint32_t hwcaps2 = getauxval(AT_HWCAP2);
+    cpuid->has_bf16_ = IsFeatureSupported(hwcaps2, kHwcap2Bf16);
+  }
 
   int implementer() const { return implementer_; }
   int cpunum() const { return cpunum_; }
 
   static bool TestAarch64CPU(Aarch64CPU cpu) {
     InitCPUIDInfo();
+    // clang-format off
     switch (cpu) {
       case ARM_NEOVERSE_V1:
         return cpuid->is_arm_neoverse_v1_;
       default:
-        return 0;
+        return false;
     }
+    // clang-format on
+    return false;
+  }
+
+  static bool IsFeatureSupported(uint64_t features, uint64_t feature_mask) {
+    return (features & feature_mask);
+  }
+  static bool TestAarch64Feature(CPUFeature feature) {
+    InitCPUIDFeatureInfo();
+    switch (feature) {
+      case AARCH64_BF16:
+        return cpuid->has_bf16_;
+      default:
+        break;
+    }
+    return false;
   }
 
  private:
+  static constexpr uint64_t kHwcap2Bf16 = 1ull << 14;
   int implementer_;
   int variant_;
   int cpunum_;
   int is_arm_neoverse_v1_;  // ARM NEOVERSE V1
   int is_arm_neoverse_n1_;  // ARM NEOVERSE N1
+  int has_bf16_;
 };
 
 absl::once_flag cpuid_once_flag;
+absl::once_flag cpu_feature_init_once_flag;
 
 void InitCPUIDInfo() {
   absl::call_once(cpuid_once_flag, CPUIDInfo::Initialize);
+}
+
+void InitCPUIDFeatureInfo() {
+  absl::call_once(cpu_feature_init_once_flag, CPUIDInfo::InitializeCPUFeature);
 }
 
 #endif  // PLATFORM_IS_ARM64 && !__APPLE__ && !__OpenBSD__
@@ -493,6 +536,8 @@ void InitCPUIDInfo() {
 bool TestCPUFeature(CPUFeature feature) {
 #ifdef PLATFORM_IS_X86
   return CPUIDInfo::TestFeature(feature);
+#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+  return CPUIDInfo::TestAarch64Feature(feature);
 #else
   return false;
 #endif
@@ -546,7 +591,7 @@ int CPUIDNumSMT() {
   // Section: Detecting Hardware Multi-threads Support and Topology
   // Uses CPUID Leaf 11 to enumerate system topology on Intel x86 architectures
   // Other cases not supported
-  uint32 eax, ebx, ecx, edx;
+  uint32_t eax, ebx, ecx, edx;
   // Check if system supports Leaf 11
   GETCPUID(eax, ebx, ecx, edx, 0, 0);
   if (eax >= 11) {

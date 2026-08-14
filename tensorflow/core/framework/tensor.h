@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_FRAMEWORK_TENSOR_H_
 #define TENSORFLOW_CORE_FRAMEWORK_TENSOR_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <iosfwd>
 #include <string>
@@ -51,15 +52,18 @@ class TensorProto;
 class Var;
 
 namespace batch_util {
-Status CopyElementToSlice(Tensor element, Tensor* parent, int64_t index);
-Status CopySliceToElement(const Tensor& parent, Tensor* element, int64_t index);
-Status MaybeMoveSliceToElement(Tensor* parent, Tensor* element, int64_t index);
-Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
-                            int64_t dst_offset, int64_t num_slices,
-                            Tensor* dst);
-Status MaybeMoveContiguousSlices(Tensor& src, int64_t src_offset,
-                                 int64_t dst_offset, int64_t num_slices,
-                                 Tensor* dst);
+absl::Status CopyElementToSlice(const Tensor& element, Tensor* parent,
+                                int64_t index);
+absl::Status CopySliceToElement(const Tensor& parent, Tensor* element,
+                                int64_t index);
+absl::Status MaybeMoveSliceToElement(Tensor* parent, Tensor* element,
+                                     int64_t index);
+absl::Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
+                                  int64_t dst_offset, int64_t num_slices,
+                                  Tensor* dst);
+absl::Status MaybeMoveContiguousSlices(Tensor& src, int64_t src_offset,
+                                       int64_t dst_offset, int64_t num_slices,
+                                       Tensor* dst);
 }  // namespace batch_util
 
 /// @ingroup core
@@ -103,6 +107,9 @@ class TensorBuffer : public core::RefCounted {
   virtual AllocatorMemoryType GetMemoryType() const {
     return AllocatorMemoryType::kUnknown;
   }
+
+  /// \brief Whether this TensorBuffer allocates an opaque handle.
+  virtual bool AllocatesOpaqueHandle() const { return false; }
 
  private:
   void* const data_;
@@ -169,7 +176,7 @@ class Tensor {
 
   /// \brief Creates a tensor with the input datatype, shape and buf.
   ///
-  /// Takes an ownership of the bufffer from the reference counted pointer.
+  /// Takes an ownership of the buffer from the reference counted pointer.
   Tensor(DataType type, TensorShape shape, core::RefCountPtr<TensorBuffer> buf);
 
   /// \brief Creates an empty Tensor of the given data type.
@@ -185,8 +192,8 @@ class Tensor {
   /// validate that the `DataType` is valid and supported.
   ///
   /// The underlying buffer is allocated using a `CPUAllocator`.
-  static Status BuildTensor(DataType type, const TensorShape& shape,
-                            Tensor* out_tensor);
+  static absl::Status BuildTensor(DataType type, const TensorShape& shape,
+                                  Tensor* out_tensor);
 
  private:
   // A tag type for selecting the `Tensor` constructor overload that creates a
@@ -213,11 +220,11 @@ class Tensor {
       : Tensor(scalar_value, host_scalar_tag{}) {}
   explicit Tensor(int32_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
-  explicit Tensor(uint32 scalar_value)
+  explicit Tensor(uint32_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
-  explicit Tensor(uint16 scalar_value)
+  explicit Tensor(uint16_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
-  explicit Tensor(uint8 scalar_value)
+  explicit Tensor(uint8_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
   explicit Tensor(int16_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
@@ -231,7 +238,7 @@ class Tensor {
       : Tensor(scalar_value, host_scalar_tag{}) {}
   explicit Tensor(int64_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
-  explicit Tensor(uint64 scalar_value)
+  explicit Tensor(uint64_t scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
   explicit Tensor(bool scalar_value)
       : Tensor(scalar_value, host_scalar_tag{}) {}
@@ -311,6 +318,9 @@ class Tensor {
 
   /// Returns the estimated memory usage of this tensor.
   size_t TotalBytes() const;
+
+  // Returns the size of the underlying TensorBuffer
+  size_t GetBufferSize() const;
 
   // Returns the size of allocated memory for this tensor.
   size_t AllocatedBytes() const;
@@ -633,8 +643,19 @@ class Tensor {
   /// not get destroyed while the `StringPiece` is still used.
   ///
   /// REQUIRES: `DataTypeCanUseMemcpy(dtype())`.
-  StringPiece tensor_data() const;
+  absl::string_view tensor_data() const;
   void* data() const;
+
+  /// \brief Returns an `absl::Cord` mapping the current tensor's buffer.
+  ///
+  /// Like `tensor_data()`, the returned `Cord` may reference memory on
+  /// devices that the CPU cannot address directly. Unlike `tensor_data()`,
+  /// the returned `Cord` holds its own reference to the underlying tensor
+  /// buffer, so the buffer is kept alive for as long as the `Cord` (or any
+  /// copy of it) exists, even if the originating `Tensor` is destroyed.
+  ///
+  /// REQUIRES: `DataTypeCanUseMemcpy(dtype())`.
+  absl::Cord tensor_data_cord() const;
 
   /// Copy the other tensor into this tensor, reshape it and reinterpret the
   /// buffer's datatype. If an ok Status is returned, the two tensors now share
@@ -657,8 +678,8 @@ class Tensor {
   ///
   /// If any of the requirements are not met, errors::InvalidArgument is
   /// returned.
-  Status BitcastFrom(const Tensor& other, DataType dtype,
-                     const TensorShape& shape);
+  absl::Status BitcastFrom(const Tensor& other, DataType dtype,
+                           const TensorShape& shape);
 
   /// Like BitcastFrom, but CHECK fails if any preconditions are not met.
   ///
@@ -670,16 +691,32 @@ class Tensor {
 
   // Returns true if the refcount on buf_ and any possible underlying root
   // buffer is one.
-  bool RefCountIsOne() const;
+  bool RefCountIsOne() const {
+    // Notice that buf_ either points to a regular TensorBuffer or a SubBuffer.
+    // For the latter case, we have to make sure that the refcount is
+    // one both for the SubBuffer _and_ the underlying TensorBuffer.
+    return buf_ != nullptr && buf_->RefCountIsOne() &&
+           buf_->root_buffer()->RefCountIsOne() && buf_->OwnsMemory();
+  }
 
   // Experimental. Returns the refcount on buf_ if it points to a regular
   // TensorBuffer. If buf_ points to a SubBuffer, returns -1.
-  int RefCount() const;
+  int RefCount() const {
+    if (buf_->root_buffer() != buf_) {
+      LOG(ERROR)
+          << "Tensor RefCount not reliable if buf_ points to a SubBuffer.";
+      return -1;
+    }
+    return buf_->RefCount();
+  }
 
   // Returns the type of the underlying memory.
   AllocatorMemoryType GetMemoryType() const { return buf_->GetMemoryType(); }
 
  private:
+  // Returns a StringPiece mapping the current tensor's buffer.
+  absl::string_view tensor_data_internal() const;
+
   void CheckType(DataType expected_dtype) const;
   void CheckTypeAndIsAligned(DataType expected_dtype) const;
   void CheckIsAlignedAndSingleElement() const;
@@ -705,20 +742,20 @@ class Tensor {
   friend class CastOpBase;            // For access to set_dtype.
   friend class ScopedAllocator;       // For access to buf_.
   friend class PjRtTensorBufferUtil;  // For access to buf_.
-  friend Status batch_util::CopyElementToSlice(
-      Tensor element, Tensor* parent,
+  friend absl::Status batch_util::CopyElementToSlice(
+      const Tensor& element, Tensor* parent,
       int64_t index);  // For access to base<T>().
-  friend Status batch_util::CopySliceToElement(
+  friend absl::Status batch_util::CopySliceToElement(
       const Tensor& parent, Tensor* element,
       int64_t index);  // For access to base<T>().
-  friend Status batch_util::MaybeMoveSliceToElement(
+  friend absl::Status batch_util::MaybeMoveSliceToElement(
       Tensor* parent, Tensor* element,
       int64_t index);  // For access to base<T>().
-  friend Status batch_util::CopyContiguousSlices(
+  friend absl::Status batch_util::CopyContiguousSlices(
       const Tensor& src, int64_t src_offset, int64_t dst_offset,
       int64_t num_slices,
       Tensor* dst);  // For access to base<T>().
-  friend Status batch_util::MaybeMoveContiguousSlices(
+  friend absl::Status batch_util::MaybeMoveContiguousSlices(
       Tensor& src, int64_t src_offset, int64_t dst_offset, int64_t num_slices,
       Tensor* dst);  // For access to base<T>().
 
@@ -1060,9 +1097,8 @@ void Tensor::ValueAndTensorBuffer<T>::HostScalarTensorBuffer::operator delete(
   // NOTE(mrry): Using `sizeof(Tensor::ValueAndTensorBuffer<T>)` here requires
   // us to define this method outside the class definition, so that it is not
   // considered an incomplete type.
-  typename std::aligned_storage<sizeof(Tensor::ValueAndTensorBuffer<T>),
-                                alignof(Tensor::ValueAndTensorBuffer<T>)>::type
-      dummy_storage_;
+  alignas(Tensor::ValueAndTensorBuffer<T>)
+      std::byte dummy_storage_[sizeof(Tensor::ValueAndTensorBuffer<T>)];
   Tensor::ValueAndTensorBuffer<T>* dummy_object =
       reinterpret_cast<Tensor::ValueAndTensorBuffer<T>*>(&dummy_storage_);
   intptr_t offset = reinterpret_cast<intptr_t>(&dummy_object->tensor_buffer) -
@@ -1073,9 +1109,10 @@ void Tensor::ValueAndTensorBuffer<T>::HostScalarTensorBuffer::operator delete(
 
 template <typename T>
 Tensor::Tensor(T value, host_scalar_tag tag) {
-  auto* value_and_buf = static_cast<Tensor::ValueAndTensorBuffer<T>*>(
-      port::AlignedMalloc(sizeof(typename Tensor::ValueAndTensorBuffer<T>),
-                          EIGEN_MAX_ALIGN_BYTES));
+  auto* value_and_buf =
+      static_cast<Tensor::ValueAndTensorBuffer<T>*>(tsl::port::AlignedMalloc(
+          sizeof(typename Tensor::ValueAndTensorBuffer<T>),
+          static_cast<std::align_val_t>(EIGEN_MAX_ALIGN_BYTES)));
   new (&value_and_buf->value) T(std::move(value));
   new (&value_and_buf->tensor_buffer)
       typename Tensor::ValueAndTensorBuffer<T>::HostScalarTensorBuffer(

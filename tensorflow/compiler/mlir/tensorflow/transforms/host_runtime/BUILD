@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
@@ -6,8 +21,7 @@ load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//learning/serving/contrib/tfrt/mlir/saved_model_analysis:__pkg__",
-        "//tensorflow/compiler/mlir:__pkg__",
+        "//tensorflow/compiler/mlir:__subpackages__",
         "//tensorflow/compiler/mlir/tensorflow/transforms:__pkg__",
         "//tensorflow/compiler/mlir/tf2xla/api:__subpackages__",
         "//tensorflow/compiler/mlir/tfrt:__subpackages__",
@@ -30,6 +44,7 @@ cc_library(
         "//tensorflow/compiler/mlir/tensorflow:bridge_logger",
         "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
+        "//tensorflow/compiler/mlir/tensorflow/transforms:tensorflow_passes",  # buildcleaner: keep
         "//tensorflow/compiler/mlir/tensorflow/transforms:verify_no_outside_compilation_markers_pass",
         "//tensorflow/compiler/mlir/tensorflow/transforms/sparsecore:sparsecore_passes",
         "//tensorflow/core:framework",
@@ -46,8 +61,8 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
-        "@local_tsl//tsl/platform:error_logging",
-        "@local_tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:error_logging",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -105,8 +120,8 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla:xla_proto_cc",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla:xla_proto_cc",
     ],
 )
 
@@ -142,15 +157,10 @@ tf_cc_test(
 gentbl_cc_library(
     name = "runtime_passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=RuntimeLowering",
-            ],
-            "runtime_passes.h.inc",
-        ),
-    ],
+    tbl_outs = {"runtime_passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=RuntimeLowering",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "runtime_passes.td",
     deps = [
@@ -216,17 +226,16 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
-        "@local_tsl//tsl/platform:error_logging",
-        "@local_tsl//tsl/platform:errors",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla:xla_proto_cc",
-        "@local_xla//xla/mlir_hlo",
+        "@tsl//tsl/platform:error_logging",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla:xla_proto_cc",
+        "@xla//xla/mlir_hlo",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -254,7 +263,7 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
-        "@local_xla//xla/mlir_hlo",
+        "@xla//xla/mlir_hlo",
     ],
 )
 
@@ -271,11 +280,12 @@ cc_library(
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_types",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@local_xla//xla/mlir_hlo",
+        "@xla//xla/mlir_hlo",
     ],
 )

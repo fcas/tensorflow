@@ -25,12 +25,14 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "tensorflow/cc/framework/ops.h"
 #include "tensorflow/cc/framework/scope.h"
 #include "tensorflow/cc/ops/array_ops.h"
 #include "tensorflow/cc/ops/const_op.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tensorflow/core/framework/common_shape_fns.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/op.h"
@@ -44,13 +46,15 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/protobuf/rewriter_config.pb.h"
+#include "tensorflow/core/runtime_fallback/kernel/kernel_fallback_compat_request_state.h"
 #include "tensorflow/core/tfrt/fallback/fallback_state.h"
+#include "tensorflow/core/tfrt/fallback/op_kernel_runner.h"
+#include "tensorflow/core/tfrt/graph_executor/config.h"
 #include "tensorflow/core/tfrt/graph_executor/graph_execution_options.h"
 #include "tensorflow/core/tfrt/mlrt/interpreter/context.h"
 #include "tensorflow/core/tfrt/mlrt/interpreter/value.h"
 #include "tensorflow/core/tfrt/mlrt/kernel/kernel.h"
 #include "tensorflow/core/tfrt/saved_model/saved_model_testutil.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 #include "tfrt/cpp_tests/test_util.h"  // from @tf_runtime
 #include "tfrt/host_context/resource_context.h"  // from @tf_runtime
@@ -76,7 +80,7 @@ class GraphExecutorForTestingCostAnalysis : public GraphExecutor {
 
 class GraphExecutorTest : public ::testing::TestWithParam<bool> {};
 
-tensorflow::Status GetSimpleGraphDef(GraphDef& graph_def) {
+absl::Status GetSimpleGraphDef(GraphDef& graph_def) {
   auto scope = tensorflow::Scope::NewRootScope().WithDevice("/device:CPU:0");
 
   auto input = ops::Placeholder(scope.WithOpName("input"), DT_INT32);
@@ -147,11 +151,15 @@ TEST_P(GraphExecutorTest, OnlineCostAnalysisOptionsOverrideToOnce) {
       tensorflow::tfrt_stub::FallbackState::Create(
           CreateDefaultSessionOptions(options), graph_def.library()));
   auto resource_context = std::make_unique<tfrt::ResourceContext>();
+  tensorflow::tfrt_stub::RuntimeConfig runtime_config;
+  tensorflow::tf2xla::v1::MlirBridgeConfig mlir_bridge_config;
+  mlir_bridge_config.set_enable_tf2xla_mlir_bridge(false);
+  TF_ASSERT_OK(runtime_config.Add(mlir_bridge_config));
   TF_ASSERT_OK_AND_ASSIGN(
       auto graph_executor_base,
       GraphExecutor::Create(std::move(options), std::move(fallback_state),
                             std::move(resource_context), graph_def,
-                            GetKernelRegistry()));
+                            GetKernelRegistry(), &runtime_config));
   auto graph_executor = std::unique_ptr<GraphExecutorForTestingCostAnalysis>(
       static_cast<GraphExecutorForTestingCostAnalysis*>(
           graph_executor_base.release()));
@@ -444,6 +452,53 @@ TEST_P(GraphExecutorTest, Cancellation) {
 
 INSTANTIATE_TEST_SUITE_P(GraphExecutorTestSuite, GraphExecutorTest,
                          ::testing::Bool());
+
+TEST_F(GraphExecutorTest, CreateRequestInfoPopulatesRpcCancellationOptions) {
+  GraphDef graph_def;
+  TF_ASSERT_OK(GetSimpleGraphDef(graph_def));
+
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  GraphExecutor::Options options(runtime.get());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto fallback_state,
+      tensorflow::tfrt_stub::FallbackState::Create(
+          CreateDefaultSessionOptions(options), graph_def.library()));
+
+  auto resource_context = std::make_unique<tfrt::ResourceContext>();
+  auto client_graph_resource_context =
+      std::make_unique<tfrt::ResourceContext>();
+  OpKernelRunnerTable runner_table;
+  tfd::FallbackResourceArray resource_array;
+
+  GraphExecutionRunOptions run_options;
+  absl::Time now = absl::Now();
+  run_options.rpc_deadline_for_batching_task_cancellation = now;
+  bool is_cancelled = false;
+  run_options.is_rpc_cancelled_callback = [&is_cancelled]() {
+    return is_cancelled;
+  };
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto request_info,
+      CreateRequestInfo(
+          options, run_options, /*work_queue=*/nullptr, resource_context.get(),
+          client_graph_resource_context.get(), &runner_table, &resource_array,
+          *fallback_state, fallback_state->process_function_library_runtime()));
+
+  ASSERT_NE(request_info->tfrt_request_context, nullptr);
+  const auto* fallback_request_state =
+      request_info->tfrt_request_context
+          ->GetDataIfExists<tfd::KernelFallbackCompatRequestState>();
+  ASSERT_NE(fallback_request_state, nullptr);
+
+  EXPECT_EQ(
+      fallback_request_state->rpc_deadline_for_batching_task_cancellation(),
+      now);
+  EXPECT_FALSE(fallback_request_state->is_rpc_cancelled_callback()());
+  is_cancelled = true;
+  EXPECT_TRUE(fallback_request_state->is_rpc_cancelled_callback()());
+}
 
 TEST_F(GraphExecutorTest, Extend) {
   GraphDef graph_def;

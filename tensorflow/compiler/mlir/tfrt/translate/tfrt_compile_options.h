@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_TFRT_TRANSLATE_TFRT_COMPILE_OPTIONS_H_
 #define TENSORFLOW_COMPILER_MLIR_TFRT_TRANSLATE_TFRT_COMPILE_OPTIONS_H_
 
+#include <cstdint>
 #include <iosfwd>
 #include <ostream>
 #include <string>
@@ -125,7 +126,7 @@ struct TfrtCompileOptions {
   // For TFRT, if true, tf.While's iterations will be parallelized on a
   // best-effort basis. This is currently experimental. MLRT attempts to convert
   // tf.while to tf_mlrt.map_fn regardless of this flag. For tf.While that
-  // cannot be onverted tf_mlrt.map_fn, MLRT try to parallerize tf.while's
+  // cannot be converted tf_mlrt.map_fn, MLRT try to parallelize tf.while's
   // iterations on a best-effort basis.
   bool enable_while_parallel_iterations = false;
 
@@ -143,7 +144,35 @@ struct TfrtCompileOptions {
   // of resources.
   int64_t min_num_batch_threads = 1;
 
-  // If true, streams with inter data depenedencies will be preferred to be
+  // The minimum of the maximum number of enqueued batches. This number provides
+  // a lower bound on top of what is specified in the model. If the number of
+  // max_enqueued_batches is too small, it can lead to under utilization of
+  // resources.
+  int64_t min_max_enqueued_batches = 1;
+
+  // If non-zero, all models on this server are switched to use a prioritized
+  // batching function using this number of global threads.
+  int64_t batch_queue_global_prioritization_num_threads = 0;
+
+  // If true, the queue implementation will have a separate subqueue for each
+  // criticality.
+  bool enable_priority_aware_batch_scheduler = false;
+
+  // If true, the queue implementation will resplit tasks for priority aware
+  // scheduling.
+  bool enable_priority_aware_batch_scheduler_resplit = false;
+
+  // If true, enable lazy cancellation filtering in the priority-aware batch
+  // scheduler.
+  bool enable_batching_task_lazy_cancellation = false;
+
+  // The policy used by a BatchScheduler to pad (or split) batches.
+  std::string batch_padding_policy;
+
+  // Batching parameters to be rewritten in the existing BatchFunction ops.
+  BatchingOptions batch_options;
+
+  // If true, streams with inter data dependencies will be preferred to be
   // merged for inline execution.
   bool merge_inter_dependent_streams = true;
 
@@ -168,6 +197,10 @@ struct TfrtCompileOptions {
 
   // Serialized BEF file under aot_packages.
   std::string aot_bef_file;
+  // If true, use XLA:CPU for CPU computations.
+  bool allow_xla_cpu = true;
+  // If true, enable asynchronous IFRT execution.
+  bool enable_async_ifrt = false;
 };
 
 std::ostream& operator<<(std::ostream& os, const TfrtCompileOptions& options);

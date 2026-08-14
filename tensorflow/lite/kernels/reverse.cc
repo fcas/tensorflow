@@ -50,7 +50,12 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   if (input->type != kTfLiteInt32 && input->type != kTfLiteFloat32 &&
       input->type != kTfLiteUInt8 && input->type != kTfLiteInt8 &&
       input->type != kTfLiteInt16 && input->type != kTfLiteInt64 &&
-      input->type != kTfLiteBool) {
+      input->type != kTfLiteBool && input->type != kTfLiteFloat16 &&
+      input->type != kTfLiteBFloat16
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+      && input->type != kTfLiteFloat8E4M3FN && input->type != kTfLiteFloat8E5M2
+#endif
+  ) {
     TF_LITE_KERNEL_LOG(context, "Type '%s' is not supported by reverse.",
                        TfLiteTypeGetName(input->type));
     return kTfLiteError;
@@ -110,42 +115,29 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE_OK(context,
                     GetOutputSafe(context, node, kOutputTensor, &output));
 
-  switch (output->type) {
-    case kTfLiteFloat32: {
-      reference_ops::Reverse<float>(axes, num_axes, GetTensorShape(input),
-                                    GetTensorData<float>(input),
-                                    GetTensorData<float>(output));
-      break;
-    }
-    case kTfLiteUInt8:
-    case kTfLiteInt8: {
+  switch (TfLiteTypeGetSizeBits(output->type)) {
+    case 8: {
       reference_ops::Reverse<uint8_t>(axes, num_axes, GetTensorShape(input),
                                       GetTensorData<uint8_t>(input),
                                       GetTensorData<uint8_t>(output));
       break;
     }
-    case kTfLiteInt16: {
+    case 16: {
       reference_ops::Reverse<int16_t>(axes, num_axes, GetTensorShape(input),
                                       GetTensorData<int16_t>(input),
                                       GetTensorData<int16_t>(output));
       break;
     }
-    case kTfLiteInt32: {
+    case 32: {
       reference_ops::Reverse<int32_t>(axes, num_axes, GetTensorShape(input),
                                       GetTensorData<int32_t>(input),
                                       GetTensorData<int32_t>(output));
       break;
     }
-    case kTfLiteInt64: {
+    case 64: {
       reference_ops::Reverse<int64_t>(axes, num_axes, GetTensorShape(input),
                                       GetTensorData<int64_t>(input),
                                       GetTensorData<int64_t>(output));
-      break;
-    }
-    case kTfLiteBool: {
-      reference_ops::Reverse<bool>(axes, num_axes, GetTensorShape(input),
-                                   GetTensorData<bool>(input),
-                                   GetTensorData<bool>(output));
       break;
     }
     default: {

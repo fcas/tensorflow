@@ -13,21 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <utility>
 
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Pass/Pass.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "transforms/passes.h"
 
 namespace mlir {
-namespace {
 
 #define GEN_PASS_DEF_NAIVECOPYREMOVALPASS
 #include "transforms/passes.h.inc"
+
+namespace {
 
 /// Remove memref::CopyOp whose target (can be either a memref::SubViewOp or
 /// memref::AllocOp) has no other users.
@@ -80,14 +81,10 @@ struct NaiveCopyRemovalPass
     RewritePatternSet patterns(ctx);
     patterns.add(removeCopy);
     memref::AllocOp::getCanonicalizationPatterns(patterns, ctx);
-    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
+    if (failed(applyPatternsGreedily(func, std::move(patterns))))
       return signalPassFailure();
   }
 };
+
 }  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>> createNaiveCopyRemovalPass() {
-  return std::make_unique<NaiveCopyRemovalPass>();
-}
-
 }  // namespace mlir

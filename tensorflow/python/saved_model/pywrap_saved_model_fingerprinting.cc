@@ -1,6 +1,6 @@
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");;
+Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "tensorflow/python/saved_model/pywrap_saved_model_fingerprinting.h"
 
+#include <cstdint>
 #include <exception>
 #include <string>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/stl.h"  // from @pybind11
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
@@ -28,6 +30,7 @@ limitations under the License.
 #include "tensorflow/cc/saved_model/reader.h"
 #include "tensorflow/core/common_runtime/graph_runner.h"
 #include "tensorflow/core/platform/path.h"
+#include "tensorflow/core/protobuf/fingerprint.pb.h"
 #include "tensorflow/core/protobuf/saved_model.pb.h"
 #include "tensorflow/python/lib/core/pybind11_status.h"
 
@@ -182,8 +185,8 @@ void DefineFingerprintingModule(py::module main_module) {
 
   m.def(
       "Singleprint",
-      [](uint64 graph_def_program_hash, uint64 signature_def_hash,
-         uint64 saved_object_graph_hash, uint64 checkpoint_hash) {
+      [](uint64_t graph_def_program_hash, uint64_t signature_def_hash,
+         uint64_t saved_object_graph_hash, uint64_t checkpoint_hash) {
         absl::StatusOr<std::string> singleprint = fingerprinting::Singleprint(
             graph_def_program_hash, signature_def_hash, saved_object_graph_hash,
             checkpoint_hash);

@@ -13,6 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cassert>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
@@ -322,7 +328,7 @@ LogicalResult PromoteResourcesToArguments(
   // Rewrite return if there are variable writes.
   const int return_operands_size = return_operands.size();
   if (return_operands_size > num_results_before) {
-    builder.create<func::ReturnOp>(return_op.getLoc(), return_operands);
+    func::ReturnOp::create(builder, return_op.getLoc(), return_operands);
     return_op.erase();
   }
 

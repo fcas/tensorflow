@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/resource_handle.h"
 #include "tensorflow/core/framework/resource_mgr.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -35,39 +36,39 @@ limitations under the License.
 
 namespace tensorflow {
 
-Status GetVariableInfosFromInputs(ResourceMgr* rm, DeviceBase* dev,
-                                  absl::Span<const Tensor* const> inputs,
-                                  absl::Span<const int> variable_indices,
-                                  std::vector<VariableInfo>* result) {
+absl::Status GetVariableInfosFromInputs(ResourceMgr* rm, DeviceBase* dev,
+                                        absl::Span<const Tensor* const> inputs,
+                                        absl::Span<const int> variable_indices,
+                                        std::vector<VariableInfo>* result) {
   return GetVariableInfosFromInputs(rm, dev, inputs, variable_indices, nullptr,
                                     result);
 }
 
-Status GetVariableInfosFromInputs(ResourceMgr* rm, DeviceBase* dev,
-                                  absl::Span<const Tensor* const> inputs,
-                                  absl::Span<const int> variable_indices,
-                                  const std::set<int>* variables_updated,
-                                  std::vector<VariableInfo>* result) {
+absl::Status GetVariableInfosFromInputs(ResourceMgr* rm, DeviceBase* dev,
+                                        absl::Span<const Tensor* const> inputs,
+                                        absl::Span<const int> variable_indices,
+                                        const std::set<int>* variables_updated,
+                                        std::vector<VariableInfo>* result) {
   result->clear();
   result->reserve(variable_indices.size());
   for (int var_idx : variable_indices) {
     Var* variable = nullptr;
     if (inputs[var_idx]->NumElements() == 0) {
-      return errors::InvalidArgument("Empty resource tensor passed  at index ",
-                                     var_idx,
-                                     " to GetVariableInfosFromInputs.");
+      return absl::InvalidArgumentError(
+          absl::StrCat("Empty resource tensor passed  at index ", var_idx,
+                       " to GetVariableInfosFromInputs."));
     }
-    ResourceHandle handle = inputs[var_idx]->flat<ResourceHandle>()(0);
+    const ResourceHandle& handle = inputs[var_idx]->flat<ResourceHandle>()(0);
     if (handle.device() != dev->attributes().name()) {
       std::string definition_location =
           DefinitionLocationMsg(handle.definition_stack_trace());
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Trying to access resource ", handle.name(), definition_location,
           " located in device ", handle.device(), " from device ",
           dev->attributes().name(),
           "\n Cf. "
           "https://www.tensorflow.org/xla/"
-          "known_issues#tfvariable_on_a_different_device");
+          "known_issues#tfvariable_on_a_different_device"));
     }
     TF_RETURN_IF_ERROR(rm->LookupOrCreate<Var>(
         handle.container(), handle.name(), &variable, [](Var** ptr) {
@@ -85,7 +86,7 @@ Status GetVariableInfosFromInputs(ResourceMgr* rm, DeviceBase* dev,
   return absl::OkStatus();
 }
 
-Status LockVariables(absl::Span<VariableInfo*> variables) {
+absl::Status LockVariables(absl::Span<VariableInfo*> variables) {
   std::vector<int> lock_order(variables.size());
   std::iota(lock_order.begin(), lock_order.end(), 0);
 
@@ -118,7 +119,8 @@ Status LockVariables(absl::Span<VariableInfo*> variables) {
       // locks we have already acquired will be released when the VariableInfo
       // objects are destroyed.
       // TODO(b/128495870) Add support for passing aliased resource variables.
-      return errors::Unimplemented("Duplicate variable passed to XLA cluster");
+      return absl::UnimplementedError(
+          "Duplicate variable passed to XLA cluster");
     }
     if (variables[i]->read_only()) {
       VLOG(4) << "Acquiring reader lock for variable "
@@ -137,7 +139,7 @@ Status LockVariables(absl::Span<VariableInfo*> variables) {
   return absl::OkStatus();
 }
 
-Status LockVariables(absl::Span<VariableInfo> variables) {
+absl::Status LockVariables(absl::Span<VariableInfo> variables) {
   std::vector<VariableInfo*> variable_ptrs;
   variable_ptrs.reserve(variables.size());
   for (auto& var : variables) {
@@ -146,10 +148,10 @@ Status LockVariables(absl::Span<VariableInfo> variables) {
   return LockVariables(absl::MakeSpan(variable_ptrs));
 }
 
-Status SnapshotResourceVariables(OpKernelContext* ctx,
-                                 absl::Span<const int> variable_indices,
-                                 absl::Span<VariableInfo const> variable_infos,
-                                 ResourceVarsSnapshot* result) {
+absl::Status SnapshotResourceVariables(
+    OpKernelContext* ctx, absl::Span<const int> variable_indices,
+    absl::Span<VariableInfo const> variable_infos,
+    ResourceVarsSnapshot* result) {
   for (int i = 0, end = variable_indices.size(); i < end; i++) {
     Var* var = variable_infos[i].var();
     (*result)[variable_indices[i]] =
@@ -160,7 +162,7 @@ Status SnapshotResourceVariables(OpKernelContext* ctx,
 
 std::vector<int> GetResourceVariableIndicesFromContext(OpKernelContext* ctx) {
   std::vector<int> out;
-  for (int64 i = 0; i < ctx->num_inputs(); i++) {
+  for (int64_t i = 0; i < ctx->num_inputs(); i++) {
     if (ctx->input(i).dtype() == DT_RESOURCE) {
       out.push_back(i);
     }
@@ -168,12 +170,12 @@ std::vector<int> GetResourceVariableIndicesFromContext(OpKernelContext* ctx) {
   return out;
 }
 
-Status CreateVariableInfoLookup(
+absl::Status CreateVariableInfoLookup(
     absl::Span<VariableInfo const> variable_args,
     absl::flat_hash_map<int, const VariableInfo*>& variable_info_lookup) {
   for (const VariableInfo& info : variable_args) {
     if (!(!info.var() || info.lock_held() || info.shared_lock_held())) {
-      return errors::Internal(
+      return absl::InternalError(
           "Need to hold the lock on resource variables "
           "before calling BuildXlaCompilerArguments");
     }

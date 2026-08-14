@@ -29,23 +29,24 @@ namespace {
 
 using ::tensorflow::protobuf::util::MessageDifferencer;
 
-StatusOr<StructuredValue> DecodeElementSpec(const std::string& dataset_id,
-                                            const std::string& encoded_spec) {
+absl::StatusOr<StructuredValue> DecodeElementSpec(
+    const std::string& dataset_id, const std::string& encoded_spec) {
   if (encoded_spec.empty()) {
     return StructuredValue();
   }
 
   StructuredValue decoded_spec;
   if (!decoded_spec.ParsePartialFromString(encoded_spec)) {
-    return errors::InvalidArgument("Failed to parse element_spec for dataset ",
-                                   dataset_id, ": ", encoded_spec, ".");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Failed to parse element_spec for dataset ", dataset_id,
+                     ": ", encoded_spec, "."));
   }
   return decoded_spec;
 }
 
-Status ValidateElementSpec(const std::string& dataset_id,
-                           const std::string& encoded_spec1,
-                           const std::string& encoded_spec2) {
+absl::Status ValidateElementSpec(const std::string& dataset_id,
+                                 const std::string& encoded_spec1,
+                                 const std::string& encoded_spec2) {
   if (encoded_spec1.empty() && encoded_spec2.empty()) {
     return absl::OkStatus();
   }
@@ -61,18 +62,18 @@ Status ValidateElementSpec(const std::string& dataset_id,
   differ.set_repeated_field_comparison(MessageDifferencer::AS_SET);
   differ.set_float_comparison(MessageDifferencer::APPROXIMATE);
   if (!differ.Compare(element_spec1, element_spec2)) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Datasets with the same ID should have the same structure, got diff ",
         "for dataset ID ", dataset_id, " with different element_spec: ", diff,
         ". To fix this error, make sure you're registering the same dataset ",
-        "with the same ID.");
+        "with the same ID."));
   }
   return absl::OkStatus();
 }
 
-Status ValidateDatasetMetadata(const std::string& dataset_id,
-                               const DataServiceMetadata& metadata1,
-                               const DataServiceMetadata& metadata2) {
+absl::Status ValidateDatasetMetadata(const std::string& dataset_id,
+                                     const DataServiceMetadata& metadata1,
+                                     const DataServiceMetadata& metadata2) {
   TF_RETURN_IF_ERROR(ValidateElementSpec(dataset_id, metadata1.element_spec(),
                                          metadata2.element_spec()));
   MessageDifferencer differ;
@@ -84,19 +85,19 @@ Status ValidateDatasetMetadata(const std::string& dataset_id,
   differ.set_repeated_field_comparison(MessageDifferencer::AS_SET);
   differ.set_float_comparison(MessageDifferencer::APPROXIMATE);
   if (!differ.Compare(metadata1, metadata2)) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Datasets with the same ID should have the same structure, got diff ",
         "for dataset ID ", dataset_id, ": ", diff, ". To fix this error, make ",
-        "sure you're registering the same dataset with the same ID.");
+        "sure you're registering the same dataset with the same ID."));
   }
   return absl::OkStatus();
 }
 
 }  // namespace
 
-Status ValidateMatchingDataset(const std::string& dataset_id,
-                               const DataServiceMetadata& metadata1,
-                               const DataServiceMetadata& metadata2) {
+absl::Status ValidateMatchingDataset(const std::string& dataset_id,
+                                     const DataServiceMetadata& metadata1,
+                                     const DataServiceMetadata& metadata2) {
   return ValidateDatasetMetadata(dataset_id, metadata1, metadata2);
 }
 

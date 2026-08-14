@@ -21,24 +21,18 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
 
 #include "absl/base/thread_annotations.h"
+#include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "rocm/rocm_config.h"
 
 #define ROCBLAS_BETA_FEATURES_API
-#if TF_ROCM_VERSION >= 50600
 #include "rocm/include/rocblas/rocblas.h"
-#else
-#include "rocm/include/rocblas.h"
-#endif
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
-#include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/plugin_registry.h"
-#if TF_HIPBLASLT
 #include "xla/stream_executor/rocm/hip_blas_lt.h"
-#endif
-#include "xla/stream_executor/stream_executor_interface.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace stream_executor {
 
@@ -75,21 +69,19 @@ using RocBlasType_t =
                         rocblas_float_complex, std::complex<double>,
                         rocblas_double_complex>::type;
 
-class GpuExecutor;
-
 // BLAS plugin for ROCM platform via rocBLAS library.
 //
 // This satisfies the platform-agnostic BlasSupport interface.
 //
 // Note that the rocBLAS handle that this encapsulates is implicitly tied to the
-// context (and, as a result, the device) that the parent GpuExecutor is tied
+// context (and, as a result, the device) that the parent StreamExecutor is tied
 // to. This simply happens as an artifact of creating the rocBLAS handle when a
 // ROCM context is active.
 //
 // Thread-safe post-initialization.
 class ROCMBlas : public blas::BlasSupport {
  public:
-  explicit ROCMBlas(GpuExecutor *parent);
+  explicit ROCMBlas(StreamExecutor *parent);
 
   // Allocates a rocBLAS handle.
   bool Init();
@@ -100,11 +92,7 @@ class ROCMBlas : public blas::BlasSupport {
   TENSORFLOW_STREAM_EXECUTOR_GPU_BLAS_SUPPORT_OVERRIDES
 
   gpu::BlasLt *GetBlasLt() override {
-#if TF_HIPBLASLT
     return &blas_lt_;
-#else
-    return nullptr;
-#endif
   }
 
  private:
@@ -114,9 +102,6 @@ class ROCMBlas : public blas::BlasSupport {
   // enqueue dispatch) at a given time. As a result, this generally must be
   // invoked before calling into rocBLAS.
   bool SetStream(Stream *stream) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
-  // Returns the underlying ROCm stream
-  hipStream_t ROCMStream(Stream *stream);
 
   // A helper function that calls the real rocBLAS function together with error
   // handling.
@@ -180,19 +165,19 @@ class ROCMBlas : public blas::BlasSupport {
   // reallocate the memory layout to be strided batched.
   template <typename T, typename FuncT>
   absl::Status DoBlasGemmBatchedInternal(
-      FuncT rocblas_func, Stream *stream, blas::Transpose transa,
+      FuncT rocblas_func, Stream* stream, blas::Transpose transa,
       blas::Transpose transb, uint64_t m, uint64_t n, uint64_t k, T alpha,
-      DeviceMemorySlice<T> a_ptrs_to_wrappers, int lda,
-      DeviceMemorySlice<T> b_ptrs_to_wrappers, int ldb, T beta,
-      DeviceMemorySlice<T> c_ptrs_to_wrappers, int ldc, int batch_count,
-      ScratchAllocator *scratch_allocator);
+      DeviceAddressSlice<T> a_ptrs_to_wrappers, int lda,
+      DeviceAddressSlice<T> b_ptrs_to_wrappers, int ldb, T beta,
+      DeviceAddressSlice<T> c_ptrs_to_wrappers, int ldc, int batch_count,
+      ScratchAllocator* scratch_allocator);
 
   // mutex that guards the rocBLAS handle for this device.
-  absl::Mutex mu_;
+  mutable absl::Mutex mu_;
 
-  // GpuExecutor which instantiated this ROCMBlas.
+  // StreamExecutor which instantiated this ROCMBlas.
   // Immutable post-initialization.
-  GpuExecutor *parent_;
+  StreamExecutor *parent_;
 
   // rocBLAS library handle on the device.
   rocblas_handle blas_ ABSL_GUARDED_BY(mu_);
@@ -200,13 +185,11 @@ class ROCMBlas : public blas::BlasSupport {
   // container holding solutions vector (to avoid reallocating it each time)
   std::vector<rocblas_int> solutions_;
 
-  void MaybeLogGemmOp(StreamExecutorInterface::GemmCallTrace::GemmType op,
+  void MaybeLogGemmOp(StreamExecutor::GemmCallTrace::GemmType op,
                       blas::CallContext context, uint64_t size1,
                       uint64_t size2);
 
-#if TF_HIPBLASLT
   rocm::BlasLt blas_lt_;
-#endif
 
   ROCMBlas(const ROCMBlas &) = delete;
   void operator=(const ROCMBlas &) = delete;

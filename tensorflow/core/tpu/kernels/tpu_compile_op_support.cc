@@ -38,6 +38,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
@@ -46,10 +49,6 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/protobuf/tpu/compile_metadata.pb.h"
-#include "tensorflow/core/tpu/kernels/tpu_compile.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace tpu {
@@ -150,7 +149,7 @@ absl::StatusOr<std::unique_ptr<HloModuleConfig>> CreateModuleConfig(
   if (fusion_config_collection != nullptr && fusion_config != nullptr &&
       *fusion_config_collection != xla::FusionConfigCollection::kOff) {
     config->set_fusion_config_collection(*fusion_config_collection);
-    *config->mutable_fusion_config() = *fusion_config;
+    config->set_fusion_config(*fusion_config);
   }
 
   return std::move(config);
@@ -203,22 +202,7 @@ Shape GetPerDeviceShape(const Shape& shape, const HloSharding& sharding,
     return xla::ShapeUtil::MakeTupleShape(arg_shapes);
   }
 
-  if (sharding.IsTileMaximal()) {
-    return shape;
-  }
-
-  std::vector<int64_t> dimensions;
-  std::vector<int64_t> offset = sharding.TileOffsetForDevice(shape, device);
-  std::vector<int64_t> limit = sharding.TileLimitForDevice(shape, device);
-  dimensions.resize(limit.size());
-  for (int64_t i = 0; i < limit.size(); ++i) {
-    dimensions[i] = limit[i] - offset[i];
-  }
-  if (shape.has_layout()) {
-    return xla::ShapeUtil::MakeShapeWithDenseLayout(
-        shape.element_type(), dimensions, shape.layout().minor_to_major());
-  }
-  return xla::ShapeUtil::MakeShape(shape.element_type(), dimensions);
+  return sharding.TileShape(shape, device);
 }
 
 absl::Status AddVariableUpdatesToCores(
@@ -343,14 +327,15 @@ absl::Status CreateHloModules(
   auto debug_options = xla::DebugOptions();
   debug_options.set_xla_step_marker_location(metadata.step_marker_location());
   TF_ASSIGN_OR_RETURN(
+      auto program_shape,
+      xla::ProgramShape::FromProto(
+          compilation_result.computation->proto().host_program_shape()));
+  TF_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::HloModuleConfig> module_config,
-      CreateModuleConfig(
-          xla::ProgramShape(
-              compilation_result.computation->proto().host_program_shape()),
-          compilation_result.xla_input_shapes,
-          compilation_result.xla_output_shape, device_assignment,
-          metadata.num_replicas(), metadata.num_cores_per_replica(),
-          &debug_options));
+      CreateModuleConfig(program_shape, compilation_result.xla_input_shapes,
+                         compilation_result.xla_output_shape, device_assignment,
+                         metadata.num_replicas(),
+                         metadata.num_cores_per_replica(), &debug_options));
 
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::HloModule> hlo_module,
@@ -360,57 +345,6 @@ absl::Status CreateHloModules(
   hlo_modules->push_back(std::move(hlo_module));
 
   return absl::OkStatus();
-}
-
-absl::StatusOr<TpuCompilationRequestProto> CreateTpuCompilationRequest(
-    const std::variant<MlirToHloArgs, FunctionToHloArgs>& computation,
-    const TPUCompileMetadataProto& metadata,
-    const std::vector<TensorShape>& arg_shapes) {
-  VLOG(1) << "CreateTpuCompilationRequest.";
-  TpuCompilationRequestProto compilation_request;
-  bool use_mlir = computation.index() == 0;
-  compilation_request.set_use_mlir(use_mlir);
-  if (use_mlir) {
-    VLOG(1) << "Serializing MlirModule";
-    const MlirToHloArgs& mlir_computation = std::get<0>(computation);
-    *compilation_request.mutable_mlir_module() =
-        std::string(mlir_computation.mlir_module);
-  } else {
-    VLOG(1) << "Serializing FunctionDefinitionLibrary";
-    const FunctionToHloArgs& function_computation = std::get<1>(computation);
-    *compilation_request.mutable_fdef_lib() =
-        function_computation.flib_def->ToProto();
-    compilation_request.set_graph_def_version(
-        function_computation.graph_def_version);
-    *compilation_request.mutable_function() = *function_computation.function;
-    // TODO(b/160937500): serializing and copying large guaranteed_constants can
-    // be a perf hit. There is a future work to refactor the compilation layer
-    // to avoid passing guaranteed_constants over C_API.
-    if (function_computation.guaranteed_constants.index() == 0) {
-      absl::Span<const TensorProto* const> guaranteed_constants =
-          std::get<0>(function_computation.guaranteed_constants);
-      for (const TensorProto* constant : guaranteed_constants) {
-        *compilation_request.add_guaranteed_constants() = *constant;
-      }
-    } else {
-      CHECK_EQ(function_computation.guaranteed_constants.index(), 1);
-      const OpInputList& guaranteed_constants =
-          *std::get<1>(function_computation.guaranteed_constants);
-      for (const Tensor& constant : guaranteed_constants) {
-        constant.AsProtoTensorContent(
-            compilation_request.add_guaranteed_constants());
-      }
-    }
-  }
-
-  for (const TensorShape& shape : arg_shapes) {
-    shape.AsProto(compilation_request.add_arg_shapes());
-  }
-
-  *(compilation_request.mutable_metadata()) = metadata;
-
-  VLOG(1) << "TpuCompilationRequest:\n" << compilation_request.DebugString();
-  return compilation_request;
 }
 
 absl::Status CompileOpMetadataFromContext(OpKernelConstruction* ctx,

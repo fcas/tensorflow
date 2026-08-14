@@ -1,9 +1,27 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 load("//tensorflow/lite:build_def.bzl", "tflite_copts", "tflite_copts_warnings", "tflite_linkopts")
 load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -123,9 +141,10 @@ cc_test(
         "//tensorflow/lite/testing:util",
         "//tensorflow/lite/tools:command_line_flags",
         "//tensorflow/lite/tools:logging",
+        "//tensorflow/lite/tools/benchmark/proto:benchmark_result_cc",
         "//tensorflow/lite/tools/delegates:delegate_provider_hdr",
         "@com_google_absl//absl/algorithm",
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
@@ -139,6 +158,8 @@ cc_library(
     copts = common_copts,
     deps = [
         ":benchmark_model_lib",
+        ":benchmark_params",
+        "//tensorflow/lite:framework_stable",
         "//tensorflow/lite/profiling:profile_summarizer",
         "//tensorflow/lite/profiling:profile_summary_formatter",
         "//tensorflow/lite/profiling:profiler",
@@ -158,8 +179,10 @@ cc_library(
     }),
     deps = [
         ":benchmark_model_lib",
+        ":benchmark_params",
         ":benchmark_utils",
         ":profiling_listener",
+        "//tensorflow/core/example:example_protos_cc_impl",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:simple_memory_arena_debug_dump",
         "//tensorflow/lite:string_util",
@@ -169,15 +192,19 @@ cc_library(
         "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/core/kernels:builtin_ops",
         "//tensorflow/lite/kernels:cpu_backend_context",
+        "//tensorflow/lite/profiling:model_runtime_info",
         "//tensorflow/lite/profiling:profile_summary_formatter",
         "//tensorflow/lite/profiling:profiler",
         "//tensorflow/lite/tools:logging",
         "//tensorflow/lite/tools:model_loader",
         "//tensorflow/lite/tools:utils",
+        "//tensorflow/lite/tools/benchmark/proto:benchmark_result_cc",
         "//tensorflow/lite/tools/delegates:delegate_provider_hdr",
         "//tensorflow/lite/tools/delegates:tflite_execution_providers",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@ruy//ruy/profiler",
     ],
 )
@@ -188,6 +215,9 @@ cc_test(
         "benchmark_tflite_model_test.cc",
     ],
     data = ["@tflite_mobilenet_float//:mobilenet_v1_1.0_224.tflite"],
+    tags = [
+        "no_oss",  # TODO: b/361565588 - Re-enable.
+    ],
     deps = [
         ":benchmark_model_lib",
         ":benchmark_params",

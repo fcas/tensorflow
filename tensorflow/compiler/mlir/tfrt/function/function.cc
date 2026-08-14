@@ -16,6 +16,8 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tfrt/function/function.h"
 
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
+#include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "mlir/IR/OperationSupport.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
@@ -32,8 +34,9 @@ limitations under the License.
 
 namespace tensorflow {
 
-Status CompileTFMLIRToBEF(const TfrtFunctionCompileOptions& options,
-                          mlir::ModuleOp module, tfrt::BefBuffer* bef_buffer) {
+absl::Status CompileTFMLIRToBEF(const TfrtFunctionCompileOptions& options,
+                                mlir::ModuleOp module,
+                                tfrt::BefBuffer* bef_buffer) {
   mlir::OpPrintingFlags print_flags;
   print_flags.elideLargeElementsAttrs();
 
@@ -70,14 +73,15 @@ Status CompileTFMLIRToBEF(const TfrtFunctionCompileOptions& options,
   pass_options.tpu_fuse_ops = options.tpu_fuse_ops;
   pass_options.tpu_transfer_result_to_host =
       options.tpu_transfer_result_to_host;
-  Status status = tensorflow::CreateTfExecutorToTfrtPipeline(pm, pass_options);
+  absl::Status status =
+      tensorflow::CreateTfExecutorToTfrtPipeline(pm, pass_options);
   if (!status.ok()) {
     return diag_handler.Combine(status);
   }
 
   if (mlir::failed(pm.run(module)))
-    return diag_handler.Combine(tensorflow::errors::Internal(
-        "failed to lower TF Dialect to CoreRT dialect."));
+    return diag_handler.Combine(
+        absl::InternalError("failed to lower TF Dialect to CoreRT dialect."));
 
   if (VLOG_IS_ON(1)) {
     VLOG(1) << "TFRT dialect: ";
@@ -88,7 +92,7 @@ Status CompileTFMLIRToBEF(const TfrtFunctionCompileOptions& options,
       tfrt::ConvertMLIRToBEF(module, /* disable_optional_sections = */ true);
   if (bef_buffer->empty())
     return diag_handler.Combine(
-        tensorflow::errors::Internal("failed to convert MLIR to BEF."));
+        absl::InternalError("failed to convert MLIR to BEF."));
 
   return absl::OkStatus();
 }

@@ -15,28 +15,20 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/elementwise_spmd_expander.h"
 
-#include <iterator>
+#include <cassert>
+#include <cstdint>
 #include <optional>
-#include <string>
-#include <utility>
 
-#include "absl/strings/str_join.h"
+#include "absl/container/flat_hash_set.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/FormatVariadic.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/UseDefLists.h"  // from @llvm-project
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
-#include "tensorflow/compiler/mlir/utils/array_container_utils.h"
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "tensorflow/core/platform/errors.h"
-#include "tensorflow/core/platform/status.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
@@ -70,7 +62,7 @@ StatusOr<mlir::Operation*> ElementwiseSPMDExpander::ExpandOp(
     TF_ASSIGN_OR_RETURN(auto operand_layout,
                         ExtractLayoutFromOperand(operand.get()));
     if (!operand_layout)
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "input layout of elementwise op must be known before SPMD "
           "expansion.");
 
@@ -138,7 +130,7 @@ ElementwiseSPMDExpander::ComputeLayoutForward(
   if (merged_operand_layout) {
     const int output_rank = ValueRank(op->getOpResult(0));
     if (output_rank == -1)
-      return errors::InvalidArgument("Output has unknown rank");
+      return absl::InvalidArgumentError("Output has unknown rank");
 
     // We assume that all elementwise operations output a single tensor.
     return llvm::DenseMap<int, Layout>(
@@ -171,7 +163,7 @@ ElementwiseSPMDExpander::ComputeLayoutBackward(
         output_layout_truncated.sharding_spec_strs();
 
     if (inferred_operand_layout_strs.size() != operand_shape.size())
-      return errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Mismatch of operand shape size and layout size.");
     for (const auto& dim_shape_and_index : llvm::enumerate(operand_shape)) {
       const int dim_index = dim_shape_and_index.index();

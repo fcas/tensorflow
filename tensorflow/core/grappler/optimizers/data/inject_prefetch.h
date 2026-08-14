@@ -35,7 +35,7 @@ class InjectPrefetch : public TFDataOptimizerBase {
 
   bool UsesFunctionLibrary() const override { return false; }
 
-  Status Init(
+  absl::Status Init(
       const tensorflow::RewriterConfig_CustomGraphOptimizer* config) override {
     if (!config) return absl::OkStatus();
 
@@ -45,15 +45,17 @@ class InjectPrefetch : public TFDataOptimizerBase {
     } else if (autotune == "false") {
       autotune_ = false;
     } else {
-      return errors::InvalidArgument("Received an invalid value for parameter ",
-                                     kAutotune, ": ", autotune);
+      return absl::InvalidArgumentError(
+          absl::StrCat("Received an invalid value for parameter ", kAutotune,
+                       ": ", autotune));
     }
     return absl::OkStatus();
   }
 
-  Status OptimizeAndCollectStats(Cluster* cluster, const GrapplerItem& item,
-                                 GraphDef* output,
-                                 OptimizationStats* stats) override;
+  absl::Status OptimizeAndCollectStats(Cluster* cluster,
+                                       const GrapplerItem& item,
+                                       GraphDef* output,
+                                       OptimizationStats* stats) override;
 
  protected:
   bool autotune_ = true;

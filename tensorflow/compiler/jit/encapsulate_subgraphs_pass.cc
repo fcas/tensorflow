@@ -115,7 +115,7 @@ void MarkGuaranteedConstants(
 }
 
 struct OutputInputTensorPairHasher {
-  uint64 operator()(std::pair<OutputTensor, InputTensor> const& s) const {
+  uint64_t operator()(std::pair<OutputTensor, InputTensor> const& s) const {
     return Hash64Combine(OutputTensor::Hash()(s.first),
                          InputTensor::Hash()(s.second));
   }
@@ -128,12 +128,12 @@ static const char* const kRetValOp = "_Retval";
 
 class Encapsulator {
  public:
-  Encapsulator(string group_attribute, Graph const* graph_in)
+  Encapsulator(std::string group_attribute, Graph const* graph_in)
       : group_attribute_(std::move(group_attribute)), graph_in_(graph_in) {}
 
   // Find subgraphs marked with 'group_attribute', and build a new
   // subgraph, one for each value of 'group_attribute'.
-  Status SplitIntoSubgraphs(FunctionLibraryDefinition* library);
+  absl::Status SplitIntoSubgraphs(FunctionLibraryDefinition* library);
 
   // Build a FunctionDef for each subgraph, and add it 'library'. The values of
   // the 'group_attribute' annotations become the function names.
@@ -141,13 +141,14 @@ class Encapsulator {
   // same name, if any.
   // If 'rewrite_subgraph_fn' is set, it is applied to each subgraph before
   // function conversion.
-  Status BuildFunctionDefs(const RewriteSubgraphFn& rewrite_subgraph_fn,
-                           bool reuse_existing_functions,
-                           FunctionLibraryDefinition* library);
+  absl::Status BuildFunctionDefs(const RewriteSubgraphFn& rewrite_subgraph_fn,
+                                 bool reuse_existing_functions,
+                                 FunctionLibraryDefinition* library);
 
   // Write a copy of the input graph to 'graph_out', where the subgraphs are
   // replaced with calls to the new functions.
-  Status BuildOutputGraph(Graph* graph_out, FunctionLibraryDefinition* library);
+  absl::Status BuildOutputGraph(Graph* graph_out,
+                                FunctionLibraryDefinition* library);
 
  private:
   // A subgraph of the input, all marked with a common 'group_attribute'
@@ -181,13 +182,13 @@ class Encapsulator {
     // 'reuse_existing_functions' is set, use an existing function with the same
     // name, if any.  If 'rewrite_subgraph_fn' is set, it is applied to the
     // subgraph before function conversion.
-    Status BuildFunctionDef(const string& name_in,
-                            const RewriteSubgraphFn& rewrite_subgraph_fn,
-                            bool reuse_existing_functions,
-                            FunctionLibraryDefinition* library);
+    absl::Status BuildFunctionDef(const std::string& name_in,
+                                  const RewriteSubgraphFn& rewrite_subgraph_fn,
+                                  bool reuse_existing_functions,
+                                  FunctionLibraryDefinition* library);
 
     // Adds the function call node to graph_out.
-    Status AddFunctionCallNode(
+    absl::Status AddFunctionCallNode(
         const absl::flat_hash_map<const Node*, Node*>& node_images,
         Graph* graph_out);
 
@@ -205,32 +206,34 @@ class Encapsulator {
     // args_by_src_, if none exists yet. Also adds its index to args_by_dst_,
     // and adds the edge within the subgraph from the _Arg node to the image of
     // the dst node.
-    Status RecordArg(const Edge* edge,
-                     const absl::flat_hash_map<const Node*, Node*>& node_images,
-                     std::vector<std::pair<const Node*, Node*>>* src_arg_pairs);
+    absl::Status RecordArg(
+        const Edge* edge,
+        const absl::flat_hash_map<const Node*, Node*>& node_images,
+        std::vector<std::pair<const Node*, Node*>>* src_arg_pairs);
 
     // Records the src of the given edge as a control result of the graph.
     // Used during graph to function conversion to tie control results to
     // the function signature.
-    Status RecordControlResult(
+    absl::Status RecordControlResult(
         const Edge* edge,
         const absl::flat_hash_map<const Node*, Node*>& node_images);
 
     // Creates a _Retval node for the src node of edge, and add it to results_,
     // if none exists yet. If a new _Retval node is created, also adds the edge
     // within the subgraph from the src to the _Retval node.
-    Status RecordResult(
+    absl::Status RecordResult(
         const Edge* edge,
         const absl::flat_hash_map<const Node*, Node*>& node_images);
 
     // Creates the sequencer node if it doesn't exist, adding it to graph_out.
-    Status MakeSequencingNode(const string& subgraph_name, Graph* graph_out);
+    absl::Status MakeSequencingNode(const std::string& subgraph_name,
+                                    Graph* graph_out);
 
     // If there is a sequencer node, adds a control edge from the sequencer to
     // the call node.
     void ConnectSequencerToCallNode(Graph* graph_out);
 
-    Status ReplaceFunctionDef(FunctionLibraryDefinition* library);
+    absl::Status ReplaceFunctionDef(FunctionLibraryDefinition* library);
 
    private:
     // The subgraph extracted from the input graph, suitable for being turned
@@ -240,14 +243,14 @@ class Encapsulator {
 
     // Which device are these nodes on? Used to assign a device to the call
     // node.
-    string device_;
+    std::string device_;
 
     // NodeDef for the function call node.
     NodeDef call_node_def_;
 
     // Name that is used for the call node. This may not be
     // call_node_def_.name() if the client supplies a rewrite lambda.
-    string function_def_name_;
+    std::string function_def_name_;
 
     // Placeholder node simulating the host compute key in the output graph.
     // Not owned.
@@ -272,7 +275,7 @@ class Encapsulator {
     // Set of node names that are the source of a control output of the
     // subgraph. We store strings here so that we can tolerate nodes being
     // removed from the graph.
-    absl::flat_hash_set<string> control_output_nodes_;
+    absl::flat_hash_set<std::string> control_output_nodes_;
 
     // NoOp node in the output graph that is sequenced after the call node.
     Node* sequencer_ = nullptr;
@@ -280,68 +283,67 @@ class Encapsulator {
 
   // Returns the key attribute associated with a node in attr. Sets either
   // result to the empty string if the respective attribute is not found.
-  Status GetFunctionNameAttr(Node const* node, string* attr) const;
+  absl::Status GetFunctionNameAttr(Node const* node, std::string* attr) const;
 
   // Copies edges local to a subgraph. Adds _Arg and _Retval nodes to
   // subgraphs for data edges that cross subgraph boundaries.
-  Status CopySubgraphEdges(
+  absl::Status CopySubgraphEdges(
       const absl::flat_hash_map<const Node*, Node*>& node_images,
       std::vector<std::pair<const Node*, Node*>>* src_arg_pairs);
 
   // Copies all marked nodes to a subgraph. Does nothing for unmarked nodes.
-  Status CopySubgraphNodes(
+  absl::Status CopySubgraphNodes(
       absl::flat_hash_map<const Node*, Node*>* node_images);
 
   // Copies all nodes that aren't in a compiled subgraph to the output graph.
-  Status CopyNodesToOutputGraph(
+  absl::Status CopyNodesToOutputGraph(
       Graph* graph_out, absl::flat_hash_map<const Node*, Node*>* node_images);
 
   // Adds function call nodes for each compiled subgraph.
-  Status AddFunctionCallNodes(
+  absl::Status AddFunctionCallNodes(
       const absl::flat_hash_map<const Node*, Node*>& node_images,
       Graph* graph_out);
 
   // Finds the image of an edge source in the output graph. If the edge crosses
   // a subgraph boundary it is the output of a call node, otherwise it is a node
   // in the output graph.
-  Status FindOutputImageOfEdgeSrc(
-      const string& src_func_id, const string& dst_func_id,
+  absl::Status FindOutputImageOfEdgeSrc(
+      const std::string& src_func_id, const std::string& dst_func_id,
       const absl::flat_hash_map<const Node*, Node*>& node_images,
       const Node* original_src_node, Node** src_image);
 
   // Finds an edge source slot in the output graph. If the edge crosses a
   // subgraph boundary it is a slot on the output of a call node, otherwise it
   // is a slot on a node in the output graph.
-  int FindOutputSlotOfEdgeSrc(const string& src_func_id,
-                              const string& dst_func_id,
-                              const Edge* edge);
+  int FindOutputSlotOfEdgeSrc(const std::string& src_func_id,
+                              const std::string& dst_func_id, const Edge* edge);
 
   // Finds the image of an edge destination in the output graph. If the edge
   // crosses a subgraph boundary it is the input of a call node, otherwise it is
   // a node in the output graph.
-  Status FindOutputImageOfEdgeDst(
-      const string& src_func_id, const string& dst_func_id,
+  absl::Status FindOutputImageOfEdgeDst(
+      const std::string& src_func_id, const std::string& dst_func_id,
       const absl::flat_hash_map<const Node*, Node*>& node_images,
       const Node* original_dst_node, Node** dst_image);
 
   // Finds an edge destination slot in the output graph. If the edge crosses a
   // subgraph boundary it is a slot on the input of a call node, otherwise it is
   // a slot on a node in the output graph.
-  int FindOutputSlotOfEdgeDst(const string& src_func_id,
-                              const string& dst_func_id,
-                              const Edge* edge);
+  int FindOutputSlotOfEdgeDst(const std::string& src_func_id,
+                              const std::string& dst_func_id, const Edge* edge);
 
   // Copies a single edge to the output graph. The edge is either entirely
   // within the output graph, or crosses into or out of a compiled subgraph.
-  Status CopyEdgeToOutputGraph(
-      const Edge* edge, const string& src_func_id, const string& dst_func_id,
+  absl::Status CopyEdgeToOutputGraph(
+      const Edge* edge, const std::string& src_func_id,
+      const std::string& dst_func_id,
       const absl::flat_hash_map<const Node*, Node*>& node_images,
       Graph* graph_out,
       absl::flat_hash_set<std::pair<OutputTensor, InputTensor>,
                           OutputInputTensorPairHasher>* edges_added);
 
   // Adds all edges to the output graph.
-  Status AddEdgesToOutputGraph(
+  absl::Status AddEdgesToOutputGraph(
       const absl::flat_hash_map<const Node*, Node*>& node_images,
       Graph* graph_out);
 
@@ -349,16 +351,16 @@ class Encapsulator {
   // one node in send_from_host_nodes and store it in pruned_graph. On exit
   // nodes_images contains a mapping from nodes in graph to nodes in
   // pruned_graph. All functions in the copied graph are inlined.
-  Status MakePrunedGraphCopyAndInline(
+  absl::Status MakePrunedGraphCopyAndInline(
       const Graph& graph, const std::vector<Node*>& sink_nodes,
       std::unique_ptr<Graph>* pruned_graph,
       absl::flat_hash_map<const Node*, Node*>* node_images,
       FunctionLibraryDefinition* library);
 
-  const string group_attribute_;
+  const std::string group_attribute_;
   const Graph* graph_in_;
 
-  absl::flat_hash_map<string, Subgraph> subgraphs_;
+  absl::flat_hash_map<std::string, Subgraph> subgraphs_;
 
   Encapsulator(const Encapsulator&) = delete;
   void operator=(const Encapsulator&) = delete;
@@ -371,19 +373,20 @@ namespace {
 // including clusters that are not present in the ancestors map. has_successors
 // is the set of clusters that are ancestors of some other cluster.
 void TopologicalClusterSort(
-    const absl::flat_hash_set<string>& clusters,
-    const absl::flat_hash_set<string>& has_successors,
-    const absl::flat_hash_map<string, absl::flat_hash_set<string>>& ancestors,
-    std::vector<string>* sorted) {
+    const absl::flat_hash_set<std::string>& clusters,
+    const absl::flat_hash_set<std::string>& has_successors,
+    const absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>>&
+        ancestors,
+    std::vector<std::string>* sorted) {
   // The nodes are placed in 'sorted' in topological order.
   sorted->clear();
   // We don't use the standard DFS because we are not operating on Node*
   // objects.
   struct Work {
-    string cluster;
+    std::string cluster;
     bool leave;
   };
-  std::set<string> visited;
+  std::set<std::string> visited;
   std::vector<Work> stack;
   // Seed the processing list with clusters that have no successors.
   for (const auto& cluster : clusters) {
@@ -448,7 +451,7 @@ Node* Encapsulator::Subgraph::MakeNodeImage(const Graph* graph_in, Node* node) {
 
 Graph* Encapsulator::Subgraph::GetGraph() const { return graph_.get(); }
 
-Status Encapsulator::Subgraph::RecordArg(
+absl::Status Encapsulator::Subgraph::RecordArg(
     const Edge* edge,
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     std::vector<std::pair<const Node*, Node*>>* src_arg_pairs) {
@@ -467,7 +470,7 @@ Status Encapsulator::Subgraph::RecordArg(
     DataType dtype = edge->dst()->input_type(edge->dst_input());
     builder.Attr("T", dtype);
     builder.Attr("index", arg_index);
-    Status s = builder.Finalize(&arg_def);
+    absl::Status s = builder.Finalize(&arg_def);
     if (!s.ok()) return s;
 
     TF_ASSIGN_OR_RETURN(Node * arg, graph_->AddNode(arg_def));
@@ -482,7 +485,7 @@ Status Encapsulator::Subgraph::RecordArg(
   return absl::OkStatus();
 }
 
-Status Encapsulator::Subgraph::RecordControlResult(
+absl::Status Encapsulator::Subgraph::RecordControlResult(
     const Edge* edge,
     const absl::flat_hash_map<const Node*, Node*>& node_images) {
   Node* src_node = edge->src();
@@ -491,7 +494,7 @@ Status Encapsulator::Subgraph::RecordControlResult(
   return absl::OkStatus();
 }
 
-Status Encapsulator::Subgraph::RecordResult(
+absl::Status Encapsulator::Subgraph::RecordResult(
     const Edge* edge,
     const absl::flat_hash_map<const Node*, Node*>& node_images) {
   Node* src_node = edge->src();
@@ -511,7 +514,7 @@ Status Encapsulator::Subgraph::RecordResult(
     builder.Attr("T", dtype);
     builder.Attr("index", ret_index);
     builder.Input(src_image->name(), src_slot, dtype);
-    Status s = builder.Finalize(&ret_def);
+    absl::Status s = builder.Finalize(&ret_def);
     if (!s.ok()) return s;
     TF_ASSIGN_OR_RETURN(Node * ret, graph_->AddNode(ret_def));
     graph_->AddEdge(src_image, src_slot, ret, 0);
@@ -519,15 +522,15 @@ Status Encapsulator::Subgraph::RecordResult(
   return absl::OkStatus();
 }
 
-Status Encapsulator::Subgraph::MakeSequencingNode(const string& subgraph_name,
-                                                  Graph* graph_out) {
+absl::Status Encapsulator::Subgraph::MakeSequencingNode(
+    const std::string& subgraph_name, Graph* graph_out) {
   if (sequencer_ == nullptr) {
     NodeDef seq_def;
     // TODO(shikharagarwal): What source node should we use for errors?
     NodeDefBuilder builder(absl::StrCat(subgraph_name, "_sequencer"), "NoOp");
     builder.Attr(kXlaHostTransferSequencerAttr, subgraph_name);
     builder.Device(device_);
-    Status s = builder.Finalize(&seq_def);
+    absl::Status s = builder.Finalize(&seq_def);
     if (!s.ok()) return s;
 
     TF_ASSIGN_OR_RETURN(sequencer_, graph_out->AddNode(seq_def));
@@ -543,12 +546,12 @@ void Encapsulator::Subgraph::ConnectSequencerToCallNode(Graph* graph_out) {
   }
 }
 
-Status Encapsulator::Subgraph::BuildFunctionDef(
-    const string& name_in, const RewriteSubgraphFn& rewrite_subgraph_fn,
+absl::Status Encapsulator::Subgraph::BuildFunctionDef(
+    const std::string& name_in, const RewriteSubgraphFn& rewrite_subgraph_fn,
     bool reuse_existing_functions, FunctionLibraryDefinition* library) {
   // name_in is copied here because name may be modified below if
   // rewrite_subgraph_fn is true.
-  string name = name_in;
+  std::string name = name_in;
   call_node_def_.set_op(name);
   call_node_def_.set_name(name);
   call_node_def_.set_device(device_);
@@ -572,10 +575,12 @@ Status Encapsulator::Subgraph::BuildFunctionDef(
     // mappings, so when we build edges in BuildOutputGraph() we
     // connect them to the right input/output positions.
     if (input_permutation.size() != args_by_src_.size()) {
-      return errors::InvalidArgument("Input permutation has incorrect size.");
+      return absl::InvalidArgumentError(
+          "Input permutation has incorrect size.");
     }
     if (output_permutation.size() != results_.size()) {
-      return errors::InvalidArgument("Output permutation has incorrect size.");
+      return absl::InvalidArgumentError(
+          "Output permutation has incorrect size.");
     }
     for (auto& arg : args_by_src_) {
       arg.second = input_permutation[arg.second];
@@ -593,7 +598,7 @@ Status Encapsulator::Subgraph::BuildFunctionDef(
   function_def_name_ = name;
 
   FunctionDef fdef;
-  auto lookup = [this](const Node* node) -> std::optional<string> {
+  auto lookup = [this](const Node* node) -> std::optional<std::string> {
     if (control_output_nodes_.contains(node->name())) {
       return std::make_optional(node->name());
     }
@@ -620,9 +625,9 @@ Status Encapsulator::Subgraph::BuildFunctionDef(
   return absl::OkStatus();
 }
 
-Status Encapsulator::Subgraph::ReplaceFunctionDef(
+absl::Status Encapsulator::Subgraph::ReplaceFunctionDef(
     FunctionLibraryDefinition* library) {
-  const string& name = function_def_name_;
+  const std::string& name = function_def_name_;
 
   FunctionDef fdef;
   TF_RETURN_IF_ERROR(GraphToFunctionDef(*graph_, name, &fdef));
@@ -639,7 +644,7 @@ Status Encapsulator::Subgraph::ReplaceFunctionDef(
   return absl::OkStatus();
 }
 
-Status Encapsulator::Subgraph::AddFunctionCallNode(
+absl::Status Encapsulator::Subgraph::AddFunctionCallNode(
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     Graph* graph_out) {
   TF_ASSIGN_OR_RETURN(call_node_, graph_out->AddNode(call_node_def_));
@@ -650,7 +655,8 @@ Status Encapsulator::Subgraph::AddFunctionCallNode(
   return absl::OkStatus();
 }
 
-Status Encapsulator::GetFunctionNameAttr(Node const* node, string* attr) const {
+absl::Status Encapsulator::GetFunctionNameAttr(Node const* node,
+                                               std::string* attr) const {
   AttrSlice attrs = node->attrs();
   attr->clear();
   for (const auto& node_attr : attrs) {
@@ -663,12 +669,12 @@ Status Encapsulator::GetFunctionNameAttr(Node const* node, string* attr) const {
   return absl::OkStatus();
 }
 
-bool IsInSubgraph(const string& func_id) { return !func_id.empty(); }
+bool IsInSubgraph(const std::string& func_id) { return !func_id.empty(); }
 
-Status Encapsulator::CopySubgraphNodes(
+absl::Status Encapsulator::CopySubgraphNodes(
     absl::flat_hash_map<const Node*, Node*>* node_images) {
   for (Node* node : graph_in_->op_nodes()) {
-    string func_id;
+    std::string func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(node, &func_id));
     if (!IsInSubgraph(func_id)) continue;
 
@@ -680,13 +686,13 @@ Status Encapsulator::CopySubgraphNodes(
   return absl::OkStatus();
 }
 
-Status Encapsulator::CopySubgraphEdges(
+absl::Status Encapsulator::CopySubgraphEdges(
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     std::vector<std::pair<const Node*, Node*>>* src_arg_pairs) {
   for (const Edge* edge : graph_in_->edges()) {
-    string src_func_id;
+    std::string src_func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(edge->src(), &src_func_id));
-    string dst_func_id;
+    std::string dst_func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(edge->dst(), &dst_func_id));
     Node* src_image = gtl::FindWithDefault(node_images, edge->src(), nullptr);
     Node* dst_image = gtl::FindWithDefault(node_images, edge->dst(), nullptr);
@@ -709,10 +715,10 @@ Status Encapsulator::CopySubgraphEdges(
       if (!edge->IsControlEdge()) {
         DataType dtype = edge->src()->output_type(edge->src_output());
         if (IsRefType(dtype)) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(absl::StrCat(
               "Ref Tensors (e.g., Variables) are not supported as results: "
               "tensor ",
-              edge->src()->name(), ":", edge->src_output());
+              edge->src()->name(), ":", edge->src_output()));
         }
       }
 
@@ -732,10 +738,10 @@ Status Encapsulator::CopySubgraphEdges(
       if (!edge->IsControlEdge()) {
         DataType dtype = edge->dst()->input_type(edge->dst_input());
         if (IsRefType(dtype)) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(absl::StrCat(
               "Ref Tensors (e.g., Variables) are not supported as args: "
               "tensor ",
-              edge->src()->name(), ":", edge->src_output());
+              edge->src()->name(), ":", edge->src_output()));
         }
       }
 
@@ -751,8 +757,9 @@ Status Encapsulator::CopySubgraphEdges(
   return absl::OkStatus();
 }
 
-Status Encapsulator::SplitIntoSubgraphs(FunctionLibraryDefinition* library) {
-  Status s;
+absl::Status Encapsulator::SplitIntoSubgraphs(
+    FunctionLibraryDefinition* library) {
+  absl::Status s;
 
   // Map from input graph nodes to subgraph nodes.
   absl::flat_hash_map<const Node*, Node*> node_images;
@@ -784,11 +791,11 @@ Status Encapsulator::SplitIntoSubgraphs(FunctionLibraryDefinition* library) {
   return s;
 }
 
-Status Encapsulator::BuildFunctionDefs(
+absl::Status Encapsulator::BuildFunctionDefs(
     const RewriteSubgraphFn& rewrite_subgraph_fn, bool reuse_existing_functions,
     FunctionLibraryDefinition* library) {
   for (auto& subgraph_entry : subgraphs_) {
-    string name = subgraph_entry.first;
+    std::string name = subgraph_entry.first;
     Subgraph& subgraph = subgraph_entry.second;
     TF_RETURN_IF_ERROR(subgraph.BuildFunctionDef(
         name, rewrite_subgraph_fn, reuse_existing_functions, library));
@@ -796,10 +803,10 @@ Status Encapsulator::BuildFunctionDefs(
   return absl::OkStatus();
 }
 
-Status Encapsulator::CopyNodesToOutputGraph(
+absl::Status Encapsulator::CopyNodesToOutputGraph(
     Graph* graph_out, absl::flat_hash_map<const Node*, Node*>* node_images) {
   for (Node* node : graph_in_->op_nodes()) {
-    string func_id;
+    std::string func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(node, &func_id));
 
     // Don't copy nodes that are going to be encapsulated.
@@ -813,7 +820,7 @@ Status Encapsulator::CopyNodesToOutputGraph(
   return absl::OkStatus();
 }
 
-Status Encapsulator::AddFunctionCallNodes(
+absl::Status Encapsulator::AddFunctionCallNodes(
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     Graph* graph_out) {
   for (auto& subgraph_entry : subgraphs_) {
@@ -823,8 +830,8 @@ Status Encapsulator::AddFunctionCallNodes(
   return absl::OkStatus();
 }
 
-Status Encapsulator::FindOutputImageOfEdgeSrc(
-    const string& src_func_id, const string& dst_func_id,
+absl::Status Encapsulator::FindOutputImageOfEdgeSrc(
+    const std::string& src_func_id, const std::string& dst_func_id,
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     const Node* original_src_node, Node** src_image) {
   if (IsInSubgraph(src_func_id)) {
@@ -839,8 +846,8 @@ Status Encapsulator::FindOutputImageOfEdgeSrc(
   return absl::OkStatus();
 }
 
-int Encapsulator::FindOutputSlotOfEdgeSrc(const string& src_func_id,
-                                          const string& dst_func_id,
+int Encapsulator::FindOutputSlotOfEdgeSrc(const std::string& src_func_id,
+                                          const std::string& dst_func_id,
                                           const Edge* edge) {
   if (IsInSubgraph(src_func_id)) {
     const Subgraph& src_subgraph = subgraphs_.at(src_func_id);
@@ -854,8 +861,8 @@ int Encapsulator::FindOutputSlotOfEdgeSrc(const string& src_func_id,
   }
 }
 
-Status Encapsulator::FindOutputImageOfEdgeDst(
-    const string& src_func_id, const string& dst_func_id,
+absl::Status Encapsulator::FindOutputImageOfEdgeDst(
+    const std::string& src_func_id, const std::string& dst_func_id,
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     const Node* original_dst_node, Node** dst_image) {
   if (IsInSubgraph(dst_func_id)) {
@@ -870,8 +877,8 @@ Status Encapsulator::FindOutputImageOfEdgeDst(
   return absl::OkStatus();
 }
 
-int Encapsulator::FindOutputSlotOfEdgeDst(const string& src_func_id,
-                                          const string& dst_func_id,
+int Encapsulator::FindOutputSlotOfEdgeDst(const std::string& src_func_id,
+                                          const std::string& dst_func_id,
                                           const Edge* edge) {
   if (IsInSubgraph(dst_func_id)) {
     const Subgraph& dst_subgraph = subgraphs_.at(dst_func_id);
@@ -885,8 +892,9 @@ int Encapsulator::FindOutputSlotOfEdgeDst(const string& src_func_id,
   }
 }
 
-Status Encapsulator::CopyEdgeToOutputGraph(
-    const Edge* edge, const string& src_func_id, const string& dst_func_id,
+absl::Status Encapsulator::CopyEdgeToOutputGraph(
+    const Edge* edge, const std::string& src_func_id,
+    const std::string& dst_func_id,
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     Graph* graph_out,
     absl::flat_hash_set<std::pair<OutputTensor, InputTensor>,
@@ -927,7 +935,7 @@ Status Encapsulator::CopyEdgeToOutputGraph(
   return absl::OkStatus();
 }
 
-Status Encapsulator::AddEdgesToOutputGraph(
+absl::Status Encapsulator::AddEdgesToOutputGraph(
     const absl::flat_hash_map<const Node*, Node*>& node_images,
     Graph* graph_out) {
   // Set of edges already added to the output graph, represented as (src, dst)
@@ -938,9 +946,9 @@ Status Encapsulator::AddEdgesToOutputGraph(
       edges_added;
 
   for (const Edge* edge : graph_in_->edges()) {
-    string src_func_id;
+    std::string src_func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(edge->src(), &src_func_id));
-    string dst_func_id;
+    std::string dst_func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(edge->dst(), &dst_func_id));
 
     // Ignore edges that are strictly contained within one subgraph, unless
@@ -1011,7 +1019,7 @@ Node* AddDummyShapedNode(const Node* src_node, int src_port,
 
 }  // namespace
 
-Status Encapsulator::MakePrunedGraphCopyAndInline(
+absl::Status Encapsulator::MakePrunedGraphCopyAndInline(
     const Graph& graph, const std::vector<Node*>& sink_nodes,
     std::unique_ptr<Graph>* pruned_graph,
     absl::flat_hash_map<const Node*, Node*>* node_images,
@@ -1056,8 +1064,9 @@ Status Encapsulator::MakePrunedGraphCopyAndInline(
     VLOG(2) << "Inlining function " << node->name();
     const FunctionDef* fdef = library->Find(node->type_string());
     if (fdef == nullptr) {
-      return errors::Internal("Failed to find function ", node->type_string(),
-                              " in function library.");
+      return absl::InternalError(absl::StrCat("Failed to find function ",
+                                              node->type_string(),
+                                              " in function library."));
     }
     std::unique_ptr<FunctionBody> fbody;
     TF_RETURN_IF_ERROR(
@@ -1071,8 +1080,8 @@ Status Encapsulator::MakePrunedGraphCopyAndInline(
   return absl::OkStatus();
 }
 
-Status Encapsulator::BuildOutputGraph(Graph* graph_out,
-                                      FunctionLibraryDefinition* library) {
+absl::Status Encapsulator::BuildOutputGraph(
+    Graph* graph_out, FunctionLibraryDefinition* library) {
   // Map from nodes in the input graph to nodes in the output graph.
   absl::flat_hash_map<const Node*, Node*> node_images;
 
@@ -1085,8 +1094,8 @@ Status Encapsulator::BuildOutputGraph(Graph* graph_out,
 
 }  // anonymous namespace
 
-Status EncapsulateSubgraphsInFunctions(
-    string group_attribute, const Graph& graph_in,
+absl::Status EncapsulateSubgraphsInFunctions(
+    std::string group_attribute, const Graph& graph_in,
     const RewriteSubgraphFn& rewrite_subgraph_fn, bool reuse_existing_functions,
     std::unique_ptr<Graph>* graph_out, FunctionLibraryDefinition* library) {
   Encapsulator encapsulator(std::move(group_attribute),
@@ -1105,14 +1114,14 @@ Status EncapsulateSubgraphsInFunctions(
 }
 
 // Finds the types of the _Arg nodes, indexed by position.
-static Status GetArgTypes(const Graph& graph, DataTypeVector* types) {
+static absl::Status GetArgTypes(const Graph& graph, DataTypeVector* types) {
   for (Node* n : graph.op_nodes()) {
     if (n->type_string() == kArgOp) {
       int index;
       TF_RETURN_IF_ERROR(GetNodeAttr(n->attrs(), "index", &index));
       const int num_types = types->size();
       if (index < 0 || index >= num_types) {
-        return errors::InvalidArgument("Invalid argument number");
+        return absl::InvalidArgumentError("Invalid argument number");
       }
       (*types)[index] = n->output_type(0);
     }
@@ -1122,15 +1131,15 @@ static Status GetArgTypes(const Graph& graph, DataTypeVector* types) {
 
 // Renumber the indices of _Arg nodes in a graph, according to
 // 'permutation' that maps old indices to new indices.
-static Status RenumberArguments(Graph* graph,
-                                const std::vector<int>& permutation) {
+static absl::Status RenumberArguments(Graph* graph,
+                                      const std::vector<int>& permutation) {
   for (Node* n : graph->op_nodes()) {
     if (n->type_string() == kArgOp) {
       int index;
       TF_RETURN_IF_ERROR(GetNodeAttr(n->attrs(), "index", &index));
       const int permutation_size = permutation.size();
       if (index < 0 || index >= permutation_size) {
-        return errors::InvalidArgument("Invalid argument number");
+        return absl::InvalidArgumentError("Invalid argument number");
       }
       n->AddAttr("index", permutation[index]);
     }
@@ -1138,7 +1147,7 @@ static Status RenumberArguments(Graph* graph,
   return absl::OkStatus();
 }
 
-Status EncapsulateSubgraphsPass::Run(
+absl::Status EncapsulateSubgraphsPass::Run(
     const GraphOptimizationPassOptions& options) {
   VLOG(1) << "EncapsulateSubgraphsPass::Run";
   if (VLOG_IS_ON(1)) {
@@ -1173,13 +1182,13 @@ Status EncapsulateSubgraphsPass::Run(
 
   DeviceFactory* cpu_factory = DeviceFactory::GetFactory("CPU");
   if (!cpu_factory) {
-    return errors::NotFound(
+    return absl::NotFoundError(
         "CPU Factory not registered. Can't run EncapsulateSubgraphsPass");
   }
   TF_RETURN_IF_ERROR(cpu_factory->CreateDevices(
       session_options, "/job:localhost/replica:0/task:0", &devices));
   if (devices.empty()) {
-    return errors::NotFound(
+    return absl::NotFoundError(
         "Failed to create a CPU device for EncapsulateSubgraphsPass");
   }
 
@@ -1194,7 +1203,7 @@ Status EncapsulateSubgraphsPass::Run(
   FunctionLibraryRuntime* flr =
       pflr->GetFLR("/job:localhost/replica:0/task:0/device:CPU:0");
   if (flr == nullptr) {
-    return errors::Internal(
+    return absl::InternalError(
         "Failed to create and retrieve function library runtime to run "
         "constant folding");
   }
@@ -1254,8 +1263,8 @@ Status EncapsulateSubgraphsPass::Run(
             std::count(arg_types.begin(), arg_types.end(), DT_RESOURCE);
         const int num_nonconsts = num_args - num_resources - num_consts;
         if (num_nonconsts < 0) {
-          return errors::Internal("num_nonconsts should be >= 0, was ",
-                                  num_nonconsts);
+          return absl::InternalError(absl::StrCat(
+              "num_nonconsts should be >= 0, was ", num_nonconsts));
         }
 
         int const_pos = 0;
@@ -1264,8 +1273,8 @@ Status EncapsulateSubgraphsPass::Run(
         for (int i = 0; i < num_args; ++i) {
           if (const_args[i]) {
             if (arg_types[i] == DT_RESOURCE) {
-              return errors::Internal(
-                  "Resource arguments cannot be constant (argument ", i, ")");
+              return absl::InternalError(absl::StrCat(
+                  "Resource arguments cannot be constant (argument ", i, ")"));
             }
             (*input_permutation)[i] = const_pos;
             ++const_pos;

@@ -13,16 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <Python.h>
+
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/stl.h"  // from @pybind11
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
 #include "pybind11_protobuf/native_proto_caster.h"  // from @pybind11_protobuf
 #include "tensorflow/c/eager/c_api.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/dtensor/cc/dtensor_device.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
+#include "tensorflow/dtensor/proto/layout.pb.h"
 #include "tensorflow/python/eager/pywrap_tensor.h"
 #include "tensorflow/python/eager/pywrap_tfe.h"
 #include "tensorflow/python/lib/core/pybind11_lib.h"
@@ -215,7 +223,8 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
                                     const py::capsule& device_info,
                                     const std::vector<int>& tpu_core_ids) {
     return TPUCoreIDsToLocations(
-        static_cast<TFE_Context*>(PyCapsule_GetPointer(context.ptr(), nullptr)),
+        static_cast<TFE_Context*>(
+            PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
         tpu_core_ids,
         PyCapsule_GetPointer(device_info.ptr(), "TFE_CustomDevice_DeviceInfo"));
   });
@@ -224,7 +233,7 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
            const std::vector<std::vector<int>>& tpu_core_locations) {
           return TPUCoreLocationsToIDs(
               static_cast<TFE_Context*>(
-                  PyCapsule_GetPointer(context.ptr(), nullptr)),
+                  PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
               tpu_core_locations,
               PyCapsule_GetPointer(device_info.ptr(),
                                    "TFE_CustomDevice_DeviceInfo"));
@@ -234,8 +243,8 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
                    const py::capsule& device_info, const bool is_sparse) {
     std::unique_ptr<TF_Status, decltype(&TF_DeleteStatus)> status(
         TF_NewStatus(), TF_DeleteStatus);
-    TFE_Context* ctx =
-        static_cast<TFE_Context*>(PyCapsule_GetPointer(context.ptr(), nullptr));
+    TFE_Context* ctx = static_cast<TFE_Context*>(
+        PyCapsule_GetPointer(context.ptr(), "TFE_Context"));
     // Convert each python object to safe py eagertensors.
     std::vector<tensorflow::Safe_PyObjectPtr> py_eager_tensor_handles;
     Py_ssize_t len = PyList_Size(input_tensors.ptr());
@@ -295,9 +304,10 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
                                            py::str(dtensor_handle.get_type())));
     }
     TFE_TensorHandle* tensor_handle = EagerTensor_Handle(dtensor_handle.ptr());
-    std::vector<TFE_TensorHandle*> unpacked_handles = Unpack(
-        static_cast<TFE_Context*>(PyCapsule_GetPointer(context.ptr(), nullptr)),
-        tensor_handle, device_info, status.get());
+    std::vector<TFE_TensorHandle*> unpacked_handles =
+        Unpack(static_cast<TFE_Context*>(
+                   PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
+               tensor_handle, device_info, status.get());
 
     if (tensorflow::MaybeRaiseExceptionFromTFStatus(status.get(), nullptr))
       return tensorflow::PyoOrThrow(nullptr);
@@ -323,7 +333,7 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
             EagerTensor_Handle(dtensor_handle.ptr());
         std::string layout_string =
             FetchLayout(static_cast<TFE_Context*>(
-                            PyCapsule_GetPointer(context.ptr(), nullptr)),
+                            PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
                         tensor_handle, device_info, status.get());
         if (tensorflow::MaybeRaiseExceptionFromTFStatus(status.get(), nullptr))
           return tensorflow::PyoOrThrow(nullptr);
@@ -339,9 +349,9 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
     std::unique_ptr<TF_Status, decltype(&TF_DeleteStatus)> status(
         TF_NewStatus(), TF_DeleteStatus);
     TFE_TensorHandle* tensor_handle = EagerTensor_Handle(dtensor_handle.ptr());
-    bool is_dtensor = IsDTensor(
-        static_cast<TFE_Context*>(PyCapsule_GetPointer(context.ptr(), nullptr)),
-        tensor_handle, device_info, status.get());
+    bool is_dtensor = IsDTensor(static_cast<TFE_Context*>(PyCapsule_GetPointer(
+                                    context.ptr(), "TFE_Context")),
+                                tensor_handle, device_info, status.get());
     if (TF_GetCode(status.get()) != TF_OK) {
       PyErr_SetString(PyExc_ValueError, TF_Message(status.get()));
       throw py::error_already_set();
@@ -358,9 +368,10 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
         TF_NewStatus(), TF_DeleteStatus);
 
     TFE_TensorHandle* tensor_handle = EagerTensor_Handle(dtensor_handle.ptr());
-    bool is_sparse = IsSparseDTensor(
-        static_cast<TFE_Context*>(PyCapsule_GetPointer(context.ptr(), nullptr)),
-        tensor_handle, device_info, status.get());
+    bool is_sparse =
+        IsSparseDTensor(static_cast<TFE_Context*>(
+                            PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
+                        tensor_handle, device_info, status.get());
 
     if (TF_GetCode(status.get()) != TF_OK) {
       PyErr_SetString(PyExc_ValueError, TF_Message(status.get()));
@@ -372,9 +383,9 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
                        const py::capsule& device_info) {
     std::unique_ptr<TF_Status, decltype(&TF_DeleteStatus)> status(
         TF_NewStatus(), TF_DeleteStatus);
-    return GetStats(
-        static_cast<TFE_Context*>(PyCapsule_GetPointer(context.ptr(), nullptr)),
-        device_info, status.get());
+    return GetStats(static_cast<TFE_Context*>(
+                        PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
+                    device_info, status.get());
   });
   m.def("SetIteratorElementLayouts",
         [](const py::handle& context, const py::handle& dtensor_handle,
@@ -391,7 +402,7 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
               EagerTensor_Handle(dtensor_handle.ptr());
           SetIteratorElementLayouts(
               static_cast<TFE_Context*>(
-                  PyCapsule_GetPointer(context.ptr(), nullptr)),
+                  PyCapsule_GetPointer(context.ptr(), "TFE_Context")),
               tensor_handle, element_layouts, device_info, status.get());
         });
   py::class_<Mesh>(m, "Mesh")
@@ -414,7 +425,7 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
              return *mesh;
            }),
            py::arg("mesh_proto"), "Returns a Mesh from a MeshProto.")
-      .def(py::init([](std::string_view mesh_str) {
+      .def(py::init([](absl::string_view mesh_str) {
              auto mesh = Mesh::FromString(mesh_str);
              if (!mesh.ok()) {
                throw py::value_error(std::string(mesh.status().message()));
@@ -436,7 +447,7 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
            "Returns True if a Mesh contains the given dimension name.")
       .def(
           "dim_size",
-          [](const Mesh& mesh, std::string_view name) {
+          [](const Mesh& mesh, absl::string_view name) {
             auto dim_size = mesh.dim_size(name);
             if (!dim_size.ok()) {
               throw py::value_error(std::string(dim_size.status().message()));
@@ -512,7 +523,7 @@ PYBIND11_MODULE(_pywrap_dtensor_device, m) {
              return *layout;
            }),
            py::arg("layout_proto"), "Returns a Layout from a LayoutProto.")
-      .def(py::init([](std::string_view layout_str) {
+      .def(py::init([](absl::string_view layout_str) {
              auto layout = Layout::FromString(layout_str);
              if (!layout.ok()) {
                throw py::value_error(std::string(layout.status().message()));

@@ -184,6 +184,12 @@ REGISTER_OP("UncompressElement")
     .Attr("output_shapes: list(shape) >= 1")
     .SetShapeFn(shape_inference::DatasetIteratorShape);
 
+REGISTER_OP("CheckPinned")
+    .Input("tensor: T")
+    .Output("output: T")
+    .Attr("T: type")
+    .SetShapeFn(shape_inference::UnchangedShape);
+
 REGISTER_OP("ComputeBatchSize")
     .Input("input_dataset : variant")
     .Output("batch_size : int64")
@@ -224,7 +230,7 @@ REGISTER_OP("CSVDataset")
         shape_inference::ShapeHandle v;
         TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(i), 1, &v));
         if (c->Rank(c->input(i)) == 1 && c->Value(c->Dim(v, 0)) > 1) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Shape of a default must be a length-0 or length-1 vector, or a "
               "scalar.");
         }
@@ -271,7 +277,7 @@ REGISTER_OP("CSVDatasetV2")
         shape_inference::ShapeHandle v;
         TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(i), 1, &v));
         if (c->Rank(c->input(i)) == 1 && c->Value(c->Dim(v, 0)) > 1) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Shape of a default must be a length-0 or length-1 vector, or a "
               "scalar.");
         }
@@ -314,7 +320,7 @@ REGISTER_OP("ExperimentalCSVDataset")
         shape_inference::ShapeHandle v;
         TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(i), 1, &v));
         if (c->Rank(c->input(i)) == 1 && c->Value(c->Dim(v, 0)) > 1) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Shape of a default must be a length-0 or length-1 vector, or a "
               "scalar.");
         }
@@ -700,6 +706,7 @@ REGISTER_OP("ExperimentalMapDataset")
     .Attr("output_shapes: list(shape) >= 1")
     .Attr("use_inter_op_parallelism: bool = true")
     .Attr("preserve_cardinality: bool = false")
+    .Attr("force_synchronous: bool = false")
     .SetTypeConstructor(full_type::VariadicTensorContainer(TFT_DATASET,
                                                            "output_types"))
     .SetShapeFn(shape_inference::ScalarShape);

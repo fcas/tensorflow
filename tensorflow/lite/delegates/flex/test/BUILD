@@ -1,5 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@build_bazel_rules_apple//apple:ios.bzl", "ios_static_framework")
+load("@rules_java//java:defs.bzl", "java_library", "java_test")
 load("//tensorflow/java:build_defs.bzl", "JAVACOPTS")
 load("//tensorflow/lite/delegates/flex:build_def.bzl", "tflite_flex_jni_library")
 
@@ -7,7 +23,7 @@ load("//tensorflow/lite/delegates/flex:build_def.bzl", "tflite_flex_jni_library"
 # in Java. Please don't use them for other purposes.
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     licenses = ["notice"],
 )
 
@@ -49,6 +65,8 @@ java_test(
         "no_cuda_on_cpu_tap",  # CUDA + flex is not officially supported.
         "no_gpu",  # GPU + flex is not officially supported.
         "no_oss",  # Currently requires --config=monolithic, b/118895218.
+        "noasan",  # b/494579957: JVM shutdown rseq crash under ASAN.
+        "notsan",  # b/494579957: JVM shutdown rseq crash under TSAN.
     ],
     test_class = "org.tensorflow.lite.InterpreterFlexTest",
     visibility = ["//visibility:private"],
@@ -75,6 +93,8 @@ java_test(
         "no_cuda_on_cpu_tap",  # CUDA + flex is not officially supported.
         "no_gpu",  # GPU + flex is not officially supported.
         "no_oss",  # Currently requires --config=monolithic, b/118895218.
+        "noasan",  # b/494579957: JVM shutdown rseq crash under ASAN.
+        "notsan",  # b/494579957: JVM shutdown rseq crash under TSAN.
     ],
     test_class = "org.tensorflow.lite.InterpreterFlexWithCustomOpsTest",
     visibility = ["//visibility:private"],
@@ -92,7 +112,7 @@ ios_static_framework(
     testonly = 1,
     avoid_deps = ["//tensorflow/lite/core/c:common"],
     bundle_name = "TestTensorFlowLiteSelectTfOps",
-    minimum_os_version = "12.0",
+    minimum_os_version = "15.0",
     deps = [
         ":test_flex_delegate",
     ],

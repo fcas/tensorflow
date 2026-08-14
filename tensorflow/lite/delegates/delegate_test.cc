@@ -23,20 +23,23 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "flatbuffers/buffer.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
+#include "tensorflow/compiler/mlir/lite/experimental/remat/metadata_util.h"
+#include "tensorflow/compiler/mlir/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/builtin_ops.h"
 #include "tensorflow/lite/core/c/c_api_opaque.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/core/interpreter_builder.h"
 #include "tensorflow/lite/core/kernels/register.h"
 #include "tensorflow/lite/delegates/delegate_test_util.h"
-#include "tensorflow/lite/experimental/remat/metadata_util.h"
+#include "tensorflow/lite/delegates/external/external_delegate.h"
 #include "tensorflow/lite/interpreter.h"
-#include "tensorflow/lite/kernels/internal/compatibility.h"
+#include "tensorflow/lite/interpreter_options.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
-#include "tensorflow/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/model_builder.h"
 #include "tensorflow/lite/schema/schema_generated.h"
-#include "tensorflow/lite/testing/util.h"
 #include "tensorflow/lite/version.h"
 
 namespace tflite {
@@ -57,7 +60,7 @@ TEST_F(TestDelegate, NullDelegate) {
 }
 
 TEST_F(TestDelegate, BasicDelegate) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate());
 
   ASSERT_EQ(interpreter_->execution_plan().size(), 1);
@@ -82,9 +85,21 @@ TEST_F(TestDelegate, BasicDelegate) {
   EXPECT_EQ(params->output_tensors->data[1], 4);
 }
 
+TEST_F(TestDelegate, DelegateNodeInitFailure) {
+  delegate_ = std::make_unique<SimpleDelegate>(
+      std::vector<int>{0, 1, 2}, kTfLiteDelegateFlagsNone,
+      SimpleDelegate::Options::kFailOnInit);
+  // ModifyGraphWithDelegate fails, since the Init() method in the node's
+  // TfLiteRegistration returns an error status.
+  ASSERT_EQ(
+      interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
+      kTfLiteDelegateError);
+}
+
 TEST_F(TestDelegate, DelegateNodePrepareFailure) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0, 1, 2}, kTfLiteDelegateFlagsNone, true /**fail_node_prepare**/));
+  delegate_ = std::make_unique<SimpleDelegate>(
+      std::vector<int>{0, 1, 2}, kTfLiteDelegateFlagsNone,
+      SimpleDelegate::Options::kFailOnPrepare);
   // ModifyGraphWithDelegate fails, since the Prepare() method in the node's
   // TfLiteRegistration returns an error status.
   ASSERT_EQ(
@@ -108,9 +123,9 @@ TEST_F(TestDelegate, DelegateNodePrepareFailure) {
 }
 
 TEST_F(TestDelegate, DelegateNodeInvokeFailure) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0, 1, 2}, kTfLiteDelegateFlagsNone, false /**fail_node_prepare**/,
-      0 /**min_ops_per_subset**/, true /**fail_node_invoke**/));
+  delegate_ = std::make_unique<SimpleDelegate>(
+      std::vector<int>{0, 1, 2}, kTfLiteDelegateFlagsNone,
+      SimpleDelegate::Options::kFailOnInvoke);
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -139,7 +154,7 @@ TEST_F(TestDelegate, DelegateNodeInvokeFailure) {
 }
 
 TEST_F(TestDelegate, StaticDelegateMakesGraphImmutable) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -161,7 +176,7 @@ TEST_F(TestDelegate, StaticDelegateMakesGraphImmutable) {
 }
 
 TEST_F(TestDelegate, ComplexDelegate) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{1, 2});
   interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate());
 
   ASSERT_EQ(interpreter_->execution_plan().size(), 2);
@@ -175,7 +190,7 @@ TEST_F(TestDelegate, ComplexDelegate) {
 }
 
 TEST_F(TestDelegate, SetBufferHandleToInput) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   TfLiteDelegate* delegate = delegate_->get_tf_lite_delegate();
   interpreter_->ModifyGraphWithDelegate(delegate);
 
@@ -193,7 +208,7 @@ TEST_F(TestDelegate, SetBufferHandleToInput) {
 }
 
 TEST_F(TestDelegate, SetBufferHandleToOutput) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   TfLiteDelegate* delegate = delegate_->get_tf_lite_delegate();
   interpreter_->ModifyGraphWithDelegate(delegate);
 
@@ -213,7 +228,7 @@ TEST_F(TestDelegate, SetBufferHandleToOutput) {
 }
 
 TEST_F(TestDelegate, SetInvalidHandleToTensor) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   TfLiteDelegate* delegate = delegate_->get_tf_lite_delegate();
   interpreter_->ModifyGraphWithDelegate(delegate);
   ASSERT_EQ(interpreter_->Invoke(), kTfLiteOk);
@@ -238,7 +253,7 @@ TEST_F(TestDelegate, SetInvalidHandleToTensor) {
 }
 
 TEST_F(TestDelegate, TestResizeInputWithNonDynamicDelegate) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -288,8 +303,8 @@ TEST_F(TestDelegate, TestResizeInputWithNonDynamicDelegate) {
 // If a delegate sets kTfLiteDelegateFlagsRequirePropagatedShapes but not
 // kTfLiteDelegateFlagsAllowDynamicTensors, the former is redundant.
 TEST_F(TestDelegate, TestRequirePropagatedShapes_NonDynamicDelegate) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0, 1, 2}, kTfLiteDelegateFlagsRequirePropagatedShapes));
+  delegate_ = std::make_unique<SimpleDelegate>(
+      std::vector<int>{0, 1, 2}, kTfLiteDelegateFlagsRequirePropagatedShapes);
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -363,7 +378,7 @@ TEST_F(TestDelegate, TestRequirePropagatedShapes_DynamicDelegateWithoutFlag) {
 }
 
 TEST_F(TestDelegate, TestCopyFromBufferInvoke) {
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   TfLiteDelegate* delegate = delegate_->get_tf_lite_delegate();
   interpreter_->ModifyGraphWithDelegate(delegate);
 
@@ -391,7 +406,7 @@ TEST_F(TestDelegate, TestCopyFromBufferInvoke) {
 
 TEST_F(TestDelegate, TestCopyFromBuffer) {
   interpreter_->Invoke();
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   TfLiteDelegate* delegate = delegate_->get_tf_lite_delegate();
   interpreter_->ModifyGraphWithDelegate(delegate);
 
@@ -448,7 +463,8 @@ struct OpaqueTestDelegate {
 
     TfLiteRegistration registration{};
     registration.registration_external = TfLiteOperatorCreate(
-        kTfLiteBuiltinDelegate, "OpaqueTestDelegate delegate kernel", 1);
+        kTfLiteBuiltinDelegate, "OpaqueTestDelegate delegate kernel", 1,
+        /*user_data=*/nullptr);
 
     registration.prepare = [](TfLiteContext* context,
                               TfLiteNode* node) -> TfLiteStatus {
@@ -682,7 +698,7 @@ TEST_F(TestDelegate, DelegateCustomOpResolution) {
 TEST_F(TestDelegate, AllSubgraphsAreDelegatedByDefault) {
   AddSubgraphs(1);
   SetUpSubgraph(interpreter_->subgraph(1));
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -701,7 +717,7 @@ TEST_F(TestDelegate, ValidationSubgraphsAreNotDelegated) {
   AddSubgraphs(1);
   SetUpSubgraph(interpreter_->subgraph(1));
   interpreter_->subgraph(1)->SetName("VALIDATION:foo");
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0, 1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1, 2});
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -721,7 +737,7 @@ TEST_P(TestTwoDelegates, SecondDelegationPrepareFailure) {
   // Second delegate supports node 0, but fails during the delegate-node's
   // Prepare.
   delegate2_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0}, delegate_flag_pair.second, true /**fail_node_prepare**/));
+      {0}, delegate_flag_pair.second, SimpleDelegate::Options::kFailOnPrepare));
 
   // Initially, execution plan has 3 nodes.
   ASSERT_EQ(interpreter_->execution_plan().size(), 3);
@@ -765,11 +781,11 @@ TEST_P(TestTwoDelegates, SecondDelegationPrepareFailure) {
 
 TEST_P(TestTwoDelegates, SecondDelegationInvokeFailure) {
   auto delegate_flag_pair = GetParam();
-  delegate_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({1, 2}, delegate_flag_pair.first));
-  delegate2_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0}, delegate_flag_pair.second, false /**fail_node_prepare**/,
-      0 /**min_ops_per_subset**/, true /**fail_node_invoke**/));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{1, 2},
+                                               delegate_flag_pair.first);
+  delegate2_ = std::make_unique<SimpleDelegate>(
+      std::vector<int>{0}, delegate_flag_pair.second,
+      SimpleDelegate::Options::kFailOnInvoke);
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -810,8 +826,8 @@ TEST_P(TestTwoDelegates, SecondDelegationInvokeFailure) {
 TEST_P(TestTwoDelegates, NodeIndicesCorrectlyHandledAfterDelegation) {
   auto delegate_flag_pair = GetParam();
   // First delegate supports nodes 0, 1.
-  delegate_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({0, 1}, delegate_flag_pair.first));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0, 1},
+                                               delegate_flag_pair.first);
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -821,8 +837,8 @@ TEST_P(TestTwoDelegates, NodeIndicesCorrectlyHandledAfterDelegation) {
   // The execution plan has 2 nodes, so this verifies that the partitioning
   // algorithm correctly refers to (original) node indices instead of execution
   // plan indices.
-  delegate2_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({2}, delegate_flag_pair.second));
+  delegate2_ = std::make_unique<SimpleDelegate>(std::vector<int>{2},
+                                                delegate_flag_pair.second);
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate2_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -832,11 +848,11 @@ TEST_P(TestTwoDelegates, NodeIndicesCorrectlyHandledAfterDelegation) {
 TEST_P(TestTwoDelegates, TestResizeInputTensors) {
   auto delegate_flag_pair = GetParam();
   // First delegate only supports node 0.
-  delegate_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({0}, delegate_flag_pair.first));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0},
+                                               delegate_flag_pair.first);
   // Second delegate supports nodes 1 & 2.
-  delegate2_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({1, 2}, delegate_flag_pair.second));
+  delegate2_ = std::make_unique<SimpleDelegate>(std::vector<int>{1, 2},
+                                                delegate_flag_pair.second);
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -890,9 +906,10 @@ TEST_P(TestTwoDelegates, TestDelegationWithPartitionPreview) {
   // Ops 0 and 2 are delegated but end up in the same partition (based on
   // dependency analysis). However, since min_ops_per_subset = 3, no delegation
   // takes place.
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0, 2}, delegate_flag_pair.first, false /**fail_node_prepare**/,
-      3 /**min_ops_per_subset**/));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>({0, 2}),
+                                               delegate_flag_pair.first,
+                                               SimpleDelegate::Options::kNone,
+                                               /*min_ops_per_subset=*/3);
   interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate());
 
   // Original execution plan remains.
@@ -902,9 +919,10 @@ TEST_P(TestTwoDelegates, TestDelegationWithPartitionPreview) {
   ASSERT_EQ(interpreter_->execution_plan()[2], 2);
 
   // Same ops supported, but min_ops_per_subset = 2.
-  delegate2_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate(
-      {0, 2}, delegate_flag_pair.second, false /**fail_node_prepare**/,
-      2 /**min_ops_per_subset**/));
+  delegate2_ = std::make_unique<SimpleDelegate>(std::vector<int>({0, 2}),
+                                                delegate_flag_pair.second,
+                                                SimpleDelegate::Options::kNone,
+                                                /*min_ops_per_subset=*/2);
   interpreter_->ModifyGraphWithDelegate(delegate2_->get_tf_lite_delegate());
 
   ASSERT_EQ(interpreter_->execution_plan().size(), 2);
@@ -919,8 +937,8 @@ TEST_P(TestTwoDelegates, TestRequirePropagatedShapes) {
   // We do not use kTfLiteDelegateFlagsNone in this test, since shape
   // propagation always requires the delegate to support dynamic tensors. This
   // delegate does not require automatic propagation.
-  delegate_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({0}, kTfLiteDelegateFlagsAllowDynamicTensors));
+  delegate_ = std::make_unique<SimpleDelegate>(
+      std::vector<int>{0}, kTfLiteDelegateFlagsAllowDynamicTensors);
   // Second delegate supports nodes 1 & 2, and requires automatic shape
   // propagation.
   int delegate_flags = kTfLiteDelegateFlagsAllowDynamicTensors |
@@ -957,11 +975,11 @@ TEST_P(TestTwoDelegates, TestRequirePropagatedShapes) {
 TEST_P(TestTwoDelegates, ReleaseNonPersistentMemoryWithDelegates) {
   auto delegate_flag_pair = GetParam();
   // First delegate only supports node 0.
-  delegate_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({0}, delegate_flag_pair.first));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0},
+                                               delegate_flag_pair.first);
   // Second delegate supports nodes 1 & 2, and makes the graph immutable.
-  delegate2_ = std::unique_ptr<SimpleDelegate>(
-      new SimpleDelegate({1, 2}, delegate_flag_pair.second));
+  delegate2_ = std::make_unique<SimpleDelegate>(std::vector<int>{1, 2},
+                                                delegate_flag_pair.second);
 
   // No-op.
   ASSERT_EQ(interpreter_->ReleaseNonPersistentMemory(), kTfLiteOk);
@@ -999,7 +1017,7 @@ TEST_P(TestTwoDelegates, ReleaseNonPersistentMemoryWithDelegates) {
 TEST_F(TestTwoDelegates, DynamicTensorBeforeStaticDelegate) {
   // First delegate only supports node {1, 2}.
   // This makes the graph immutable.
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({1, 2}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{1, 2});
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -1019,7 +1037,7 @@ TEST_F(TestTwoDelegates, DynamicTensorBeforeStaticDelegate) {
 TEST_F(TestTwoDelegates, DynamicTensorAfterStaticDelegate) {
   // First delegate only supports node 0.
   // This makes the graph immutable.
-  delegate_ = std::unique_ptr<SimpleDelegate>(new SimpleDelegate({0}));
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>{0});
   ASSERT_EQ(
       interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
       kTfLiteOk);
@@ -1064,6 +1082,7 @@ class TestDelegateWithDynamicTensors : public ::testing::Test {
     TfLiteRegistration reg = DynamicCopyOpRegistration();
     interpreter_->AddNodeWithParameters({0}, {1, 2}, nullptr, 0, nullptr, &reg);
 
+    delegate_ = TfLiteDelegateCreate();
     delegate_.Prepare = [](TfLiteContext* context,
                            TfLiteDelegate* delegate) -> TfLiteStatus {
       // In this test, the delegate replaces all the nodes if this function is
@@ -1131,11 +1150,11 @@ class TestDelegateWithDynamicTensors : public ::testing::Test {
 };
 
 TfLiteOperator* CreateTfLiteOperator() {
-  auto registration =
-      TfLiteOperatorCreate(kTfLiteBuiltinDelegate, "OpaqueDelegateKernel", 1);
-  TfLiteOperatorSetPrepare(
+  auto* registration = TfLiteOperatorCreate(
+      kTfLiteBuiltinDelegate, "OpaqueDelegateKernel", 1, /*user_data=*/nullptr);
+  TfLiteOperatorSetPrepareWithData(
       registration,
-      [](TfLiteOpaqueContext* context,
+      [](void* user_data, TfLiteOpaqueContext* context,
          TfLiteOpaqueNode* opaque_node) -> TfLiteStatus {
         // If tensors are resized, the runtime should propagate shapes
         // automatically if 'kTfLiteDelegateFlagsRequirePropagatedShapes' flag
@@ -1480,6 +1499,17 @@ TEST_F(TestDelegateWithControlEdges, CompatibleControlEdges2) {
   EXPECT_EQ(interpreter_->execution_plan().size(), 3);  // [ {0, 2}, 1, 3]
 }
 
+TEST_F(TestDelegateWithControlEdges,
+       MismatchedControlEdgeMetadataSubgraphCountIgnored) {
+  SetMetadata({{kModelControlDependenciesMetadataKey,
+                SerializeModelControlDependencies({})}});
+  delegate_ = std::make_unique<SimpleDelegate>(std::vector<int>({0, 2}));
+  EXPECT_EQ(
+      interpreter_->ModifyGraphWithDelegate(delegate_->get_tf_lite_delegate()),
+      kTfLiteOk);
+  EXPECT_EQ(interpreter_->execution_plan().size(), 3);  // [ {0, 2}, 1, 3]
+}
+
 // Tests for FP16 graphs
 // =====================
 
@@ -1517,6 +1547,12 @@ TEST_P(TestFP16Delegation, DelegatePrepareFails) {
   // Delegation failed, but runtime should go back to correct previous state.
   ASSERT_EQ(interpreter_->execution_plan().size(), 8);
   VerifyInvoke();
+}
+
+TEST(ExternalDelegateTest, CreateFailureWithInvalidLibrary) {
+  TfLiteExternalDelegateOptions options =
+      TfLiteExternalDelegateOptionsDefault("invalid_path.so");
+  EXPECT_EQ(TfLiteExternalDelegateCreate(&options), nullptr);
 }
 
 INSTANTIATE_TEST_SUITE_P(TestFP16Delegation, TestFP16Delegation,

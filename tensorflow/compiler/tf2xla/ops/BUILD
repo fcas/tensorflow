@@ -1,4 +1,19 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_custom_op_library",
@@ -24,9 +39,9 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla/service:shape_inference",
+        "@xla//xla:shape_util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/service:shape_inference",
     ],
     alwayslink = 1,
 )
@@ -40,7 +55,7 @@ tf_gen_op_wrapper_py(
         "//tensorflow/python/util:deprecation",
         "//tensorflow/python/util:tf_export",
     ],
-    py_lib_rule = py_strict_library,
+    py_lib_rule = py_library,
     deps = [
         ":xla_ops",
     ],
@@ -53,8 +68,8 @@ tf_custom_op_library(
     ],
     deps = [
         "@com_google_absl//absl/algorithm:container",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla/service:shape_inference",
+        "@xla//xla:shape_util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/service:shape_inference",
     ],
 )

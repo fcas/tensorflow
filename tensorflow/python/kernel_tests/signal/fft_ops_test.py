@@ -498,6 +498,31 @@ class RFFTOpsTest(BaseFFTOpsTest, parameterized.TestCase):
           feed_dict=feed_dict,
       )
 
+  def testIRFFTZeroOrNegativeLengthRaisesError(self):
+    x = array_ops.ones([1], dtype=dtypes.complex64)
+    with self.assertRaisesRegex(ValueError, r"fft_length\[-1\] must be > 0"):
+      fft_ops.irfft(x)
+
+    x = array_ops.ones([5], dtype=dtypes.complex64)
+    with self.assertRaisesRegex(ValueError, r"fft_length\[-1\] must be > 0"):
+      fft_ops.irfft(x, fft_length=[0])
+    with self.assertRaisesRegex(ValueError, r"fft_length\[-1\] must be > 0"):
+      fft_ops.irfft(x, fft_length=[-5])
+
+  def testIRFFTNDZeroOrNegativeLengthRaisesError(self):
+    x = array_ops.ones([5, 5], dtype=dtypes.complex64)
+    with self.assertRaisesRegex(ValueError, r"fft_length\[-1\] must be > 0"):
+      fft_ops.irfftnd(x, fft_length=[5, 0])
+    with self.assertRaisesRegex(ValueError, r"fft_length\[-1\] must be > 0"):
+      fft_ops.irfftnd(x, fft_length=[5, -3])
+
+  def testIRFFTWrongLengthRaisesBeforeNegativeLastLength(self):
+    x = array_ops.ones([5, 5], dtype=dtypes.complex64)
+    with self.assertRaisesRegex(ValueError, "Dimension must be 1 but is 2"):
+      fft_ops.irfft(x, fft_length=[-5, -5])
+    with self.assertRaisesRegex(ValueError, "Dimension must be 2 but is 1"):
+      fft_ops.irfftnd(x, fft_length=[-5])
+
   def _np_fftn(self, x, fft_length=None, axes=None, norm=None):
     return np.fft.rfftn(x, s=fft_length, axes=axes, norm=norm)
 
@@ -627,7 +652,7 @@ class RFFTOpsTest(BaseFFTOpsTest, parameterized.TestCase):
     else:
       fft_length = (size * 2, size, size * 2)
       axes = (-3, -2, -1)
-    self._CompareBackward_fftn(
+    self._CompareForward_fftn(
         r2c.astype(np_rtype),
         fft_length=fft_length,
         axes=axes,
@@ -639,7 +664,7 @@ class RFFTOpsTest(BaseFFTOpsTest, parameterized.TestCase):
     c2r = self._generate_valid_irfft_input(
         c2r, np_ctype, r2c, np_rtype, 2, fft_length
     )
-    self._CompareForward_fftn(c2r, fft_length, axes, rtol=tol)
+    self._CompareBackward_fftn(c2r, fft_length, axes, rtol=tol)
 
   @parameterized.parameters(
       itertools.product(range(1, 4), (5, 6), (np.float32, np.float64))

@@ -1,3 +1,17 @@
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: tfrt_translate -mlir-to-bef %s | tf_bef_executor | FileCheck %s
 
 // CHECK: --- Running 'matmul_delegate_test'
@@ -14,9 +28,9 @@ func.func @matmul_delegate_test() {
 
   // Convert dht to tf tensor
   %tft_a, %c3 = "tfd.move_dht_to_tft"(%dht_a, %c1)
-      : (!t.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
+      : (!tfrt_tensor.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
   %tft_b, %c4 = "tfd.move_dht_to_tft"(%dht_b, %c2)
-      : (!t.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
+      : (!tfrt_tensor.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
 
   // Print legacy TF tensors
   // CHECK: shape = [2, 2], values = [1, 1, 1, 1]
@@ -44,9 +58,9 @@ func.func @matmul_delegate_test() {
 
   // Convert tf tensor back to dht
   %dht_c, %c9 = "tfd.convert_tft_to_dht"(%tft_x, %cc2)
-      : (!tfd.tf_tensor, !tfrt.chain) -> (!t.tensor, !tfrt.chain)
+      : (!tfd.tf_tensor, !tfrt.chain) -> (!tfrt_tensor.tensor, !tfrt.chain)
   %dht_d, %c10 = "tfd.convert_tft_to_dht"(%tft_y, %cc3)
-      : (!tfd.tf_tensor, !tfrt.chain) -> (!t.tensor, !tfrt.chain)
+      : (!tfd.tf_tensor, !tfrt.chain) -> (!tfrt_tensor.tensor, !tfrt.chain)
 
   // Print the result dht
   // CHECK: shape = [2, 2], values = [4, 4, 4, 4]
@@ -67,7 +81,7 @@ func.func @bad_op_name_test() {
 
   // Convert dht to tf tensor
   %tft_a, %c2 = "tfd.move_dht_to_tft"(%dht_a, %c1)
-      : (!t.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
+      : (!tfrt_tensor.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
 
   // Create TF eager context
   %c3 = "tfd.init_eager_context"(%c0): (!tfrt.chain) -> !tfrt.chain
@@ -92,9 +106,9 @@ func.func @addn_delegate_test() {
 
   // Convert dht to tf tensor
   %tft_a, %c3 = "tfd.move_dht_to_tft"(%dht_a, %c1)
-      : (!t.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
+      : (!tfrt_tensor.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
   %tft_b, %c4 = "tfd.move_dht_to_tft"(%dht_b, %c2)
-      : (!t.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
+      : (!tfrt_tensor.tensor, !tfrt.chain) -> (!tfd.tf_tensor, !tfrt.chain)
 
   // Print legacy TF tensors
   // CHECK: shape = [], values = [1]

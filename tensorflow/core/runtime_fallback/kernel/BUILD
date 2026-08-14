@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Fallback from TFRT to TF kernels and related utilities.
 load(
     "//tensorflow:tensorflow.bzl",
@@ -71,6 +86,7 @@ cc_library(
     deps = [
         "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core/runtime_fallback/util:attr_util",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@tf_runtime//:core_runtime",
@@ -101,6 +117,7 @@ cc_library(
         "//tensorflow/core/common_runtime:copy_tensor",
         "//tensorflow/core/runtime_fallback/runtime:kernel_utils",
         "//tensorflow/core/runtime_fallback/util:attr_util",
+        "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
         "@tf_runtime//:core_runtime",
         "@tf_runtime//:hostcontext",
@@ -127,6 +144,7 @@ tf_cc_test(
     deps = [
         ":attr_util",
         "//tensorflow/c:tf_tensor",
+        "@com_google_absl//absl/status",
         "@tf_runtime//:core_runtime",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
@@ -218,6 +236,8 @@ cc_library(
     deps = [
         ":kernel_fallback_tensor",
         ":tensor_util",
+        "//tensorflow/core:portable_gif_internal",
+        "//tensorflow/core/framework:types_proto_cc",
         "//tensorflow/core/runtime_fallback/util:tensor_util",
         "//tensorflow/core/runtime_fallback/util:type_util",
         "@tf_runtime//:dtype",
@@ -332,6 +352,7 @@ cc_library(
         "//tensorflow/core/tfrt/utils:fallback_tensor",
         "//tensorflow/core/tfrt/utils:tensor_util",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@llvm-project//llvm:Support",
         "@tf_runtime//:core_runtime",
         "@tf_runtime//:hostcontext",
@@ -376,11 +397,11 @@ cc_library(
         "//tensorflow/core/tfrt/utils:tensor_util",
         "@com_google_absl//absl/base",
         "@llvm-project//llvm:Support",
-        "@local_tsl//tsl/platform:refcount",
         "@tf_runtime//:core_runtime",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
         "@tf_runtime//:tensor_alwayslink",
+        "@tsl//tsl/platform:refcount",
     ] + select({
         "//tensorflow:android": [
             "//tensorflow/core:portable_tensorflow_lib_lite",  # TODO(annarev): exclude runtime srcs
@@ -415,6 +436,7 @@ cc_library(
         "//tensorflow/core/tfrt/graph_executor:config",
         "//tensorflow/core/tfrt/graph_executor:config_proto_cc",
         "//tensorflow/core/tfrt/utils:fallback_tensor",
+        "@com_google_absl//absl/time",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
         "@tf_runtime//:tensor_alwayslink",

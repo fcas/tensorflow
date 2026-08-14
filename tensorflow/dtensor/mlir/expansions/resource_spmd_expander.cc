@@ -16,18 +16,24 @@ limitations under the License.
 #include "tensorflow/dtensor/mlir/expansions/resource_spmd_expander.h"
 
 #include <algorithm>
+#include <cassert>
 #include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -36,10 +42,12 @@ limitations under the License.
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/dtensor/cc/constants.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
+#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/mlir/value_utils.h"
 
 namespace tensorflow {
@@ -97,10 +105,9 @@ StatusOr<mlir::Operation*> ExpandSummaryWriterOp(mlir::Operation* op) {
   return InferSPMDExpandedLocalShape(op);
 }
 
-Status ValidateAndAssignResourceInputLayout(mlir::tf_device::ClusterOp op,
-                                            const std::string& layout_string,
-                                            const int resource_arg_index,
-                                            mlir::OpBuilder* builder) {
+absl::Status ValidateAndAssignResourceInputLayout(
+    mlir::tf_device::ClusterOp op, const std::string& layout_string,
+    const int resource_arg_index, mlir::OpBuilder* builder) {
   const auto add_layout_as_attributes =
       [&](std::vector<mlir::StringRef> new_resource_layouts,
           std::vector<int> new_resource_indices, int resource_arg_index,
@@ -143,7 +150,7 @@ Status ValidateAndAssignResourceInputLayout(mlir::tf_device::ClusterOp op,
 
       // TODO(hongjunchoi): Implement relayout logic for resource ops.
       if (layout_string != previous_layout.str())
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "Trying to assign a variable to a resource with a different "
             "layout.");
     } else {
@@ -181,9 +188,9 @@ StatusOr<mlir::Operation*> ResourceSPMDExpander::ExpandOp(mlir::Operation* op) {
     TF_ASSIGN_OR_RETURN(auto input_layout,
                         ExtractLayoutFromOperand(op->getOperand(0)));
     if (!output_layout)
-      TF_RETURN_WITH_CONTEXT(errors::Internal("output layout is missing"));
+      TF_RETURN_WITH_CONTEXT(absl::InternalError("output layout is missing"));
     if (!input_layout)
-      TF_RETURN_WITH_CONTEXT(errors::Internal("input layout is missing"));
+      TF_RETURN_WITH_CONTEXT(absl::InternalError("input layout is missing"));
 
     InferSPMDExpandedLocalShape(op);
     llvm::SmallPtrSet<mlir::Operation*, 4> newly_created_ops;
@@ -197,7 +204,7 @@ StatusOr<mlir::Operation*> ResourceSPMDExpander::ExpandOp(mlir::Operation* op) {
 
   if (!llvm::isa<mlir::TF::AssignVariableOp, mlir::TF::AssignAddVariableOp,
                  mlir::TF::AssignSubVariableOp>(op))
-    TF_RETURN_WITH_CONTEXT(errors::Internal("unsupported resource op"));
+    TF_RETURN_WITH_CONTEXT(absl::InternalError("unsupported resource op"));
 
   TF_ASSIGN_OR_RETURN(std::optional<Layout> output_layout,
                       ExtractSingleLayoutFromOp(op));
@@ -218,9 +225,9 @@ StatusOr<mlir::Operation*> ResourceSPMDExpander::ExpandOp(mlir::Operation* op) {
   auto input_resource_value = op->getOpOperand(0).get();
   if (input_resource_value.getDefiningOp()) {
     if (!resource_layout)
-      TF_RETURN_WITH_CONTEXT(errors::Internal("missing layout on resource"));
+      TF_RETURN_WITH_CONTEXT(absl::InternalError("missing layout on resource"));
     if (!value_layout)
-      TF_RETURN_WITH_CONTEXT(errors::Internal("missing layout on value"));
+      TF_RETURN_WITH_CONTEXT(absl::InternalError("missing layout on value"));
     if (resource_layout != value_layout) {
       TF_ASSIGN_OR_RETURN(auto new_value,
                           EmitRelayout(op->getOperand(1), value_layout.value(),
@@ -229,14 +236,14 @@ StatusOr<mlir::Operation*> ResourceSPMDExpander::ExpandOp(mlir::Operation* op) {
     }
   } else {
     if ((!resource_layout || resource_layout->IsEmpty()) && !value_layout)
-      TF_RETURN_WITH_CONTEXT(errors::Internal(
+      TF_RETURN_WITH_CONTEXT(absl::InternalError(
           "at least one of resource or value layout must be set"));
     // This error should not happen: if resource_layout is set, then we expect
     // a DTensorLayout op between the resource tensor and this op, so we should
     // actaully be in the if case rather than the else case.
     if (resource_layout && !resource_layout->IsEmpty() && value_layout &&
         resource_layout != value_layout)
-      TF_RETURN_WITH_CONTEXT(errors::Internal(
+      TF_RETURN_WITH_CONTEXT(absl::InternalError(
           "if both resource and value layout are set they must be equal"));
 
     auto block_arg = mlir::dyn_cast<mlir::BlockArgument>(input_resource_value);
@@ -245,7 +252,7 @@ StatusOr<mlir::Operation*> ResourceSPMDExpander::ExpandOp(mlir::Operation* op) {
 
     if (!enclosing_device_cluster)
       TF_RETURN_WITH_CONTEXT(
-          errors::InvalidArgument("op must be enclosed by a cluster"));
+          absl::InvalidArgumentError("op must be enclosed by a cluster"));
 
     auto block_arg_index = block_arg.getArgNumber();
 
@@ -296,7 +303,7 @@ ResourceSPMDExpander::ComputeLayoutForward(
     return llvm::DenseMap<int, Layout>();
   }
   // Return an error if not any of the ops above.
-  return errors::InvalidArgument(
+  return absl::InvalidArgumentError(
       llvm::formatv(
           "Found unexpected resource op {0} during layout propagation.",
           OpName(op))
@@ -336,7 +343,7 @@ ResourceSPMDExpander::ComputeLayoutBackward(
   }
 
   // Return an error if not any of the ops above.
-  return errors::InvalidArgument(
+  return absl::InvalidArgumentError(
       llvm::formatv(
           "Found unexpected resource op {0} during layout propagation.",
           OpName(op))

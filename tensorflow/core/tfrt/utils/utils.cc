@@ -51,9 +51,9 @@ DType ConvertTfDTypeToTfrtDType(tensorflow::DataType dtype) {
   }
 }
 
-tensorflow::Status RunRuntimeInitializer(const tfrt::ExecutionContext& exec_ctx,
-                                         tfrt::BEFFile* bef_file,
-                                         absl::string_view fallback_init_func) {
+absl::Status RunRuntimeInitializer(const tfrt::ExecutionContext& exec_ctx,
+                                   tfrt::BEFFile* bef_file,
+                                   absl::string_view fallback_init_func) {
   auto* host = exec_ctx.host();
 
   auto* func = bef_file->GetFunction(
@@ -79,7 +79,7 @@ tensorflow::Status RunRuntimeInitializer(const tfrt::ExecutionContext& exec_ctx,
   } else {
     DCHECK_EQ(func->result_types().size(), 0);
     if (auto err = ExecuteSyncBEFFunction(*func, exec_ctx, {}, {})) {
-      return tensorflow::errors::Internal(
+      return absl::InternalError(
           tfrt::StrCat("Failed to run function: ", func->name(), err));
     }
   }

@@ -14,7 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/experimental/acceleration/compatibility/gpu_compatibility.h"
 
-#include <cctype>
+#include <cstdint>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <string>
@@ -59,7 +60,7 @@ std::unique_ptr<GPUCompatibilityList> GPUCompatibilityList::Create() {
 }
 
 std::unique_ptr<GPUCompatibilityList> GPUCompatibilityList::Create(
-    const unsigned char* compatibility_list_flatbuffer, int length) {
+    const unsigned char* compatibility_list_flatbuffer, size_t length) {
   if (!compatibility_list_flatbuffer ||
       !IsValidFlatbuffer(compatibility_list_flatbuffer, length)) {
     return nullptr;
@@ -126,7 +127,7 @@ TfLiteGpuDelegateOptionsV2 GPUCompatibilityList::GetBestOptionsFor(
 
 // static
 bool GPUCompatibilityList::IsValidFlatbuffer(const unsigned char* data,
-                                             int len) {
+                                             size_t len) {
   // Verify opensource db.
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(data), len);
   return tflite::acceleration::VerifyDeviceDatabaseBuffer(verifier);
@@ -142,10 +143,10 @@ std::map<std::string, std::string> GPUCompatibilityList::InfosToMap(
   variables[kManufacturer] = android_info.manufacturer;
   const auto& gl_info = gpu_info.opengl_info;
   variables[kGPUModel] = gl_info.renderer_name;
+
   char buffer[128];
-  int len = snprintf(buffer, 128 - 1, "%d.%d", gl_info.major_version,
-                     gl_info.minor_version);
-  buffer[len] = '\0';
+  snprintf(buffer, 128 - 1, "%d.%d", gl_info.major_version,
+           gl_info.minor_version);
   variables[kOpenGLESVersion] = std::string(buffer);
   return variables;
 }

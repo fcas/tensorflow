@@ -66,17 +66,17 @@ def TF__TfrtGetResourceOp : TF_Op<"_TfrtGetResource",
 def TF_IfrtRestoreVariableOp : TF_Op<"IfrtRestoreVariableOp", []> {
   let summary = "Restore variable tensors";
   let description = [{
-    This Op is similar to a combination of RestoreV2 and AssignVariable Op, but
-    this Op's execution is asynchronous.
+    This op restores tensors from a checkpoint asynchronously, similar to RestoreV2.
+    It fuses variable assignment: tensors that are consumed by AssignVariableOp
+    are handled internally via the $var_handles operands and do not appear in
+    the results.
+
+    Tensors that are consumed by other operations (e.g. tf.LookupTableImportV2) or
+    are unused will be returned as results in $tensors. Consequently, the number of
+    results is dynamic, containing only those tensors not assigned to variables.
 
     This Op is specific to TFRT + IFRT runtime and is not a stable interface for
     serialization.
-
-    This Op will restore the tensors asynchronously. There are N restored tensors
-    corresponding to N $var_handle. Each restored tensor is given a unique name,
-    typically a concatenation of `container_name` and `shared_name` from a `var_handle`.
-    The runtime shall handle the possibility that the tensors are not ready when requested
-    because the tensors are loaded asynchronously.
   }];
 
   let arguments = (ins
@@ -87,9 +87,17 @@ Empty strings indicate that they are non-partitioned tensors.}]>:$shape_and_slic
     // VarHandles for restored tensors.
     Variadic<TF_Tensor>:$var_handles,
     // Data types for restored tensor.
-    TypeArrayAttr: $restored_dtypes
+    TypeArrayAttr: $restored_dtypes,
+    // whether trucate is used when casting from the restored_dytpe to the type specified in VarHandle
+    DenseBoolArrayAttr: $truncate_in_cast,
+    // The names of the returned tensors. The order of names corresponds to the
+    // order of the returned tensors.
+    StrArrayAttr: $returned_tensor_names
   );
 
+  let results = (outs
+    Res<Variadic<TF_Tensor>, [{The restored tensors that are not consumed by tf.AssignVariableOp.}]>:$tensors
+  );
 }
 
 
@@ -100,19 +108,16 @@ def TF_IfrtLoadVariableOp : TF_Op<"IfrtLoadVariable", [Pure]> {
     This op loads a restored variable tensor as a tensor future. It is a
     replacement of `tf.ReadVariableOp`.
 
-    This op returns a scalar string tensor containing the restored variable name, which can be
+    This op returns a scalar string tensor containing the restored variable name, which 
+    is composed from `container_name` and `shared_name` from a `var_handle` and can be
     used as a key within the runtime, as well as a future for the tensor.
 
     The `tf.IfrtCall` kernel uses the output $array_key.
     Other ops executed by TFRT may make use of $tensor_future.
   }];
 
-  // TODO(b/339423851) Redefine the IfrtLoadVariableOp as it doesn't require the
-  // sharding info in the attribute if multihost do not need this info. 
   let arguments = (ins
     Arg<TF_Tensor, [{The variable tensor to be loaded}], []>:$variable,
-    DefaultValuedStrAttr<StrAttr, "">:$device_sharding_config_proto_text,
-    DefaultValuedAttr<StrAttr, "">:$name,
     DefaultValuedAttr<BoolAttr, "false">:$used_by_host
   );
 
@@ -126,7 +131,7 @@ def TF_IfrtLoadVariableOp : TF_Op<"IfrtLoadVariable", [Pure]> {
 }
 
 
-def TF_IfrtCallOp : TF_Op<"IfrtCall", []> {
+def TF_IfrtCallOp : TF_Op<"IfrtCall", [AttrSizedOperandSegments]> {
   let summary = "Invokes a program via IFRT on a device";
 
   let description = [{
@@ -144,6 +149,7 @@ def TF_IfrtCallOp : TF_Op<"IfrtCall", []> {
 
   let arguments = (ins
     Variadic<TF_Tensor> : $args,
+    Variadic<TF_Tensor> : $static_shapes,
     I64Attr : $program_id,
     I32ArrayAttr : $variable_arg_indices
   );
@@ -151,9 +157,33 @@ def TF_IfrtCallOp : TF_Op<"IfrtCall", []> {
   let results = (outs Variadic<TF_Tensor> : $results);
 
   TF_DerivedOperandTypeListAttr Tin = TF_DerivedOperandTypeListAttr<0>;
+  TF_DerivedOperandTypeListAttr Tstatic_shapes = TF_DerivedOperandTypeListAttr<1>;
   TF_DerivedResultTypeListAttr Tout = TF_DerivedResultTypeListAttr<0>;
 
   let hasVerifier = 1;
+}
+
+def TF_AsyncIfrtCallOp : TF_Op<"AsyncIfrtCall", [AttrSizedOperandSegments]> {
+  let summary = "Invokes a program via IFRT on a device asynchronously";
+
+  let description = [{
+    This op calls an IFRT program uniquely identified by the given program id.
+    Similar to `IfrtCallOp`, it performs the same work but invokes the program
+    asynchronously, enabling non-blocking execution within the runtime.
+  }];
+
+  let arguments = (ins
+    Variadic<TF_Tensor> : $args,
+    Variadic<TF_Tensor> : $static_shapes,
+    I64Attr : $program_id,
+    I32ArrayAttr : $variable_arg_indices
+  );
+
+  let results = (outs Variadic<TF_Tensor> : $results);
+
+  TF_DerivedOperandTypeListAttr Tin = TF_DerivedOperandTypeListAttr<0>;
+  TF_DerivedOperandTypeListAttr Tstatic_shapes = TF_DerivedOperandTypeListAttr<1>;
+  TF_DerivedResultTypeListAttr Tout = TF_DerivedResultTypeListAttr<0>;
 }
 
 // TODO(chky): Consider adding this op to tensorflow core ops.
@@ -188,5 +218,20 @@ def TF_PwStreamResultsOp : TF_Op<"PwStreamResults"> {
 
   let hasVerifier = 1;
 }
+
+ def TF_IfrtResourceDeserializeOp : TF_Op<"IfrtResourceDeserialize", []> {
+   let summary = "Deserialize resource vars.";
+   let description = [{
+     This Op is a variant of IfrtResourceDeserialize for use with the
+     TFRT/IFRT runtime. It is not a stable interface.
+   }];
+
+   let arguments = (ins
+     Arg<TF_ResourceTensor, "The variable to change.">:$resource_var,
+     Arg<TF_StrTensor, "The directory to read from.">:$input_dir,
+     DefaultValuedOptionalAttr<BoolAttr, "true">:$require_matching_crc,
+     DefaultValuedOptionalAttr<StrAttr, "\"\"">:$tensor_name
+   );
+ }
 
 #endif // TFRT_OPS

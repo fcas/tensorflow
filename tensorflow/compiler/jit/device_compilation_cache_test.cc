@@ -22,12 +22,18 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "tensorflow/compiler/jit/xla_compile_util.h"
+#include "tensorflow/compiler/tf2xla/xla_compiler.h"
+#include "xla/hlo/builder/xla_computation.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/test.h"
-#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tensorflow {
 namespace {
+
 struct FakeExecutable {
   std::string data;
   explicit FakeExecutable(const std::string& s) : data(s) {}
@@ -156,8 +162,9 @@ TEST(DeviceCompilationCacheTest, StoreOptionalArgs) {
   EXPECT_TRUE(cache_value->compilation_result == nullptr);
   EXPECT_TRUE(cache_value->executable == nullptr);
 
-  cache->Store(key, std::nullopt, errors::InvalidArgument("Couldn't compile."),
-               std::nullopt, std::nullopt);
+  cache->Store(key, std::nullopt,
+               absl::InvalidArgumentError("Couldn't compile."), std::nullopt,
+               std::nullopt);
   cache_value = cache->Lookup(key);
 
   EXPECT_EQ(cache_value->compile_state, DeviceCompileState::kCompiled);
@@ -196,7 +203,7 @@ TEST(DeviceCompilationCacheTest, StoreMultipleEntries) {
   auto executable1 = std::make_unique<FakeExecutable>("foo_exe");
   auto executable2 = std::make_unique<FakeExecutable>("bar_exe");
   cache->Store(key1, DeviceCompileState::kCompiled,
-               errors::InvalidArgument("Invalid argument."),
+               absl::InvalidArgumentError("Invalid argument."),
                std::move(compilation_result1), std::move(executable1));
   cache->Store(key2, DeviceCompileState::kCompiling, absl::OkStatus(),
                std::move(compilation_result2), std::move(executable2));
@@ -214,6 +221,56 @@ TEST(DeviceCompilationCacheTest, StoreMultipleEntries) {
   EXPECT_TRUE(cache_value_2->compilation_result != nullptr);
   EXPECT_TRUE(cache_value_2->executable != nullptr);
   EXPECT_EQ(cache_value_2->executable->data, "bar_exe");
+}
+
+TEST(DeviceCompilationCacheTest, Finalize) {
+  auto cache = std::make_unique<Cache>();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto key, BuildSampleSignature("foo"));
+  auto computation = std::make_shared<xla::XlaComputation>();
+  auto compilation_result = std::make_unique<XlaCompiler::CompilationResult>();
+  compilation_result->computation = computation;
+
+  cache->Store(key, /*compile_state=*/DeviceCompileState::kCompiled,
+               /*compilation_status=*/absl::OkStatus(),
+               std::move(compilation_result),
+               /*executable=*/std::make_unique<FakeExecutable>("foo_exe"));
+
+  std::optional<Cache::Value> cache_value = cache->Lookup(key);
+  ASSERT_TRUE(cache_value.has_value());
+  ASSERT_TRUE(cache_value->compilation_result != nullptr);
+  EXPECT_EQ(cache_value->compilation_result->computation, computation);
+
+  cache->Finalize();
+
+  cache_value = cache->Lookup(key);
+  ASSERT_TRUE(cache_value.has_value());
+  ASSERT_TRUE(cache_value->compilation_result != nullptr);
+  EXPECT_TRUE(cache_value->compilation_result->computation == nullptr);
+}
+
+TEST(DeviceCompilationCache, FinalizeWithNullComputation) {
+  auto cache = std::make_unique<Cache>();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto key, BuildSampleSignature("foo"));
+
+  cache->Store(
+      key, /*compile_state=*/DeviceCompileState::kCompiled,
+      /*compilation_status=*/absl::OkStatus(),
+      /*compilation_result=*/std::make_unique<XlaCompiler::CompilationResult>(),
+      /*executable=*/std::make_unique<FakeExecutable>("foo_exe"));
+
+  std::optional<Cache::Value> cache_value = cache->Lookup(key);
+  ASSERT_TRUE(cache_value.has_value());
+  ASSERT_TRUE(cache_value->compilation_result != nullptr);
+  EXPECT_TRUE(cache_value->compilation_result->computation == nullptr);
+
+  cache->Finalize();
+
+  cache_value = cache->Lookup(key);
+  ASSERT_TRUE(cache_value.has_value());
+  ASSERT_TRUE(cache_value->compilation_result != nullptr);
+  EXPECT_TRUE(cache_value->compilation_result->computation == nullptr);
 }
 
 }  // namespace

@@ -34,15 +34,14 @@ namespace function {
 class Attrs {
  public:
   Attrs(const std::initializer_list<  // NOLINT(runtime/explicit)
-        std::pair<string, FunctionDefHelper::AttrValueWrapper>>& attrs) {
+        std::pair<std::string, FunctionDefHelper::AttrValueWrapper>>& attrs) {
     for (const auto& aval : attrs) {
       map_.insert({aval.first, aval.second.proto});
     }
   }
 
-  Attrs(
-      const std::vector<std::pair<string, FunctionDefHelper::AttrValueWrapper>>&
-          attrs) {
+  Attrs(const std::vector<
+        std::pair<std::string, FunctionDefHelper::AttrValueWrapper>>& attrs) {
     for (const auto& aval : attrs) {
       map_.insert({aval.first, aval.second.proto});
     }
@@ -55,11 +54,12 @@ class Attrs {
 };
 
 // Helper to construct a NodeDef.
-NodeDef NDef(
-    StringPiece name, StringPiece op, absl::Span<const string> inputs,
-    absl::Span<const std::pair<string, FunctionDefHelper::AttrValueWrapper>>
-        attrs = {},
-    const string& device = "");
+NodeDef NDef(absl::string_view name, absl::string_view op,
+             absl::Span<const std::string> inputs,
+             absl::Span<const std::pair<std::string,
+                                        FunctionDefHelper::AttrValueWrapper>>
+                 attrs = {},
+             const std::string& device = "");
 
 // Helper to construct a GraphDef proto.
 GraphDef GDef(absl::Span<const NodeDef> nodes,
@@ -74,6 +74,8 @@ FunctionDef XTimesTwo();
 FunctionDef XTimesTwoWithControlInput();
 // Same as `XTimesTwo` above, but with a `dummy` control output node.
 FunctionDef XTimesTwoWithControlOutput();
+// Same as `XTimesTwo` above, but with a dangling `FloorDiv` node.
+FunctionDef XTimesTwoWithDanglingFloorDivNode();
 
 // x: T -> cpu(x * 2) + cpu(x * 3).
 FunctionDef TwoDeviceTimesFive();

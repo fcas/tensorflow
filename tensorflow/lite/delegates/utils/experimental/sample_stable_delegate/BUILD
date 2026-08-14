@@ -18,7 +18,7 @@ load("//tensorflow/lite:build_def.bzl", "tflite_cc_shared_object", "tflite_copts
 load("//tensorflow/lite/core/shims:cc_library_with_tflite.bzl", "cc_library_with_tflite")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -53,6 +53,7 @@ cc_library_with_tflite(
 cc_test(
     name = "sample_stable_delegate_test",
     srcs = ["sample_stable_delegate_test.cc"],
+    copts = tflite_copts(),
     data = [
         "//tensorflow/lite:testdata/add.bin",
         "//tensorflow/lite:testdata/sub.bin",

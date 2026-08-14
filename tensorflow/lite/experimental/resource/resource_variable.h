@@ -15,6 +15,8 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_RESOURCE_RESOURCE_VARIABLE_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_RESOURCE_RESOURCE_VARIABLE_H_
 
+#include <cstddef>
+
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/experimental/resource/resource_base.h"
 
@@ -34,6 +36,10 @@ class ResourceVariable : public ResourceBase {
   ResourceVariable& operator=(const ResourceVariable&) = delete;
 
   ~ResourceVariable() override;
+
+  ResourceType GetResourceType() const override {
+    return ResourceType::kResourceVariable;
+  }
 
   // Assigns data from a tensor. Copies its type, shape and data over.
   TfLiteStatus AssignFrom(const TfLiteTensor* tensor);

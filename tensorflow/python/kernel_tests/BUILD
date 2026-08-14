@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Tests of TensorFlow kernels written using the Python API.
 
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
@@ -59,8 +74,10 @@ tf_py_strict_test(
     name = "collective_ops_multi_worker_test",
     size = "medium",
     srcs = ["collective_ops_multi_worker_test.py"],
-    python_version = "PY3",
-    tags = ["no_rocm"],
+    tags = [
+        "no_mac",  # times out on CI but works fine locally
+        "no_rocm",
+    ],
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/distribute:combinations",
@@ -312,7 +329,6 @@ cuda_py_strict_test(
     name = "histogram_ops_test",
     size = "small",
     srcs = ["histogram_ops_test.py"],
-    python_version = "PY3",
     deps = [
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",

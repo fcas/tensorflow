@@ -28,10 +28,10 @@ limitations under the License.
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/Types.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/tensor_or_memref.h"
 
 namespace mlir {
@@ -99,7 +99,7 @@ struct InterpreterValue {
   BufferView& View();
   const BufferView& View() const;
   // Returns the underlying tensor's buffer. Must be a tensor.
-  std::shared_ptr<Buffer> Buffer() const;
+  std::shared_ptr<Buffer> GetBuffer() const;
 
   bool IsTensor() const;
 

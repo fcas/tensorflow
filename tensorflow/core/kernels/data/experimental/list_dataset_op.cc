@@ -59,13 +59,13 @@ class ListDatasetOp::Dataset : public DatasetBase {
         output_shapes_(output_shapes) {}
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
 
-  Status MakeSplitProviders(std::vector<std::unique_ptr<SplitProvider>>*
-                                split_providers) const override {
+  absl::Status MakeSplitProviders(std::vector<std::unique_ptr<SplitProvider>>*
+                                      split_providers) const override {
     split_providers->push_back(
         std::make_unique<IndexSplitProvider>(num_elements_));
     return absl::OkStatus();
@@ -77,7 +77,7 @@ class ListDatasetOp::Dataset : public DatasetBase {
     return output_shapes_;
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
@@ -85,11 +85,12 @@ class ListDatasetOp::Dataset : public DatasetBase {
     return num_elements_;
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     return absl::OkStatus();
   }
 
-  Status CheckExternalState() const override { return absl::OkStatus(); }
+  absl::Status CheckExternalState() const override { return absl::OkStatus(); }
 
   absl::Status RandomIndexingCompatible() const override {
     return absl::OkStatus();
@@ -112,9 +113,9 @@ class ListDatasetOp::Dataset : public DatasetBase {
   }
 
  protected:
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     std::vector<Node*> tensors;
     tensors.reserve(tensors_.size());
     for (const Tensor& t : tensors_) {
@@ -144,7 +145,7 @@ class ListDatasetOp::Dataset : public DatasetBase {
 
     bool SymbolicCheckpointCompatible() const override { return true; }
 
-    Status Initialize(IteratorContext* ctx) override {
+    absl::Status Initialize(IteratorContext* ctx) override {
       if (ctx->split_providers().empty()) {
         split_provider_ =
             std::make_shared<IndexSplitProvider>(dataset()->num_elements_);
@@ -155,9 +156,9 @@ class ListDatasetOp::Dataset : public DatasetBase {
       return absl::OkStatus();
     }
 
-    Status GetNextInternal(IteratorContext* ctx,
-                           std::vector<Tensor>* out_tensors,
-                           bool* end_of_sequence) override {
+    absl::Status GetNextInternal(IteratorContext* ctx,
+                                 std::vector<Tensor>* out_tensors,
+                                 bool* end_of_sequence) override {
       if (ctx->index_mapper() != nullptr) {
         return global_shuffle_iterator_.GetNext(ctx, out_tensors,
                                                 end_of_sequence);
@@ -184,16 +185,18 @@ class ListDatasetOp::Dataset : public DatasetBase {
       return model::MakeSourceNode(std::move(args));
     }
 
-    Status SaveInternal(SerializationContext* ctx,
-                        IteratorStateWriter* writer) override {
-      return split_provider_->Save(
-          [this](const std::string& key) { return full_name(key); }, writer);
+    absl::Status SaveInternal(SerializationContext* ctx,
+                              IteratorStateWriter* writer) override {
+      TF_RETURN_IF_ERROR(split_provider_->Save(
+          [this](const std::string& key) { return full_name(key); }, writer));
+      TF_RETURN_IF_ERROR(global_shuffle_iterator_.Save(prefix(), ctx, writer));
+      return absl::OkStatus();
     }
 
-    Status RestoreInternal(IteratorContext* ctx,
-                           IteratorStateReader* reader) override {
+    absl::Status RestoreInternal(IteratorContext* ctx,
+                                 IteratorStateReader* reader) override {
       if (ctx->restored_element_count().has_value()) {
-        return global_shuffle_iterator_.Restore(ctx);
+        return global_shuffle_iterator_.Restore(prefix(), ctx, reader);
       }
       return split_provider_->Restore(
           [this](const std::string& key) { return full_name(key); }, reader);
@@ -205,7 +208,7 @@ class ListDatasetOp::Dataset : public DatasetBase {
   };
 
   const std::vector<Tensor> tensors_;
-  int64 num_elements_;
+  int64_t num_elements_;
   size_t num_components_;
   DataTypeVector input_types_;
   DataTypeVector output_types_;

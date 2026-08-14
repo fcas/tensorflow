@@ -1,3 +1,4 @@
+MODULE.bazel.lock
 .DS_Store
 .ipynb_checkpoints
 node_modules
@@ -28,6 +29,8 @@ tensorflow/contrib/cmake/_build/
 /api_init_files_list.txt
 /estimator_api_init_files_list.txt
 *.whl
+dist
+venv/
 
 # Android
 .gradle

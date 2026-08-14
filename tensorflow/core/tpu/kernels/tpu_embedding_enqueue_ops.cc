@@ -23,9 +23,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "tensorflow/c/tf_tensor.h"
 #include "tensorflow/c/tf_tensor_helper.h"
-#include "xla/stream_executor/tpu/c_api_decl.h"
-#include "xla/stream_executor/tpu/status_helper.h"
-#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/tpu/status_helper.h"
+#include "xla/tpu/tpu_api.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/status.h"
@@ -34,7 +33,7 @@ limitations under the License.
 
 namespace tensorflow {
 
-Status ValidateCombiners(absl::Span<const std::string> combiners) {
+absl::Status ValidateCombiners(absl::Span<const std::string> combiners) {
   for (const std::string& combiner : combiners) {
     if (combiner != "sum" && combiner != "mean" && combiner != "sqrtn") {
       return absl::InvalidArgumentError(
@@ -45,8 +44,9 @@ Status ValidateCombiners(absl::Span<const std::string> combiners) {
   return absl::OkStatus();
 }
 
-Status GetValidatedModeOverride(const std::string& mode_override,
-                                tpu::TPUEmbeddingConfiguration::Mode* mode) {
+absl::Status GetValidatedModeOverride(
+    const std::string& mode_override,
+    tpu::TPUEmbeddingConfiguration::Mode* mode) {
   if (mode_override == "train") {
     *mode = tpu::TPUEmbeddingConfiguration::TRAINING;
   } else if (mode_override == "inference") {
@@ -54,8 +54,8 @@ Status GetValidatedModeOverride(const std::string& mode_override,
   } else if (mode_override == "unspecified") {
     *mode = tpu::TPUEmbeddingConfiguration::UNSPECIFIED;
   } else {
-    return errors::InvalidArgument("Unsupported value ", mode_override,
-                                   " specified for mode_override.");
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Unsupported value ", mode_override, " specified for mode_override."));
   }
   return absl::OkStatus();
 }
@@ -142,7 +142,7 @@ class EnqueueTPUEmbeddingArbitraryTensorBatchOp : public OpKernel {
     std::vector<TF_Tensor*> aggregation_weights_tensors(num_input_features);
 
     for (int i = 0; i < num_input_features; ++i) {
-      Status tf_status;
+      absl::Status tf_status;
       sample_indices_or_row_splits_tensors[i] = TF_TensorFromTensorShallow(
           sample_indices_or_row_splits_list[i], &tf_status);
       OP_REQUIRES_OK(ctx, tf_status);

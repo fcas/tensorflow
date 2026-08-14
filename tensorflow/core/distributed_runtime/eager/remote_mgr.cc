@@ -32,7 +32,7 @@ limitations under the License.
 namespace tensorflow {
 
 namespace {
-Status WithErrorSourcePayload(Status error) {
+absl::Status WithErrorSourcePayload(absl::Status error) {
   core::platform::ErrorSourceProto error_source_proto;
   error_source_proto.set_error_source(
       core::platform::ErrorSourceProto::EAGER_REMOTE_MGR);
@@ -62,7 +62,7 @@ void RemoteMgr::AddOperationOutput(tensorflow::TensorHandle* handle,
       RemoteTensorHandleInternal(operation_id, output_num), handle);
 }
 
-Status RemoteMgr::GetTensorHandleImpl(
+absl::Status RemoteMgr::GetTensorHandleImpl(
     const RemoteTensorHandleInternal& remote_handle,
     tensorflow::TensorHandle** handle) {
   auto iter = remote_tensor_handle_map_.find(remote_handle);
@@ -96,28 +96,28 @@ Status RemoteMgr::GetTensorHandleImpl(
   return absl::OkStatus();
 }
 
-Status RemoteMgr::GetTensorHandle(
+absl::Status RemoteMgr::GetTensorHandle(
     const RemoteTensorHandleInternal& remote_handle,
     tensorflow::TensorHandle** handle) {
   tf_shared_lock l(remote_tensor_handle_mu_);
   return GetTensorHandleImpl(remote_handle, handle);
 }
 
-Status RemoteMgr::GetMirroredResourceShape(
+absl::Status RemoteMgr::GetMirroredResourceShape(
     const RemoteTensorHandleInternal& remote_handle,
     std::vector<DtypeAndPartialTensorShape>* handle) {
   tf_shared_lock l(mirrored_resource_shape_mu_);
   auto iter = mirrored_resource_shape_map_.find(remote_handle);
   if (iter == mirrored_resource_shape_map_.end()) {
     // TODO(b/217820532): Fix the tensor deallocation order issue.
-    return WithErrorSourcePayload(errors::InvalidArgument(
+    return WithErrorSourcePayload(absl::InvalidArgumentError(absl::StrCat(
         "Unable to find the relevant tensor remote_handle: Op ID: ",
         remote_handle.op_id, ", Output num: ", remote_handle.output_num,
         ". One possible cause is that the tensor was accessed after "
         "deallocation in a distributed worker setup. Try setting "
         "`os.environ['TF_ENABLE_EAGER_CLIENT_STREAMING_ENQUEUE']='False'` in "
         "your client to disable async streaming behavior to see if it fixes "
-        "the problem."));
+        "the problem.")));
   }
 
   *handle = iter->second;
@@ -125,23 +125,23 @@ Status RemoteMgr::GetMirroredResourceShape(
   return absl::OkStatus();
 }
 
-Status RemoteMgr::GetRemoteTensorHandle(const tensorflow::TensorHandle* handle,
-                                        const bool wait_until_ready,
-                                        int64_t* op_id, int32* output_num) {
+absl::Status RemoteMgr::GetRemoteTensorHandle(
+    const tensorflow::TensorHandle* handle, const bool wait_until_ready,
+    int64_t* op_id, int32_t* output_num) {
   TF_RETURN_IF_ERROR(handle->RemoteAddress(handle->device(), wait_until_ready,
                                            op_id, output_num));
   tensorflow::TensorHandle* h;
   TF_RETURN_IF_ERROR(
       GetTensorHandleImpl(RemoteTensorHandleInternal(*op_id, *output_num), &h));
   if (handle != h) {
-    return WithErrorSourcePayload(errors::Internal(
+    return WithErrorSourcePayload(absl::InternalError(absl::StrCat(
         "Found two different tensor handles with the same op_id:", *op_id,
-        " and output_num:", *output_num));
+        " and output_num:", *output_num)));
   }
   return absl::OkStatus();
 }
 
-Status RemoteMgr::DeleteTensorHandle(
+absl::Status RemoteMgr::DeleteTensorHandle(
     const RemoteTensorHandleInternal& remote_handle) {
   {
     mutex_lock l(remote_tensor_handle_mu_);
@@ -160,18 +160,23 @@ Status RemoteMgr::DeleteTensorHandle(
       return absl::OkStatus();
     }
   }
-  return WithErrorSourcePayload(errors::InvalidArgument(
+  return WithErrorSourcePayload(absl::InvalidArgumentError(absl::StrCat(
       "Unable to find the relevant tensor remote_handle: Op ID: ",
-      remote_handle.op_id, ", Output num: ", remote_handle.output_num));
+      remote_handle.op_id, ", Output num: ", remote_handle.output_num)));
 }
 
-Status RemoteMgr::SerializeRemoteTensorHandle(
+absl::Status RemoteMgr::SerializeRemoteTensorHandle(
     TensorHandle* in, const bool wait_until_ready, RemoteTensorHandle* out,
-    Device* device, const string& device_name,
+    Device* device, absl::string_view device_name,
     const bool serialize_resource_dtype_and_shape) {
   int64_t op_id;
   int32_t output_num;
-  if (!in->RemoteAddress(device, wait_until_ready, &op_id, &output_num).ok()) {
+  auto status =
+      in->RemoteAddress(device, wait_until_ready, &op_id, &output_num);
+  if (!status.ok()) {
+    LOG(ERROR)
+        << "Failed to get remote address for tensor handle with given device "
+        << device->name() << " error " << status.message();
     tf_shared_lock l(remote_tensor_handle_mu_);
     TF_RETURN_IF_ERROR(
         GetRemoteTensorHandle(in, wait_until_ready, &op_id, &output_num));
@@ -180,7 +185,9 @@ Status RemoteMgr::SerializeRemoteTensorHandle(
   out->set_op_id(op_id);
   out->set_output_num(output_num);
   out->set_op_device(in->op_device() ? in->op_device()->name() : "");
-  out->set_device(device_name);
+  out->set_device(device_name.empty()
+                      ? std::string(in->DeviceOrHostCPU(*parent_)->name())
+                      : std::string(device_name));
   out->set_dtype(in->dtype);
   if (serialize_resource_dtype_and_shape) {
     std::vector<DtypeAndPartialTensorShape> resource_dtypes_and_shapes;
@@ -196,8 +203,8 @@ Status RemoteMgr::SerializeRemoteTensorHandle(
   return absl::OkStatus();
 }
 
-Status RemoteMgr::DeserializeRemoteTensorHandle(const RemoteTensorHandle& in,
-                                                TensorHandle** out) {
+absl::Status RemoteMgr::DeserializeRemoteTensorHandle(
+    const RemoteTensorHandle& in, TensorHandle** out) {
   Device* device;
   if (parent_->local_device_mgr()->LookupDevice(in.op_device(), &device).ok() ||
       parent_->local_device_mgr()->LookupDevice(in.device(), &device).ok()) {
@@ -206,7 +213,7 @@ Status RemoteMgr::DeserializeRemoteTensorHandle(const RemoteTensorHandle& in,
   } else {
     // Create a remote TensorHandle for remote tensors which have not been
     // copied to the local worker yet (e.g. remote function inputs).
-    const string& device_name =
+    const std::string& device_name =
         in.op_device().empty() ? in.device() : in.op_device();
     TF_RETURN_IF_ERROR(
         parent_->FindDeviceFromName(device_name.c_str(), &device));
@@ -234,7 +241,7 @@ Status RemoteMgr::DeserializeRemoteTensorHandle(const RemoteTensorHandle& in,
   return absl::OkStatus();
 }
 
-EagerExecutor& RemoteMgr::GetOrCreateExecutorForStream(uint64 stream_id) {
+EagerExecutor& RemoteMgr::GetOrCreateExecutorForStream(uint64_t stream_id) {
   mutex_lock l(executor_map_mu_);
   auto it = executor_map_.find(stream_id);
   if (it == executor_map_.end()) {
@@ -247,13 +254,13 @@ EagerExecutor& RemoteMgr::GetOrCreateExecutorForStream(uint64 stream_id) {
   return it->second;
 }
 
-void RemoteMgr::DeleteExecutorForStream(uint64 stream_id) {
+void RemoteMgr::DeleteExecutorForStream(uint64_t stream_id) {
   mutex_lock l(executor_map_mu_);
   auto it = executor_map_.find(stream_id);
   if (it == executor_map_.end()) {
     return;
   }
-  Status s = it->second.ShutDown();
+  absl::Status s = it->second.ShutDown();
   if (!s.ok()) {
     LOG(ERROR) << "EagerExecutor shutdown with error " << s.message();
   }

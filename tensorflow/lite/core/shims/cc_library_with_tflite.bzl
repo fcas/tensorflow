@@ -1,11 +1,26 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Definitions for targets that use the TFLite shims."""
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@build_bazel_rules_android//android:rules.bzl", "android_binary", "android_library")
 load("@rules_java//java:defs.bzl", "java_library", "java_test")
-load("//tensorflow:tensorflow.bzl", "clean_dep")
 load(
     "//tensorflow/lite:build_def.bzl",
+    "clean_dep",
     "tflite_copts_warnings",
     "tflite_custom_c_library",
     "tflite_jni_binary",
@@ -208,7 +223,7 @@ def cc_library_with_tflite_with_c_headers_test(name, hdrs, **kwargs):
     build_tests = []
     for hdr in hdrs:
         label = _label(hdr)
-        basename = "%s__test_self_contained_c__%s" % (name, label.name)
+        basename = "%s__test_self_contained_c__%s__%s" % (name, label.package, label.name)
         native.genrule(
             name = "%s_gen" % basename,
             outs = ["%s.c" % basename],

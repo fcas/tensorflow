@@ -253,6 +253,7 @@ class Delegate {
         temporary_tensor_ids.push_back(index);
       }
     }
+    TfLiteIntArrayFree(*temporaries_array_ptr);
     *temporaries_array_ptr = TfLiteIntArrayCreate(temporary_tensor_ids.size());
     for (int i = 0; i < temporary_tensor_ids.size(); ++i) {
       (*temporaries_array_ptr)->data[i] = temporary_tensor_ids[i];
@@ -296,10 +297,12 @@ class Delegate {
       if (IsConstantTensor(tensor)) continue;
       // For quantized models, actual inputs of GPU graph are float tensors, so the 8-bit inputs
       // to the delegate kernel need to be dequantized berfore feeding to the GPU graph.
-      if (options_.enable_quantization &&
-          quant_conversion_map_.find(tensor_index) != quant_conversion_map_.end()) {
-        tensor_index = quant_conversion_map_[tensor_index];
-        tensor = &context->tensors[tensor_index];
+      if (options_.enable_quantization) {
+        auto it = quant_conversion_map_.find(tensor_index);
+        if (it != quant_conversion_map_.end()) {
+          tensor_index = it->second;
+          tensor = &context->tensors[tensor_index];
+        }
       }
       const auto* input = find_value(tensor_index);
       if (!input || tensor->type != TfLiteType::kTfLiteFloat32) {
@@ -321,10 +324,12 @@ class Delegate {
       if (IsConstantTensor(tensor)) continue;
       // For quantized models, actual outputs of GPU graph are float tensors, so they should be
       // quantized to be the 8-bit outputs of delegate.
-      if (options_.enable_quantization &&
-          quant_conversion_map_.find(tensor_index) != quant_conversion_map_.end()) {
-        tensor_index = quant_conversion_map_[tensor_index];
-        tensor = &context->tensors[tensor_index];
+      if (options_.enable_quantization) {
+        auto it = quant_conversion_map_.find(tensor_index);
+        if (it  != quant_conversion_map_.end()) {
+          tensor_index = quant_conversion_map_[tensor_index];
+          tensor = &context->tensors[tensor_index];
+        }
       }
       const auto* output = find_value(tensor_index);
       if (!output || tensor->type != TfLiteType::kTfLiteFloat32) {

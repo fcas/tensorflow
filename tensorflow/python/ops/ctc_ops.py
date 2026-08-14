@@ -326,7 +326,7 @@ def ctc_greedy_decoder(inputs,
 
   - Unlike `ctc_beam_search_decoder`, `ctc_greedy_decoder` considers blanks
     as regular elements when computing the probability of a sequence.
-  - Default `blank_index` is `(num_classes - 1)`, unless overriden.
+  - Default `blank_index` is `(num_classes - 1)`, unless overridden.
 
   If `merge_repeated` is `True`, merge repeated classes in output.
   This means that if consecutive logits' maximum indices are the same,
@@ -344,8 +344,8 @@ def ctc_greedy_decoder(inputs,
     merge_repeated: Boolean.  Default: True.
     blank_index: (Optional). Default: `num_classes - 1`. Define the class index
       to use for the blank label. Negative values will start from num_classes,
-      ie, -1 will reproduce the ctc_greedy_decoder behavior of using
-      num_classes - 1 for the blank symbol, which corresponds to the default.
+      ie, -1 will reproduce the ctc_greedy_decoder behavior of using num_classes
+      - 1 for the blank symbol, which corresponds to the default.
 
   Returns:
     A tuple `(decoded, neg_sum_logits)` where
@@ -783,6 +783,33 @@ def _ctc_loss_shape(op):
   return [op.inputs[2].get_shape(), op.inputs[0].get_shape()]
 
 
+def _validate_ctc_loss_logits(logits, blank_index):
+  rank = logits.shape.rank
+  if rank is not None and rank < 3:
+    raise ValueError(
+        "Argument `logits` must be a tensor of rank at least 3, "
+        f"got shape {logits.shape}."
+    )
+
+  num_classes = (
+      None if rank is None else tensor_shape.dimension_value(logits.shape[2])
+  )
+  if num_classes is None:
+    return
+  if num_classes == 0:
+    raise ValueError(
+        "Logits must have at least 1 class, got 0 classes "
+        f"(logits shape: {logits.shape})."
+    )
+  if blank_index is not None and (
+      blank_index < -num_classes or blank_index >= num_classes
+  ):
+    raise ValueError(
+        f"Argument `blank_index` ({blank_index}) must be in range "
+        f"[-{num_classes}, {num_classes}) (logits shape: {logits.shape})."
+    )
+
+
 # pylint: disable=protected-access, invalid-name
 @tf_export(v1=["nn.ctc_loss_v2"])
 @dispatch.add_dispatch_support
@@ -839,6 +866,9 @@ def ctc_loss_v2(labels,
         [Graves et al., 2006](https://dl.acm.org/citation.cfm?id=1143891)
         ([pdf](http://www.cs.toronto.edu/~graves/icml_2006.pdf))
   """
+  logits = ops.convert_to_tensor(logits, name="logits")
+  _validate_ctc_loss_logits(logits, blank_index)
+
   if isinstance(labels, sparse_tensor.SparseTensor):
     if blank_index is None:
       raise ValueError(
@@ -980,6 +1010,9 @@ def ctc_loss_v3(labels,
 
       https://en.wikipedia.org/wiki/Connectionist_temporal_classification
   """
+  logits = ops.convert_to_tensor(logits, name="logits")
+  _validate_ctc_loss_logits(logits, blank_index)
+
   if isinstance(labels, sparse_tensor.SparseTensor):
     if blank_index is None:
       raise ValueError(
@@ -988,8 +1021,6 @@ def ctc_loss_v3(labels,
 
     if blank_index < 0:
       blank_index += _get_dim(logits, 2)
-
-    logits = ops.convert_to_tensor(logits, name="logits")
 
     params = {
         "labels": labels,

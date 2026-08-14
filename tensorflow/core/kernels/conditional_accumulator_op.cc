@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "absl/status/status.h"
+#include "tensorflow/core/framework/types.pb.h"
 #define EIGEN_USE_THREADS
 
 #include "tensorflow/core/kernels/conditional_accumulator.h"
@@ -41,7 +43,7 @@ class ConditionalAccumulatorOp : public ConditionalAccumulatorBaseOp {
     };
   }
 
-  Status CheckSignature(OpKernelContext* ctx) override {
+  absl::Status CheckSignature(OpKernelContext* ctx) override {
     TF_RETURN_IF_ERROR(ctx->MatchSignature({}, {DT_STRING_REF}));
     return absl::OkStatus();
   }
@@ -79,7 +81,7 @@ class ResourceConditionalAccumulatorOp : public ConditionalAccumulatorBaseOp {
     };
   }
 
-  Status CheckSignature(OpKernelContext* ctx) override {
+  absl::Status CheckSignature(OpKernelContext* ctx) override {
     TF_RETURN_IF_ERROR(ctx->MatchSignature({}, {DT_RESOURCE}));
     return absl::OkStatus();
   }

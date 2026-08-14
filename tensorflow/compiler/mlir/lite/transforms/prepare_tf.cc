@@ -31,6 +31,8 @@ limitations under the License.
 
 #include <climits>
 #include <cstdint>
+#include <limits>
+#include <memory>
 #include <utility>
 
 #include "absl/algorithm/container.h"
@@ -40,18 +42,21 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Affine/Analysis/LoopAnalysis.h"  // from @llvm-project
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/Quant.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/Matchers.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/Visitors.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
@@ -60,23 +65,27 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
-#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/passes.h"
+#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/stablehlo_passes.h"
 #include "tensorflow/compiler/mlir/lite/transforms/dilated_conv.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/lite/utils/attribute_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/constant_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/fake_quant_utils.h"
-#include "tensorflow/compiler/mlir/lite/utils/size_utils.h"
+#include "tensorflow/compiler/mlir/lite/utils/shape_and_size_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/validators.h"
+#include "tensorflow/compiler/mlir/stablehlo/transforms/legalize_tf_passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/einsum.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/unroll_batch_matmul.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/verification_utils.h"
+#include "tensorflow/compiler/mlir/tf2xla/transforms/legalize_tf_with_tf2xla_passes.h"
 #include "tensorflow/compiler/mlir/tf2xla/transforms/passes.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/mlir_hlo/mhlo/transforms/rewriters.h"
+#include "xla/mlir_hlo/mhlo/utils/type_conversion.h"
 
 #define DEBUG_TYPE "tf-tfl-legalization"
 
@@ -93,7 +102,7 @@ static Value CreateTFCastOpI32(OpBuilder *builder, Location loc, Value x,
   auto x_type = mlir::dyn_cast_or_null<ShapedType>(x.getType());
   if (!x_type) llvm_unreachable("unsupported type");
   Type type = x_type.clone(builder->getI32Type());
-  return builder->create<TF::CastOp>(loc, type, x, truncate);
+  return TF::CastOp::create(*builder, loc, type, x, truncate);
 }
 }  // namespace
 
@@ -120,6 +129,13 @@ class PrepareTFPass : public impl::PrepareTFPassBase<PrepareTFPass> {
     this->allow_bf16_and_f16_type_legalization_ =
         allow_bf16_and_f16_type_legalization;
     this->use_fake_quant_num_bits_ = use_fake_quant_num_bits;
+  }
+
+  explicit PrepareTFPass(const PrepareTFPassOptions &options) {
+    this->unfold_batch_matmul_ = options.unfold_batch_matmul_;
+    this->allow_bf16_and_f16_type_legalization_ =
+        options.allow_bf16_and_f16_type_legalization_;
+    this->use_fake_quant_num_bits_ = options.use_fake_quant_num_bits_;
   }
 
   void runOnOperation() override;
@@ -237,7 +253,7 @@ class ConvertTFConvOp : public RewritePattern {
         tensorflow::GetTypeFromTFTensorShape({bias_dim}, elem_type);
     auto bias_attr = rewriter.getZeroAttr(bias_type);
     auto bias =
-        rewriter.create<TF::ConstOp>(op->getLoc(), bias_type, bias_attr);
+        TF::ConstOp::create(rewriter, op->getLoc(), bias_type, bias_attr);
 
     if (op->getAttrOfType<StringAttr>("padding").getValue() == "EXPLICIT") {
       // Add Const op for padding value.
@@ -260,12 +276,12 @@ class ConvertTFConvOp : public RewritePattern {
           mlir::DenseIntElementsAttr::get(padding_attr_type, padding_values);
 
       auto padding_const =
-          rewriter.create<TF::ConstOp>(op->getLoc(), padding_attr);
+          TF::ConstOp::create(rewriter, op->getLoc(), padding_attr);
 
       // Add Pad op.
       auto pad_output_type = UnrankedTensorType::get(elem_type);
-      input = rewriter.create<TF::PadOp>(op->getLoc(), pad_output_type, input,
-                                         padding_const);
+      input = TF::PadOp::create(rewriter, op->getLoc(), pad_output_type, input,
+                                padding_const);
 
       // Set Conv padding to `VALID` since padding has been handled by Pad op.
       state.padding = rewriter.getStringAttr("VALID");
@@ -299,8 +315,8 @@ class ConvertTFConv2D : public ConvertTFConvOp<ConvertTFConv2D, TF::Conv2DOp> {
                             Type result_type, Value input, Value filter,
                             Value bias) const {
     filter = legalizeFilter(rewriter, loc, filter);
-    return rewriter.create<TFL::Conv2DOp>(
-        loc, result_type, input, filter, bias,
+    return TFL::Conv2DOp::create(
+        rewriter, loc, result_type, input, filter, bias,
         /*dilation_h_factor=*/state->dilation_height_factor,
         /*dilation_w_factor=*/state->dilation_width_factor,
         /*fused_activation_function=*/rewriter.getStringAttr("NONE"),
@@ -322,7 +338,7 @@ class ConvertTFConv2D : public ConvertTFConvOp<ConvertTFConv2D, TF::Conv2DOp> {
         {static_cast<int>(perm.size())}, rewriter.getIntegerType(32));
     auto perm_attr =
         DenseElementsAttr::get(perm_type, llvm::ArrayRef<int>(perm));
-    auto perm_op = rewriter.create<TF::ConstOp>(loc, perm_type, perm_attr);
+    auto perm_op = TF::ConstOp::create(rewriter, loc, perm_type, perm_attr);
 
     // Create tensor type for the transpose result.
     auto filter_type = mlir::cast<RankedTensorType>(filter.getType());
@@ -334,7 +350,7 @@ class ConvertTFConv2D : public ConvertTFConvOp<ConvertTFConv2D, TF::Conv2DOp> {
     auto result_type =
         tensorflow::GetTypeFromTFTensorShape(result_shape, elem_type);
 
-    return rewriter.create<TF::TransposeOp>(loc, result_type, filter, perm_op);
+    return TF::TransposeOp::create(rewriter, loc, result_type, filter, perm_op);
   }
 };
 
@@ -366,8 +382,8 @@ class ConvertTFDepthwiseConv2dNative
         mlir::cast<RankedTensorType>(filter.getType()).getDimSize(3);
 
     filter = legalizeFilter(rewriter, loc, filter);
-    return rewriter.create<TFL::DepthwiseConv2DOp>(
-        loc, result_type, input, filter, bias,
+    return TFL::DepthwiseConv2DOp::create(
+        rewriter, loc, result_type, input, filter, bias,
         /*dilation_h_factor=*/state->dilation_height_factor,
         /*dilation_w_factor=*/state->dilation_width_factor,
         /*fused_activation_function=*/rewriter.getStringAttr("NONE"),
@@ -404,9 +420,9 @@ class ConvertTFDepthwiseConv2dNative
           rewriter.getI32IntegerAttr(ConvertToTfliteSize(size));
     }
     auto shape_attr = DenseElementsAttr::get(shape_type, result_shape_data);
-    auto shape = rewriter.create<TF::ConstOp>(loc, shape_type, shape_attr);
+    auto shape = TF::ConstOp::create(rewriter, loc, shape_type, shape_attr);
 
-    return rewriter.create<TF::ReshapeOp>(loc, result_type, filter, shape);
+    return TF::ReshapeOp::create(rewriter, loc, result_type, filter, shape);
   }
 };
 
@@ -479,11 +495,11 @@ struct ConvertTFStridedSlice : public RewritePattern {
 
     auto shape_attr = DenseElementsAttr::get(shape_type, result_shape_data);
     auto shape =
-        rewriter.create<arith::ConstantOp>(loc, shape_type, shape_attr);
+        arith::ConstantOp::create(rewriter, loc, shape_type, shape_attr);
     auto revised_output_type = tensorflow::GetTypeFromTFTensorShape(
         revised_shape, original_input_type.getElementType());
-    TF::ReshapeOp reshape = rewriter.create<TF::ReshapeOp>(
-        loc, revised_output_type, original_input, shape);
+    TF::ReshapeOp reshape = TF::ReshapeOp::create(
+        rewriter, loc, revised_output_type, original_input, shape);
 
     // Replace the original strided_slice.
     uint64_t revised_begin_mask = strided_slice_op.getBeginMask();
@@ -640,13 +656,13 @@ struct ConvertTFStridedSlice : public RewritePattern {
 
     auto begin_attr = DenseElementsAttr::get<int32_t>(type, padded_begin);
     auto begin_op =
-        rewriter.create<arith::ConstantOp>(op->getLoc(), type, begin_attr);
+        arith::ConstantOp::create(rewriter, op->getLoc(), type, begin_attr);
     auto end_attr = DenseElementsAttr::get<int32_t>(type, padded_end);
     auto end_op =
-        rewriter.create<arith::ConstantOp>(op->getLoc(), type, end_attr);
+        arith::ConstantOp::create(rewriter, op->getLoc(), type, end_attr);
     auto stride_attr = DenseElementsAttr::get<int32_t>(type, padded_stride);
     auto stride_op =
-        rewriter.create<arith::ConstantOp>(op->getLoc(), type, stride_attr);
+        arith::ConstantOp::create(rewriter, op->getLoc(), type, stride_attr);
 
     rewriter.replaceOpWithNewOp<TF::StridedSliceOp>(
         op, strided_slice_op.getType(), input, begin_op.getResult(),
@@ -751,17 +767,17 @@ struct ConvertTFStridedSlice : public RewritePattern {
 
     auto begin_end_type = tensorflow::GetTypeFromTFTensorShape(
         {num_input_dims}, rewriter.getIntegerType(32));
-    auto new_begin_attr = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), begin_end_type,
+    auto new_begin_attr = arith::ConstantOp::create(
+        rewriter, op->getLoc(), begin_end_type,
         DenseElementsAttr::get<int32_t>(begin_end_type, padded_begin));
-    auto new_end_attr = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), begin_end_type,
+    auto new_end_attr = arith::ConstantOp::create(
+        rewriter, op->getLoc(), begin_end_type,
         DenseElementsAttr::get<int32_t>(begin_end_type, padded_end));
     auto strides_type = tensorflow::GetTypeFromTFTensorShape(
         {static_cast<int64_t>(padded_strides.size())},
         rewriter.getIntegerType(32));
-    auto new_strides_attr = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), strides_type,
+    auto new_strides_attr = arith::ConstantOp::create(
+        rewriter, op->getLoc(), strides_type,
         DenseElementsAttr::get<int32_t>(strides_type, padded_strides));
 
     auto attribute_type = rewriter.getIntegerType(64);
@@ -1027,9 +1043,10 @@ struct FusedBatchNormV3Pat : public ::mlir::RewritePattern {
         auto reduce_dim_type = tensorflow::GetTypeFromTFTensorShape(
             {3}, rewriter.getIntegerType(32));
         ::mlir::SmallVector<int32_t, 3> reduce_dim_values = {0, 1, 2};
-        reduce_dim_op = rewriter.create<TF::ConstOp>(
-            odsLoc, ::mlir::DenseIntElementsAttr::get(reduce_dim_type,
-                                                      reduce_dim_values));
+        reduce_dim_op =
+            TF::ConstOp::create(rewriter, odsLoc,
+                                ::mlir::DenseIntElementsAttr::get(
+                                    reduce_dim_type, reduce_dim_values));
       }
 
       auto new_mean_type = tensorflow::GetTypeFromTFTensorShape(
@@ -1037,8 +1054,8 @@ struct FusedBatchNormV3Pat : public ::mlir::RewritePattern {
       ::mlir::TF::MeanOp mean_op_1;
       {
         ::mlir::Value x_value = (*x.begin());
-        mean_op_1 = rewriter.create<TF::MeanOp>(
-            odsLoc, new_mean_type, x_value, reduce_dim_op,
+        mean_op_1 = TF::MeanOp::create(
+            rewriter, odsLoc, new_mean_type, x_value, reduce_dim_op,
             /*keep_dims=*/rewriter.getBoolAttr(false));
       }
 
@@ -1048,15 +1065,15 @@ struct FusedBatchNormV3Pat : public ::mlir::RewritePattern {
         ::mlir::Value tblgen_value_1 = (*mean_op_1.getODSResults(0).begin());
         // If x has shape of [b, h, w, c], the result of mean_op_1 will have
         // shape of [c]. Therefore, their shapes are always compatible.
-        square_diff_op = rewriter.create<::mlir::TF::SquaredDifferenceOp>(
-            odsLoc, tblgen_value_0, tblgen_value_1);
+        square_diff_op = ::mlir::TF::SquaredDifferenceOp::create(
+            rewriter, odsLoc, tblgen_value_0, tblgen_value_1);
       }
 
       ::mlir::TF::MeanOp mean_op_2;
       {
         ::mlir::Value input_value = (*square_diff_op.getODSResults(0).begin());
-        mean_op_2 = rewriter.create<TF::MeanOp>(
-            odsLoc, new_mean_type, input_value, reduce_dim_op,
+        mean_op_2 = TF::MeanOp::create(
+            rewriter, odsLoc, new_mean_type, input_value, reduce_dim_op,
             /*keep_dims=*/rewriter.getBoolAttr(false));
       }
 
@@ -1067,57 +1084,56 @@ struct FusedBatchNormV3Pat : public ::mlir::RewritePattern {
     ::llvm::SmallVector<::mlir::Value, 4> replace_values;
     ::mlir::TF::ConstOp epsilon_const_op;
     {
-      epsilon_const_op =
-          rewriter.create<::mlir::TF::ConstOp>(odsLoc,
-                                               /*value=*/epsilon);
+      epsilon_const_op = ::mlir::TF::ConstOp::create(rewriter, odsLoc,
+                                                     /*value=*/epsilon);
     }
     ::mlir::TF::AddOp add_op_1;
     {
       ::mlir::Value epsilon_value =
           (*epsilon_const_op.getODSResults(0).begin());
       // Multiplying with a constant, no need to check broadcastibility.
-      add_op_1 = rewriter.create<::mlir::TF::AddOp>(odsLoc,
-                                                    /*x=*/variance_value,
-                                                    /*y=*/epsilon_value);
+      add_op_1 = ::mlir::TF::AddOp::create(rewriter, odsLoc,
+                                           /*x=*/variance_value,
+                                           /*y=*/epsilon_value);
     }
     ::mlir::TF::RsqrtOp rsqrt_op;
     {
       ::mlir::SmallVector<::mlir::Value, 4> tblgen_values;
       ::mlir::SmallVector<::mlir::NamedAttribute, 4> tblgen_attrs;
       tblgen_values.push_back((*add_op_1.getODSResults(0).begin()));
-      rsqrt_op = rewriter.create<::mlir::TF::RsqrtOp>(odsLoc, tblgen_values,
-                                                      tblgen_attrs);
+      rsqrt_op = ::mlir::TF::RsqrtOp::create(rewriter, odsLoc, tblgen_values,
+                                             tblgen_attrs);
     }
     ::mlir::TF::MulOp multiplier;
     {
       ::mlir::Value tblgen_value_0 = (*scale.begin());
       ::mlir::Value tblgen_value_1 = (*rsqrt_op.getODSResults(0).begin());
-      multiplier = rewriter.create<::mlir::TF::MulOp>(odsLoc,
-                                                      /*x=*/tblgen_value_0,
-                                                      /*y=*/tblgen_value_1);
+      multiplier = ::mlir::TF::MulOp::create(rewriter, odsLoc,
+                                             /*x=*/tblgen_value_0,
+                                             /*y=*/tblgen_value_1);
     }
     ::mlir::TF::MulOp mul_op_1;
     {
       ::mlir::Value tblgen_value_0 = (*x.begin());
       ::mlir::Value tblgen_value_1 = (*multiplier.getODSResults(0).begin());
-      mul_op_1 = rewriter.create<::mlir::TF::MulOp>(odsLoc,
-                                                    /*x=*/tblgen_value_0,
-                                                    /*y=*/tblgen_value_1);
+      mul_op_1 = ::mlir::TF::MulOp::create(rewriter, odsLoc,
+                                           /*x=*/tblgen_value_0,
+                                           /*y=*/tblgen_value_1);
     }
     ::mlir::TF::MulOp mul_op_2;
     {
       ::mlir::Value multiplier_value = (*multiplier.getODSResults(0).begin());
-      mul_op_2 = rewriter.create<::mlir::TF::MulOp>(odsLoc,
-                                                    /*x=*/mean_value,
-                                                    /*y=*/multiplier_value);
+      mul_op_2 = ::mlir::TF::MulOp::create(rewriter, odsLoc,
+                                           /*x=*/mean_value,
+                                           /*y=*/multiplier_value);
     }
     ::mlir::TF::SubOp sub_op;
     {
       ::mlir::Value tblgen_value_0 = (*offset.begin());
       ::mlir::Value tblgen_value_1 = (*mul_op_2.getODSResults(0).begin());
-      sub_op = rewriter.create<::mlir::TF::SubOp>(odsLoc,
-                                                  /*x=*/tblgen_value_0,
-                                                  /*y=*/tblgen_value_1);
+      sub_op = ::mlir::TF::SubOp::create(rewriter, odsLoc,
+                                         /*x=*/tblgen_value_0,
+                                         /*y=*/tblgen_value_1);
     }
     ::mlir::TF::AddOp add_op_2;
     {
@@ -1129,8 +1145,8 @@ struct FusedBatchNormV3Pat : public ::mlir::RewritePattern {
       for (auto v : fused_batch_norm_op.getODSResults(0)) {
         tblgen_types.push_back(v.getType());
       }
-      add_op_2 = rewriter.create<::mlir::TF::AddOp>(
-          odsLoc, tblgen_types, tblgen_values, tblgen_attrs);
+      add_op_2 = ::mlir::TF::AddOp::create(rewriter, odsLoc, tblgen_types,
+                                           tblgen_values, tblgen_attrs);
     }
     for (auto v :
          ::llvm::SmallVector<::mlir::Value, 4>{add_op_2.getODSResults(0)}) {
@@ -1245,9 +1261,9 @@ struct ReorderFakeQuantPattern : public RewritePattern {
                                 ReorderOp &new_reorder_op) const {
     Value tensor_value = (*input.begin());
     Value shape_value = (*shape.begin());
-    new_reorder_op = rewriter.create<ReorderOp>(ods_loc,
-                                                /*tensor=*/tensor_value,
-                                                /*shape=*/shape_value);
+    new_reorder_op = ReorderOp::create(rewriter, ods_loc,
+                                       /*tensor=*/tensor_value,
+                                       /*shape=*/shape_value);
     return success();
   }
 
@@ -1273,8 +1289,8 @@ struct ReorderFakeQuantPattern : public RewritePattern {
     for (auto v : casted_op.getODSResults(0)) {
       target_types.push_back(v.getType());
     }
-    fakequant_op = rewriter.create<TF::FakeQuantWithMinMaxVarsOp>(
-        ods_loc, target_types, target_values, target_attrs);
+    fakequant_op = TF::FakeQuantWithMinMaxVarsOp::create(
+        rewriter, ods_loc, target_types, target_values, target_attrs);
     return success();
   }
 
@@ -1354,9 +1370,14 @@ LogicalResult ConvertTf2XlaOps(func::FuncOp func, MLIRContext *context) {
   mhlo::Tf2XlaTypeConverter converter;
   mhlo::PopulateLegalizeTfWithTf2XlaPatterns("XLA_CPU_JIT", patterns, context,
                                              converter);
-  mhlo::PopulateLegalizeTfPatterns(context, &patterns);
+  hlo::PopulateLegalizeTfPatterns(context, &patterns);
   mlir::odml::PopulateLegalizeHloToTfPatterns(&patterns, context);
   mhlo::GatherOp::getCanonicalizationPatterns(patterns, context);
+
+  // hlo::PopulateLegalizeTfPatterns emits StableHLO ops, until this pipeline
+  // handles StableHLO ops directly, we need to convert them to MHLO ops.
+  stablehlo::StablehloToHloTypeConverter hlo_converter;
+  stablehlo::populateStablehloToHloPatterns(&patterns, &hlo_converter, context);
 
   return applyPartialConversion(func, target, std::move(patterns));
 }
@@ -1421,13 +1442,14 @@ struct ConvertRfftToRfft2d : public RewritePattern {
 
     auto expaned_input_type = tensorflow::GetTypeFromTFTensorShape(
         expanded_input_shape, input_type.getElementType());
-    TF::ExpandDimsOp expanded_input = rewriter.create<TF::ExpandDimsOp>(
-        rfft_op.getLoc(), expaned_input_type, input, minus_two->getResult());
+    TF::ExpandDimsOp expanded_input =
+        TF::ExpandDimsOp::create(rewriter, rfft_op.getLoc(), expaned_input_type,
+                                 input, minus_two->getResult());
 
     // Expanded fft_len.
     auto one_attr = mlir::DenseIntElementsAttr::get(one_ele_type, {1});
 
-    auto one = rewriter.create<TF::ConstOp>(rfft_op.getLoc(), one_attr);
+    auto one = TF::ConstOp::create(rewriter, rfft_op.getLoc(), one_attr);
 
     auto zero = CreateConstOpWithSingleValue(&rewriter, rfft_op.getLoc(),
                                              one_ele_type, 0);
@@ -1435,21 +1457,22 @@ struct ConvertRfftToRfft2d : public RewritePattern {
     auto expanded_fft_len_type = tensorflow::GetTypeFromTFTensorShape(
         {2}, fft_len_type.getElementType());
 
-    TF::ConcatV2Op expanded_fft_len = rewriter.create<TF::ConcatV2Op>(
-        rfft_op.getLoc(), expanded_fft_len_type,
+    TF::ConcatV2Op expanded_fft_len = TF::ConcatV2Op::create(
+        rewriter, rfft_op.getLoc(), expanded_fft_len_type,
         SmallVector<Value, 2>({one.getResult(), fft_len}), zero->getResult());
 
     // Insert the rfft_2d.
     auto rfft2d_out_type = tensorflow::GetTypeFromTFTensorShape(
         expanded_output_shape, output_type.getElementType());
-    TF::RFFT2DOp rfft2d = rewriter.create<TF::RFFT2DOp>(
-        rfft_op.getLoc(), rfft2d_out_type, expanded_input.getResult(),
+    TF::RFFT2DOp rfft2d = TF::RFFT2DOp::create(
+        rewriter, rfft_op.getLoc(), rfft2d_out_type, expanded_input.getResult(),
         expanded_fft_len.getResult());
 
     // Insert the squeeze op.
     auto squeeze_dim = rewriter.getI64ArrayAttr({-2});
-    TF::SqueezeOp squeeze = rewriter.create<TF::SqueezeOp>(
-        rfft_op.getLoc(), output_type, rfft2d.getResult(), squeeze_dim);
+    TF::SqueezeOp squeeze =
+        TF::SqueezeOp::create(rewriter, rfft_op.getLoc(), output_type,
+                              rfft2d.getResult(), squeeze_dim);
 
     rewriter.replaceOp(op, squeeze.getResult());
 
@@ -1486,10 +1509,200 @@ struct RemoveIdentity : public OpRewritePattern<TF::IdentityOp> {
   }
 };
 
+llvm::FailureOr<TF::FakeQuantWithMinMaxVarsOp> TryGetAncestorFakeQuantOp(
+    Operation *operand) {
+  if (auto fq =
+          mlir::dyn_cast_or_null<TF::FakeQuantWithMinMaxVarsOp>(operand)) {
+    return fq;
+  }
+
+  auto dq = mlir::dyn_cast_or_null<TFL::DequantizeOp>(operand);
+  if (!dq) {
+    return failure();
+  }
+
+  auto q =
+      mlir::dyn_cast_or_null<TFL::QuantizeOp>(dq.getInput().getDefiningOp());
+  if (!q) {
+    return failure();
+  }
+
+  if (auto fq = mlir::dyn_cast_or_null<TF::FakeQuantWithMinMaxVarsOp>(
+          q.getInput().getDefiningOp())) {
+    return fq;
+  }
+
+  return failure();
+}
+
+// Quantizes Concat ops where the inputs are quantized with fake quant but the
+// result is not explicitly quantized. Without this, later quantization passes
+// handle the quantization of the concat op incorrectly.
+class QuantizeConcatResult : public OpRewritePattern<TF::ConcatV2Op> {
+ public:
+  QuantizeConcatResult(MLIRContext *context, bool use_fake_quant_num_bits)
+      : OpRewritePattern<TF::ConcatV2Op>(context),
+        use_fake_quant_num_bits_(use_fake_quant_num_bits) {}
+
+  LogicalResult matchAndRewrite(TF::ConcatV2Op concat,
+                                PatternRewriter &rewriter) const override {
+    // Skip concat ops where the output is already quantized.
+    for (auto *user : concat->getUsers()) {
+      if (mlir::dyn_cast_or_null<TFL::QuantizeOp>(user) ||
+          mlir::dyn_cast_or_null<TF::FakeQuantWithMinMaxVarsOp>(user)) {
+        return failure();
+      }
+    }
+
+    // At this point, all pre-existing FakeQuantWithMinMaxVarsOps should have
+    // had qdq ops generated so we'll need to follow up the chain to get to the
+    // fake quants.
+    llvm::SmallVector<TF::FakeQuantWithMinMaxVarsOp> fake_quant_ops;
+    for (Value operand_value : concat.getValues()) {
+      auto fq_or = TryGetAncestorFakeQuantOp(operand_value.getDefiningOp());
+      if (failed(fq_or)) {
+        return failure();
+      }
+      auto fq = fq_or.value();
+
+      if (!fq) {
+        return failure();
+      }
+
+      fake_quant_ops.emplace_back(fq);
+    }
+
+    float min = std::numeric_limits<float>::max();
+    float max = std::numeric_limits<float>::min();
+    Value min_v;
+    Value max_v;
+
+    // Extract min/max from across the fake quants.
+    for (TF::FakeQuantWithMinMaxVarsOp fq : fake_quant_ops) {
+      DenseFPElementsAttr min_attr;
+      DenseFPElementsAttr max_attr;
+      if (!matchPattern(fq.getMin(), m_Constant(&min_attr))) {
+        return failure();
+      }
+      if (!matchPattern(fq.getMax(), m_Constant(&max_attr))) {
+        return failure();
+      }
+      if (min_attr.size() > 1) {
+        return failure();
+      }
+      if (max_attr.size() > 1) {
+        return failure();
+      }
+      if (float new_min = min_attr.getValues<float>()[0]; new_min <= min) {
+        min = new_min;
+        min_v = fq.getMin();
+      }
+      if (float new_max = max_attr.getValues<float>()[0]; new_max >= max) {
+        max = new_max;
+        max_v = fq.getMax();
+      }
+    }
+
+    if (!min_v || !max_v) {
+      return failure();
+    }
+
+    Value concat_result = concat.getResult();
+    llvm::SmallVector<OpOperand *> uses;
+    for (OpOperand &use : concat_result.getUses()) {
+      uses.push_back(&use);
+    }
+
+    llvm::SmallVector<Value, 4> inputs{concat_result, min_v, max_v};
+
+    rewriter.setInsertionPointAfter(concat.getOperation());
+    auto new_fake_quant_op = TF::FakeQuantWithMinMaxVarsOp::create(
+        rewriter, concat.getLoc(), concat->getResultTypes(), inputs,
+        (*fake_quant_ops.begin())->getAttrs());
+
+    for (OpOperand *use : uses) {
+      use->assign(new_fake_quant_op);
+    }
+
+    // Rather than directly generating qdq ops ourselves we leverage existing
+    // logic to do it for us.
+    (void)InsertTFLQuantOpsAfterTFFakeQuantOp<
+        TF::FakeQuantWithMinMaxVarsOp, /*PerAxis=*/false,
+        FetchConstantMinMaxInputs<TF::FakeQuantWithMinMaxVarsOp>>(
+        use_fake_quant_num_bits_)
+        .matchAndRewrite(new_fake_quant_op, rewriter);
+
+    return success();
+  }
+
+ private:
+  bool use_fake_quant_num_bits_;
+};
+
+// Quantizes Mean ops where the inputs are quantized with fake quant but the
+// result is not explicitly quantized. Propagating the quant parameters from the
+// input to the output allow proper quantization later.
+// Note that this pass is intended to work around a shortcoming of TF QAT in
+// which some models do not have FQ ops generated for the output of this op.
+class QuantizeMeanResult : public OpRewritePattern<TF::MeanOp> {
+ public:
+  QuantizeMeanResult(MLIRContext *context, bool use_fake_quant_num_bits)
+      : OpRewritePattern<TF::MeanOp>(context),
+        use_fake_quant_num_bits_(use_fake_quant_num_bits) {}
+
+  LogicalResult matchAndRewrite(TF::MeanOp mean,
+                                PatternRewriter &rewriter) const override {
+    // Skip ops where the output is already quantized.
+    for (auto *user : mean->getUsers()) {
+      if (mlir::dyn_cast_or_null<TFL::QuantizeOp>(user) ||
+          mlir::dyn_cast_or_null<TF::FakeQuantWithMinMaxVarsOp>(user)) {
+        return failure();
+      }
+    }
+
+    auto fq_or = TryGetAncestorFakeQuantOp(mean.getInput().getDefiningOp());
+    if (failed(fq_or)) {
+      return failure();
+    }
+    auto fq = fq_or.value();
+
+    Value mean_result = mean.getResult();
+    llvm::SmallVector<OpOperand *> uses;
+    for (OpOperand &use : mean_result.getUses()) {
+      uses.push_back(&use);
+    }
+
+    llvm::SmallVector<Value, 4> inputs{mean_result, fq.getMin(), fq.getMax()};
+
+    rewriter.setInsertionPointAfter(mean.getOperation());
+    auto new_fake_quant_op = TF::FakeQuantWithMinMaxVarsOp::create(
+        rewriter, mean.getLoc(), mean->getResultTypes(), inputs,
+        fq->getAttrs());
+
+    for (OpOperand *use : uses) {
+      use->assign(new_fake_quant_op);
+    }
+
+    // Rather than directly generating qdq ops ourselves we leverage existing
+    // logic to do it for us.
+    (void)InsertTFLQuantOpsAfterTFFakeQuantOp<
+        TF::FakeQuantWithMinMaxVarsOp, /*PerAxis=*/false,
+        FetchConstantMinMaxInputs<TF::FakeQuantWithMinMaxVarsOp>>(
+        use_fake_quant_num_bits_)
+        .matchAndRewrite(new_fake_quant_op, rewriter);
+
+    return success();
+  }
+
+ private:
+  bool use_fake_quant_num_bits_;
+};
+
 void PrepareTFPass::runOnOperation() {
   MLIRContext *ctx = &getContext();
   RewritePatternSet patterns(ctx);
   RewritePatternSet phase_2_patterns(ctx);
+  RewritePatternSet phase_3_patterns(ctx);
   auto func = getOperation();
 
   // Check illegal ops in a TFLite pipeline (e.g. trainning only ops) , since
@@ -1526,7 +1739,7 @@ void PrepareTFPass::runOnOperation() {
   // This will allow optimizing any TF_Mul->TF_Conv in the graph
   // and any expanded from FusedBatchNorm. We need to do this
   // before converting TF_Conv to TFL_Conv
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 
   // Remove the wrapper of the tf.FakeQuant* ops and also insert the
   // tfl.quantize and tfl.dequantize to preserve the quantization parameters.
@@ -1556,7 +1769,11 @@ void PrepareTFPass::runOnOperation() {
   // Remove redundant reshape ops.
   TF::ReshapeOp::getCanonicalizationPatterns(phase_2_patterns, ctx);
 
-  (void)applyPatternsAndFoldGreedily(func, std::move(phase_2_patterns));
+  (void)applyPatternsGreedily(func, std::move(phase_2_patterns));
+
+  phase_3_patterns.add<QuantizeConcatResult>(ctx, use_fake_quant_num_bits_);
+  phase_3_patterns.add<QuantizeMeanResult>(ctx, use_fake_quant_num_bits_);
+  (void)applyPatternsGreedily(func, std::move(phase_3_patterns));
 }
 
 }  // namespace
@@ -1568,6 +1785,12 @@ std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareTFPass(
   return std::make_unique<PrepareTFPass>(unfold_batch_matmul,
                                          allow_bf16_and_f16_type_legalization,
                                          use_fake_quant_num_bits);
+}
+
+// Creates an instance of the TensorFlow Lite dialect PrepareTF pass.
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareTFPass(
+    const PrepareTFPassOptions &options) {
+  return std::make_unique<PrepareTFPass>(options);
 }
 
 // Creates an instance of the TensorFlow Lite dialect PrepareTF pass.

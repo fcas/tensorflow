@@ -13,9 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <string>
 #include <tuple>
-#include <vector>
 
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/stl.h"  // from @pybind11
@@ -30,7 +28,7 @@ std::tuple<int, int, int> get_loaded_tensorrt_version() {
   return tensorflow::tensorrt::GetLoadedTensorRTVersion();
 }
 
-PYBIND11_MODULE(_pywrap_py_utils, m) {
+PYBIND11_MODULE(_pywrap_py_utils, m, pybind11::mod_gil_not_used()) {
   m.doc() = "_pywrap_py_utils: Various TensorRT utilities";
   m.def("get_linked_tensorrt_version", get_linked_tensorrt_version,
         "Return the compile time TensorRT library version as the tuple "

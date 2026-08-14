@@ -16,16 +16,18 @@ limitations under the License.
 
 #include <string>
 
+#include "flatbuffers/base.h"  // from @flatbuffers
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/OpDefinition.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/lite/core/c/builtin_op_data.h"
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
-#include "tensorflow/lite/c/builtin_op_data.h"
 
 namespace mlir {
 namespace TFL {
@@ -102,11 +104,11 @@ LogicalResult ConvertMaxUnpoolingFunc::RewriteFunc() {
   if (failed(CreateCustomOptions(custom_option_buffer))) {
     return failure();
   }
-  auto op = builder.create<CustomOp>(
-      func_.getLoc(), func_.getFunctionType().getResults(),
-      func_.getArguments(), kMaxUnpooling,
-      CustomOption(&builder, custom_option_buffer));
-  builder.create<func::ReturnOp>(func_.getLoc(), op.getResults());
+  auto op = CustomOp::create(builder, func_.getLoc(),
+                             func_.getFunctionType().getResults(),
+                             func_.getArguments(), kMaxUnpooling,
+                             CustomOption(&builder, custom_option_buffer));
+  func::ReturnOp::create(builder, func_.getLoc(), op.getResults());
 
   return success();
 }
@@ -140,8 +142,7 @@ LogicalResult ConvertMaxUnpoolingFunc::VerifySignature() {
     return func_.emitWarning() << "'padding' attribute for " << kMaxUnpooling
                                << " is not set or not a string";
   }
-  if (!padding.getValue().equals("VALID") &&
-      !padding.getValue().equals("SAME")) {
+  if (padding.getValue() != "VALID" && padding.getValue() != "SAME") {
     return func_.emitWarning()
            << "Padding for " << kMaxUnpooling << " must be 'SAME' or 'VALID'";
   }
@@ -174,9 +175,9 @@ LogicalResult ConvertMaxUnpoolingFunc::CreateCustomOptions(
     return func_.emitError() << "'padding' attribute for " << kMaxUnpooling
                              << " is not set or not a string";
   }
-  if (padding.getValue().equals("VALID")) {
+  if (padding.getValue() == "VALID") {
     pool_params.padding = kTfLitePaddingValid;
-  } else if (padding.getValue().equals("SAME")) {
+  } else if (padding.getValue() == "SAME") {
     pool_params.padding = kTfLitePaddingSame;
   } else {
     return func_.emitError()
@@ -204,11 +205,11 @@ LogicalResult ConvertDenseImageWarpFunc::RewriteFunc() {
                  StringAttr::get(func_.getContext(), kImageWarping));
 
   OpBuilder builder(func_.getBody());
-  auto op = builder.create<CustomOp>(func_.getLoc(),
-                                     func_.getFunctionType().getResults(),
-                                     func_.getArguments(), kImageWarping,
-                                     CustomOption(&builder, /*content=*/""));
-  builder.create<func::ReturnOp>(func_.getLoc(), op.getResults());
+  auto op = CustomOp::create(builder, func_.getLoc(),
+                             func_.getFunctionType().getResults(),
+                             func_.getArguments(), kImageWarping,
+                             CustomOption(&builder, /*content=*/""));
+  func::ReturnOp::create(builder, func_.getLoc(), op.getResults());
 
   return success();
 }

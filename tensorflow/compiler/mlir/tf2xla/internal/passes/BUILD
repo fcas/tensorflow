@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "filegroup", "get_compatible_with_portable")
@@ -7,9 +22,8 @@ load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//learning/pathways/serving/transforms:__pkg__",
-        "//tensorflow/compiler/mlir:__pkg__",
-        "//tensorflow/compiler/mlir/tensorflow:__pkg__",
+        "//learning/brain/tfrt/tpu/compiler/mlir:__pkg__",
+        "//tensorflow/compiler/mlir:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla/api:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla/internal:__subpackages__",
     ],
@@ -31,6 +45,8 @@ cc_library(
         ":mark_ops_for_outside_compilation",
         ":tpu_cluster_formation",
         ":tpu_sharding_identification_pass",
+        ":tpu_validate_inputs",
+        ":tpu_validate_session_inputs",
         ":verify_clustering_pass",
         ":xla_broadcast",
         ":xla_cluster_formation",
@@ -70,15 +86,10 @@ cc_library(
 gentbl_cc_library(
     name = "clustering_passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=TFXLABridgeClustering",
-            ],
-            "clustering_passes.h.inc",
-        ),
-    ],
+    tbl_outs = {"clustering_passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=TFXLABridgeClustering",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "clustering_passes.td",
     deps = [
@@ -97,7 +108,7 @@ tf_cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -228,15 +239,10 @@ cc_library(
 gentbl_cc_library(
     name = "mlir_to_graph_passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=TFXLABridgeMlirToGraph",
-            ],
-            "mlir_to_graph_passes.h.inc",
-        ),
-    ],
+    tbl_outs = {"mlir_to_graph_passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=TFXLABridgeMlirToGraph",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "mlir_to_graph_passes.td",
     deps = [
@@ -276,7 +282,7 @@ cc_library(
         "//tensorflow/compiler/mlir/tensorflow:tpu_rewrite_device_util",
         "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
-        "//tensorflow/core:portable_gif_internal",
+        "//tensorflow/core/platform:types",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -359,8 +365,8 @@ cc_library(
         "@llvm-project//mlir:Rewrite",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla/client:sharding_builder",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/hlo/builder:sharding_builder",
     ],
 )
 
@@ -409,12 +415,14 @@ cc_library(
         ":clustering_passes_inc_gen",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:attribute_utils",
+        "//tensorflow/compiler/mlir/tensorflow:device_util",
         "//tensorflow/compiler/mlir/tensorflow:string_util",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_analysis",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_types",
         "//tensorflow/compiler/mlir/tensorflow:tpu_rewrite_device_util",
         "//tensorflow/compiler/mlir/tensorflow:xla_rewrite_util",
+        "//tensorflow/compiler/mlir/tensorflow:xla_sharding_util",
         "//tensorflow/compiler/mlir/tensorflow/transforms:lower_tf_lib",
         "//tensorflow/compiler/mlir/tensorflow/transforms:tf_pass_inc_gen",
         "//tensorflow/compiler/mlir/tensorflow/transforms:verify_no_outside_compilation_markers_pass",
@@ -422,8 +430,10 @@ cc_library(
         "//tensorflow/compiler/mlir/tf2xla/transforms:legalize_tf",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "//tensorflow/core/ir/types:Dialect",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
@@ -454,15 +464,10 @@ cc_library(
 gentbl_cc_library(
     name = "lowering_passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=TFXLABridgeLowering",
-            ],
-            "lowering_passes.h.inc",
-        ),
-    ],
+    tbl_outs = {"lowering_passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=TFXLABridgeLowering",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "lowering_passes.td",
     deps = [
@@ -500,6 +505,84 @@ tf_cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "tpu_validate_inputs_utils",
+    srcs = ["tpu_validate_inputs_utils.cc"],
+    hdrs = ["tpu_validate_inputs_utils.h"],
+    deps = [
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:attribute_utils",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "tpu_validate_session_inputs",
+    srcs = ["tpu_validate_session_inputs.cc"],
+    textual_hdrs = [
+        "clustering_passes.h.inc",
+    ],
+    deps = [
+        ":clustering_passes_inc_gen",
+        ":tpu_validate_inputs_utils",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:attribute_utils",
+        "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+    ],
+)
+
+cc_library(
+    name = "tpu_validate_inputs",
+    srcs = ["tpu_validate_inputs.cc"],
+    textual_hdrs = [
+        "clustering_passes.h.inc",
+    ],
+    deps = [
+        ":clustering_passes_inc_gen",
+        ":tpu_validate_inputs_utils",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:attribute_utils",
+        "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
+        "//tensorflow/compiler/mlir/tensorflow:string_util",
+        "//tensorflow/compiler/mlir/tensorflow:tensorflow_analysis",
+        "//tensorflow/compiler/mlir/tensorflow:tensorflow_types",
+        "//tensorflow/compiler/mlir/tensorflow:tpu_rewrite_device_util",
+        "//tensorflow/compiler/mlir/tensorflow/transforms:tf_pass_inc_gen",
+        "//tensorflow/core:framework",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/hlo/builder:sharding_builder",
+    ],
+)
+
+tf_cc_test(
+    name = "tpu_validate_inputs_utils_test",
+    srcs = ["tpu_validate_inputs_utils_test.cc"],
+    deps = [
+        ":tpu_validate_inputs_utils",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tf2xla/transforms:test_utils",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
     ],
 )

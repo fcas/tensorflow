@@ -27,6 +27,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/optional.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/data/rewrite_utils.h"
 #include "tensorflow/core/data/service/common.h"
 #include "tensorflow/core/data/service/common.pb.h"
@@ -50,8 +52,6 @@ limitations under the License.
 #include "tensorflow/core/protobuf/device_properties.pb.h"
 #include "tensorflow/core/protobuf/meta_graph.pb.h"
 #include "tensorflow/core/protobuf/rewriter_config.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace data {
@@ -182,7 +182,7 @@ AutoShardRewriter::GetRewriteConfig() const {
   return config;
 }
 
-Status WorkerIndexResolver::ValidateWorker(
+absl::Status WorkerIndexResolver::ValidateWorker(
     absl::string_view worker_address) const {
   if (worker_addresses_.empty()) {
     return absl::OkStatus();
@@ -195,7 +195,7 @@ Status WorkerIndexResolver::ValidateWorker(
     }
   }
 
-  return errors::FailedPrecondition(absl::Substitute(
+  return absl::FailedPreconditionError(absl::Substitute(
       "Failed to assign an index for worker $0. Configured workers list: [$1]. "
       "The worker's address is not configured, or other workers are already "
       "running at the configured host. If your worker has restarted, make sure "
@@ -219,7 +219,7 @@ absl::StatusOr<int64_t> WorkerIndexResolver::GetWorkerIndex(
     absl::string_view worker_address) const {
   const auto it = absl::c_find(worker_addresses_, worker_address);
   if (it == worker_addresses_.cend()) {
-    return errors::NotFound(absl::Substitute(
+    return absl::NotFoundError(absl::Substitute(
         "Failed to shard dataset in tf.data service: Worker $0 is not in the "
         "workers list. Got workers list $1.",
         worker_address, absl::StrJoin(worker_addresses_, ",")));

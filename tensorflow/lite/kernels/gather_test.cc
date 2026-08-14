@@ -14,15 +14,22 @@ limitations under the License.
 ==============================================================================*/
 #include <stdint.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <string>
 #include <type_traits>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "Eigen/Core"  // from @eigen_archive
+#include "tensorflow/lite/c/c_api_types.h"
+#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/kernels/internal/portable_tensor_utils.h"
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/types/half.h"
 
 namespace tflite {
 namespace {
@@ -105,12 +112,23 @@ class GatherOpModel : public SingleOpModel {
       num_elements *= shape[i];
     }
     std::vector<int8_t> inflated_output(num_elements);
-    tensor_utils::UnpackDenseInt4IntoInt8(data_int8.data(), num_elements,
-                                          inflated_output.data());
+    tensor_utils::UnpackPackedIntToInt8(data_int8.data(), num_elements,
+                                        /*bit_width=*/4,
+                                        inflated_output.data());
     return inflated_output;
   }
 
   std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
+
+  void SetRawInput(const char* data, size_t bytes) {
+    auto tensor = interpreter_->tensor(input_);
+    char* tensor_buffer = reinterpret_cast<char*>(malloc(bytes));
+    memcpy(tensor_buffer, data, bytes);
+    TfLiteTensorReset(tensor->type, tensor->name,
+                      TfLiteIntArrayCopy(tensor->dims), tensor->params,
+                      tensor_buffer, bytes, kTfLiteDynamic, tensor->allocation,
+                      tensor->is_variable, tensor);
+  }
 
  protected:
   int input_;
@@ -121,6 +139,21 @@ class GatherOpModel : public SingleOpModel {
 struct GatherOpTest : public testing::TestWithParam<bool> {};
 
 INSTANTIATE_TEST_SUITE_P(ConstantTensor, GatherOpTest, testing::Bool());
+
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+void TestFloat8Gather(TensorType tensor_type) {
+  GatherOpModel<uint8_t, int32_t> model(
+      {tensor_type, {2, 2}}, {TensorType_INT32, {2}},
+      /*constant_tensor=*/false, {0x00, 0x38, 0xbc, 0x7e}, {1, 0});
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0xbc, 0x7e, 0x00, 0x38}));
+}
+
+TEST(GatherOpTest, Float8) {
+  TestFloat8Gather(TensorType_FLOAT8_E4M3FN);
+  TestFloat8Gather(TensorType_FLOAT8_E5M2);
+}
+#endif
 
 TEST_P(GatherOpTest, Shuffle) {
   bool constant_tensor = GetParam();
@@ -250,8 +283,8 @@ TEST_P(GatherOpTest, LastAxis0DIndex) {
   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1, 2}));
 }
 
-using TestTypes =
-    testing::Types<int8_t, uint8_t, int16_t, int32_t, int64_t, float>;
+using TestTypes = testing::Types<int8_t, uint8_t, int16_t, int32_t, int64_t,
+                                 float, half, Eigen::bfloat16>;
 
 template <typename T>
 struct TypedGatherOpTest : public testing::Test {};
@@ -263,10 +296,12 @@ TYPED_TEST(TypedGatherOpTest, Int32Indices) {
     TensorType tensor_type = GetTensorType<TypeParam>();
     GatherOpModel<TypeParam, int32_t> m(
         {tensor_type, {2, 2}}, {TensorType_INT32, {2}}, constant_tensor,
-        {13, 120, 14, 15}, {1, 0});
+        {TypeParam(13), TypeParam(120), TypeParam(14), TypeParam(15)}, {1, 0});
     ASSERT_EQ(m.Invoke(), kTfLiteOk);
 
-    EXPECT_THAT(m.GetOutput(), ElementsAreArray({14, 15, 13, 120}));
+    EXPECT_THAT(m.GetOutput(),
+                ElementsAreArray({TypeParam(14), TypeParam(15), TypeParam(13),
+                                  TypeParam(120)}));
   }
 }
 
@@ -275,10 +310,12 @@ TYPED_TEST(TypedGatherOpTest, Int64Indices) {
     TensorType tensor_type = GetTensorType<TypeParam>();
     GatherOpModel<TypeParam, int64_t> m(
         {tensor_type, {2, 2}}, {TensorType_INT64, {2}}, constant_tensor,
-        {13, 120, 14, 15}, {1, 0});
+        {TypeParam(13), TypeParam(120), TypeParam(14), TypeParam(15)}, {1, 0});
     ASSERT_EQ(m.Invoke(), kTfLiteOk);
 
-    EXPECT_THAT(m.GetOutput(), ElementsAreArray({14, 15, 13, 120}));
+    EXPECT_THAT(m.GetOutput(),
+                ElementsAreArray({TypeParam(14), TypeParam(15), TypeParam(13),
+                                  TypeParam(120)}));
   }
 }
 
@@ -289,6 +326,30 @@ TEST(GatherOpTest, SimpleString) {
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   ASSERT_THAT(m.GetOutputShape(), ElementsAreArray({2}));
   EXPECT_THAT(m.GetStringOutput(), ElementsAreArray({"A", "C"}));
+}
+
+TEST(GatherOpTest, StringIndexTruncation) {
+  GatherOpModel<std::string, int16_t> m({TensorType_STRING, {1}},
+                                        {TensorType_INT16, {1}},
+                                        /*constant_tensor=*/false, {"A"}, {0});
+
+  // Access the implementation details to manually corrupt the string tensor's
+  // buffer. We want to simulate:
+  // - num_strings = -65535 (which is 0xFFFF0001, truncates to 1 in int16_t)
+  // - indexes = {0}
+  // - pos = 0 < 1 check would pass in 16-bit, but should fail with our
+  // validation.
+
+  int32_t malformed_data[3];
+  malformed_data[0] = -65535;  // N
+  malformed_data[1] = 12;      // offset
+  malformed_data[2] = 12;      // total length
+
+  m.SetRawInput(reinterpret_cast<const char*>(malformed_data),
+                sizeof(malformed_data));
+
+  // Invoke should fail (not kTfLiteOk)
+  EXPECT_NE(m.Invoke(), kTfLiteOk);
 }
 
 TEST_P(GatherOpTest, 2DIndexString) {
@@ -307,21 +368,40 @@ TYPED_TEST(TypedGatherOpTest, BatchDims2) {
     GatherOpModel<TypeParam, int32_t> m(
         {tensor_type, {2, 2, 3, 5}}, {TensorType_INT32, {2, 2, 2}},
         constant_tensor,
-        {0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
-         15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
-         30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-         45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59},
+        {TypeParam(0),  TypeParam(1),  TypeParam(2),  TypeParam(3),
+         TypeParam(4),  TypeParam(5),  TypeParam(6),  TypeParam(7),
+         TypeParam(8),  TypeParam(9),  TypeParam(10), TypeParam(11),
+         TypeParam(12), TypeParam(13), TypeParam(14), TypeParam(15),
+         TypeParam(16), TypeParam(17), TypeParam(18), TypeParam(19),
+         TypeParam(20), TypeParam(21), TypeParam(22), TypeParam(23),
+         TypeParam(24), TypeParam(25), TypeParam(26), TypeParam(27),
+         TypeParam(28), TypeParam(29), TypeParam(30), TypeParam(31),
+         TypeParam(32), TypeParam(33), TypeParam(34), TypeParam(35),
+         TypeParam(36), TypeParam(37), TypeParam(38), TypeParam(39),
+         TypeParam(40), TypeParam(41), TypeParam(42), TypeParam(43),
+         TypeParam(44), TypeParam(45), TypeParam(46), TypeParam(47),
+         TypeParam(48), TypeParam(49), TypeParam(50), TypeParam(51),
+         TypeParam(52), TypeParam(53), TypeParam(54), TypeParam(55),
+         TypeParam(56), TypeParam(57), TypeParam(58), TypeParam(59)},
         {1, 0, 0, 1, 1, 0, 0, 1},
         /*axis=*/2,
         /*batch_dims=*/2);
     ASSERT_EQ(m.Invoke(), kTfLiteOk);
 
     ASSERT_THAT(m.GetOutputShape(), ElementsAreArray({2, 2, 2, 5}));
-    EXPECT_THAT(m.GetOutput(),
-                ElementsAreArray({5,  6,  7,  8,  9,  0,  1,  2,  3,  4,
-                                  15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-                                  35, 36, 37, 38, 39, 30, 31, 32, 33, 34,
-                                  45, 46, 47, 48, 49, 50, 51, 52, 53, 54}));
+    EXPECT_THAT(
+        m.GetOutput(),
+        ElementsAreArray(
+            {TypeParam(5),  TypeParam(6),  TypeParam(7),  TypeParam(8),
+             TypeParam(9),  TypeParam(0),  TypeParam(1),  TypeParam(2),
+             TypeParam(3),  TypeParam(4),  TypeParam(15), TypeParam(16),
+             TypeParam(17), TypeParam(18), TypeParam(19), TypeParam(20),
+             TypeParam(21), TypeParam(22), TypeParam(23), TypeParam(24),
+             TypeParam(35), TypeParam(36), TypeParam(37), TypeParam(38),
+             TypeParam(39), TypeParam(30), TypeParam(31), TypeParam(32),
+             TypeParam(33), TypeParam(34), TypeParam(45), TypeParam(46),
+             TypeParam(47), TypeParam(48), TypeParam(49), TypeParam(50),
+             TypeParam(51), TypeParam(52), TypeParam(53), TypeParam(54)}));
   }
 }
 

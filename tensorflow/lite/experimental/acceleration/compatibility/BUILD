@@ -14,12 +14,14 @@
 # ==============================================================================
 
 load("@flatbuffers//:build_defs.bzl", "flatbuffer_android_library", "flatbuffer_cc_library", "flatbuffer_java_library")
-load("//tensorflow:strict.default.bzl", "py_strict_binary")
-load("//tensorflow/core/platform:build_config_root.bzl", "tf_gpu_tests_tags")
-load("//tensorflow/lite:special_rules.bzl", "tflite_extra_gles_deps", "tflite_portable_test_suite")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
+load("//tensorflow/lite:special_rules.bzl", "gpu_compatibility_without_gl_deps_internal_visibility_allowlist", "tflite_extra_gles_deps", "tflite_portable_test_suite")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -106,11 +108,10 @@ genrule(
     tools = [":json_to_fb"],
 )
 
-py_strict_binary(
+py_binary(
     name = "convert_binary_to_cc_source",
     srcs = ["convert_binary_to_cc_source.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:public"],
 )
 
@@ -199,8 +200,23 @@ cc_library(
 
 cc_library(
     name = "gpu_compatibility",
+    hdrs = ["gpu_compatibility.h"],
+    deps = [
+        ":android_info",
+        ":database_fbs",
+        ":devicedb_sample",
+        ":gpu_compatibility_without_gl_deps",
+        "//tensorflow/lite/delegates/gpu:delegate_options",
+        "//tensorflow/lite/delegates/gpu/common:gpu_info",
+        "@com_google_absl//absl/strings:string_view",
+    ] + tflite_extra_gles_deps(),
+)
+
+cc_library(
+    name = "gpu_compatibility_without_gl_deps",
     srcs = ["gpu_compatibility.cc"],
     hdrs = ["gpu_compatibility.h"],
+    visibility = gpu_compatibility_without_gl_deps_internal_visibility_allowlist(),
     deps = [
         ":android_info",
         ":canonicalize_value",
@@ -209,17 +225,20 @@ cc_library(
         ":gpu_compatibility_binary_embed",
         "//tensorflow/lite/delegates/gpu:delegate_options",
         "//tensorflow/lite/delegates/gpu/common:gpu_info",
-        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@flatbuffers",
-    ] + tflite_extra_gles_deps(),
+    ],
 )
 
 cc_test(
     name = "gpu_compatibility_test",
     srcs = ["gpu_compatibility_test.cc"],
-    tags = tf_gpu_tests_tags() + [
+    tags = [
+        "gpu",
         "no_cuda_asan",  # TODO(b/181032551).
+        "notsan",
+        "requires-gpu-sm70",
     ],
     deps = [
         ":devicedb_sample",

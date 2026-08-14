@@ -42,11 +42,16 @@ class Splitter {
   // Split message into chunks.
   virtual absl::StatusOr<ChunkedProto> Split() = 0;
 
-  // Write message to disk.
-  virtual absl::Status Write(std::string file_prefix) = 0;
+  // Write message to disk and returns the full output path.
+  virtual absl::StatusOr<std::string> Write(std::string file_prefix) = 0;
 
   // Version info about the Splitter and required Merger versions.
   virtual VersionDef Version() = 0;
+
+ protected:
+  Splitter() = default;
+  Splitter(const Splitter&) = default;
+  Splitter(Splitter&&) = default;
 };
 
 }  // namespace tools::proto_splitter

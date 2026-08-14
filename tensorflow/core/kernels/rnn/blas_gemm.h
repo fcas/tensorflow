@@ -22,7 +22,7 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
-#include "tsl/framework/contraction/eigen_contraction_kernel.h"
+#include "xla/tsl/framework/contraction/eigen_contraction_kernel.h"
 #endif
 
 namespace tensorflow {
@@ -31,8 +31,8 @@ namespace functor {
 
 template <typename T>
 struct TensorCuBlasGemm {
-  void operator()(OpKernelContext* ctx, bool transa, bool transb, uint64 m,
-                  uint64 n, uint64 k, float alpha, const T* a, int lda,
+  void operator()(OpKernelContext* ctx, bool transa, bool transb, uint64_t m,
+                  uint64_t n, uint64_t k, float alpha, const T* a, int lda,
                   const T* b, int ldb, float beta, T* c, int ldc);
 };
 

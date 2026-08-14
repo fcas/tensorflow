@@ -105,16 +105,17 @@ void AffineDequantize(const ConstTensorTin& input_tensor, float scale,
 // / scale + zero_point), while AffineQuantize() uses floor(input_val *
 // (1./scale) + 0.5) + zero_point
 template <typename ConstTensorTin, typename TensorTout>
-Status AsymmetricQuantize(const ConstTensorTin& input_tensor,
-                          int32_t quantization_min_val,
-                          int32_t quantization_max_val, float& scale,
-                          int32& zero_point, TensorTout quantized_tensor) {
+absl::Status AsymmetricQuantize(const ConstTensorTin& input_tensor,
+                                int32_t quantization_min_val,
+                                int32_t quantization_max_val, float& scale,
+                                int32_t& zero_point,
+                                TensorTout quantized_tensor) {
   if (quantization_min_val >= quantization_max_val) {
     // NOLINTNEXTLINE
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "quantization_min_val must be smaller than quantization_max_val. "
         "Given ",
-        quantization_min_val, ", ", quantization_max_val);
+        quantization_min_val, ", ", quantization_max_val));
   }
 
   Eigen::Tensor<float, 0, Eigen::RowMajor> input_tensor_min =
@@ -177,8 +178,8 @@ Status AsymmetricQuantize(const ConstTensorTin& input_tensor,
 //
 // Output quantized_multiplier is clamped to range [0, INT32_MAX],
 // and shift is clamped to range [-31, 30].
-Status QuantizeMultiplier(double double_multiplier,
-                          int32_t& quantized_multiplier, int32_t& shift);
+absl::Status QuantizeMultiplier(double double_multiplier,
+                                int32_t& quantized_multiplier, int32_t& shift);
 
 // Requantize input_val given quantized effective_muliplier|shift and
 // input|output zero_point.
@@ -207,7 +208,7 @@ namespace internal {
 
 // Requantize from per-tensor to per-tensor.
 template <typename Tin, typename Tout>
-Status PerTensorToPerTensorRequantize(
+absl::Status PerTensorToPerTensorRequantize(
     const Tensor& input, float input_scale, int32_t input_zero_point,
     float output_scale, int32_t output_zero_point, int32_t quantization_min_val,
     int32_t quantization_max_val, Tensor& output) {
@@ -235,13 +236,14 @@ Status PerTensorToPerTensorRequantize(
 // - From per-axis to per-tensor.
 // - From per-axis to per-axis.
 template <typename Tin, typename Tout>
-Status PerAxisRequantize(OpKernelContext* context, const Tensor& input,
-                         const Tensor& input_scales,
-                         const Tensor& input_zero_points,
-                         const Tensor& output_scales,
-                         const Tensor& output_zero_points,
-                         int quantization_axis, int32_t quantization_min_val,
-                         int32_t quantization_max_val, Tensor& output) {
+absl::Status PerAxisRequantize(OpKernelContext* context, const Tensor& input,
+                               const Tensor& input_scales,
+                               const Tensor& input_zero_points,
+                               const Tensor& output_scales,
+                               const Tensor& output_zero_points,
+                               int quantization_axis,
+                               int32_t quantization_min_val,
+                               int32_t quantization_max_val, Tensor& output) {
   const bool input_per_axis_quantization = input_scales.dims() == 1;
   const bool output_per_axis_quantization = output_scales.dims() == 1;
   const auto& per_axis_scales_shape = input_per_axis_quantization
@@ -273,9 +275,10 @@ Status PerAxisRequantize(OpKernelContext* context, const Tensor& input,
         effective_shifts_data[i]));
   }
 
-  const int32* input_zero_points_data = input_zero_points.flat<int32>().data();
-  const int32* output_zero_points_data =
-      output_zero_points.flat<int32>().data();
+  const int32_t* input_zero_points_data =
+      input_zero_points.flat<int32_t>().data();
+  const int32_t* output_zero_points_data =
+      output_zero_points.flat<int32_t>().data();
 
   auto input_tensor =
       input.template flat_inner_outer_dims<Tin, 3>(quantization_axis - 1);
@@ -304,19 +307,17 @@ Status PerAxisRequantize(OpKernelContext* context, const Tensor& input,
 }  // namespace internal
 
 template <typename Tin, typename Tout>
-Status EvalRequantize(OpKernelContext* context, const Tensor& input,
-                      const Tensor& input_scales,
-                      const Tensor& input_zero_points,
-                      const Tensor& output_scales,
-                      const Tensor& output_zero_points,
-                      int input_quantization_axis, int output_quantization_axis,
-                      int32_t quantization_min_val,
-                      int32_t quantization_max_val, Tensor& output) {
+absl::Status EvalRequantize(
+    OpKernelContext* context, const Tensor& input, const Tensor& input_scales,
+    const Tensor& input_zero_points, const Tensor& output_scales,
+    const Tensor& output_zero_points, int input_quantization_axis,
+    int output_quantization_axis, int32_t quantization_min_val,
+    int32_t quantization_max_val, Tensor& output) {
   if (input_quantization_axis == -1 && output_quantization_axis == -1) {
     return internal::PerTensorToPerTensorRequantize<Tin, Tout>(
         input, input_scales.scalar<float>()(),
-        input_zero_points.scalar<int32>()(), output_scales.scalar<float>()(),
-        output_zero_points.scalar<int32>()(), quantization_min_val,
+        input_zero_points.scalar<int32_t>()(), output_scales.scalar<float>()(),
+        output_zero_points.scalar<int32_t>()(), quantization_min_val,
         quantization_max_val, output);
   } else {
     const int quantization_axis = input_quantization_axis >= 0

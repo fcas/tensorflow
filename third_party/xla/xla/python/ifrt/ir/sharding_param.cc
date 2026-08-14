@@ -17,8 +17,12 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -28,12 +32,15 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/OpImplementation.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "tsl/platform/errors.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/OpImplementation.h"
+#include "mlir/Support/LogicalResult.h"
+#include "xla/python/ifrt/ir/sharding_param.pb.h"
+#include "xla/python/ifrt/serdes_version.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace xla {
 namespace ifrt {
@@ -72,6 +79,56 @@ void PopulateDevices(llvm::ArrayRef<int> permutation,
   }
 }
 
+void PrintInternalV1(llvm::raw_ostream& os, const ShardingParam& sharding) {
+  PrintDims(os, sharding.dim_shards());
+  os << " to [";
+  llvm::interleaveComma(
+      llvm::ArrayRef<int>(sharding.minor_to_major().permutation), os);
+  os << "] on ";
+  PrintDims<int>(os, sharding.minor_to_major().axis_sizes);
+}
+
+void PrintInternalV2(llvm::raw_ostream& os, const ShardingParam& sharding) {
+  PrintInternalV1(os, sharding);
+  if (!sharding.unreduced_axes().empty()) {
+    os << " unreduced [";
+    llvm::interleaveComma(llvm::ArrayRef<int>(sharding.unreduced_axes()), os);
+    os << "]";
+  }
+}
+
+mlir::ParseResult ParseDimShardsAndMajorToMinor(
+    mlir::AsmParser& ods_parser, ShardingParam::MinorToMajor& minor_to_major,
+    std::vector<int64_t>& dim_shards) {
+  auto parseIntoPermutation = [&]() -> mlir::ParseResult {
+    int item;
+    if (auto result = ods_parser.parseInteger(item)) {
+      return result;
+    }
+    minor_to_major.permutation.push_back(item);
+    return mlir::ParseResult::success();
+  };
+
+  llvm::SmallVector<int64_t, 4> axis_sizes_64;
+  llvm::SmallVector<int64_t> dim_shards_vec;
+  if (ods_parser.parseDimensionList(dim_shards_vec, false, false) ||
+      ods_parser.parseKeyword("to") ||
+      ods_parser.parseCommaSeparatedList(mlir::AsmParser::Delimiter::Square,
+                                         parseIntoPermutation) ||
+      ods_parser.parseKeyword("on") ||
+      ods_parser.parseDimensionList(axis_sizes_64, false, false)) {
+    return mlir::failure();
+  }
+
+  // The copy here is necessary because parseDimensionList expects a
+  // llvm::SmallVector<int64_t>, whereas ShardingParam expects a
+  // std::vector<int64_t>. ShardingParam has Python bindings, so we do not want
+  // its constructor to expose a SmallVector.
+  minor_to_major.axis_sizes.assign(axis_sizes_64.begin(), axis_sizes_64.end());
+  dim_shards.assign(dim_shards_vec.begin(), dim_shards_vec.end());
+  return mlir::success();
+}
+
 }  // namespace
 
 absl::Status ShardingParam::MinorToMajor::verify() const {
@@ -102,9 +159,8 @@ mlir::LogicalResult ShardingParam::MinorToMajor::verify(
   auto status = verify();
   if (status.ok()) {
     return mlir::success();
-  } else {
-    return emit_error() << status.message();
   }
+  return emit_error() << status.message();
 }
 
 void ShardingParam::MinorToMajor::ToDeviceList(
@@ -121,58 +177,80 @@ void ShardingParam::MinorToMajor::ToDeviceList(
 
 mlir::FailureOr<ShardingParam> ShardingParam::Parse(
     mlir::AsmParser& ods_parser) {
-  llvm::SmallVector<int64_t, 4> dim_shards;
+  // V2 is the current ShardingParam format.
+  return ParseV2(ods_parser);
+}
+
+mlir::FailureOr<ShardingParam> ShardingParam::ParseV1(
+    mlir::AsmParser& ods_parser) {
   MinorToMajor minor_to_major;
-
-  auto parseIntoPermutation = [&]() -> mlir::ParseResult {
-    int item;
-    if (auto result = ods_parser.parseInteger(item)) {
-      return result;
-    } else {
-      minor_to_major.permutation.push_back(item);
-    }
-    return mlir::ParseResult::success();
-  };
-
-  llvm::SmallVector<int64_t, 4> axis_sizes_64;
-  if (ods_parser.parseDimensionList(dim_shards, false, false) ||
-      ods_parser.parseKeyword("to") ||
-      ods_parser.parseCommaSeparatedList(mlir::AsmParser::Delimiter::Square,
-                                         parseIntoPermutation) ||
-      ods_parser.parseKeyword("on") ||
-      ods_parser.parseDimensionList(axis_sizes_64, false, false)) {
+  std::vector<int64_t> dim_shards;
+  if (ParseDimShardsAndMajorToMinor(ods_parser, minor_to_major, dim_shards)) {
     return mlir::failure();
   }
+  return ShardingParam(std::move(dim_shards), std::move(minor_to_major));
+}
 
-  minor_to_major.axis_sizes.reserve(axis_sizes_64.size());
-  for (int64_t size : axis_sizes_64) {
-    minor_to_major.axis_sizes.push_back(size);
+mlir::FailureOr<ShardingParam> ShardingParam::ParseV2(
+    mlir::AsmParser& ods_parser) {
+  MinorToMajor minor_to_major;
+  std::vector<int64_t> dim_shards;
+  if (ParseDimShardsAndMajorToMinor(ods_parser, minor_to_major, dim_shards)) {
+    return mlir::failure();
   }
-  return ShardingParam(dim_shards, minor_to_major);
+  std::vector<int> unreduced_axes;
+  if (llvm::succeeded(ods_parser.parseOptionalKeyword("unreduced"))) {
+    auto parseUnreducedAxes = [&]() -> mlir::ParseResult {
+      int item;
+      if (auto result = ods_parser.parseInteger(item)) {
+        return result;
+      }
+      unreduced_axes.push_back(item);
+      return mlir::ParseResult::success();
+    };
+    if (ods_parser.parseCommaSeparatedList(mlir::AsmParser::Delimiter::Square,
+                                           parseUnreducedAxes)) {
+      return mlir::failure();
+    }
+  }
+
+  return ShardingParam(std::move(dim_shards), std::move(minor_to_major),
+                       std::move(unreduced_axes));
+}
+
+void ShardingParam::PrintV1(mlir::AsmPrinter& ods_printer,
+                            const ShardingParam& sharding) {
+  PrintInternalV1(ods_printer.getStream(), sharding);
+}
+
+void ShardingParam::PrintV2(mlir::AsmPrinter& ods_printer,
+                            const ShardingParam& sharding) {
+  PrintInternalV2(ods_printer.getStream(), sharding);
 }
 
 absl::Status ShardingParam::verify() const {
-  TF_RETURN_IF_ERROR(minor_to_major().verify());
-  int dim_index = 0;
-  int cum_size = 1;
-  for (const int index : minor_to_major().permutation) {
-    while (dim_index < dim_shards().size() && dim_shards()[dim_index] == 1) {
-      dim_index++;
+  ABSL_RETURN_IF_ERROR(minor_to_major().verify());
+  const int axis_size = minor_to_major().axis_sizes.size();
+  absl::flat_hash_set<int> unreduced_set;
+  for (const int unreduced : unreduced_axes()) {
+    if (!unreduced_set.insert(unreduced).second) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("`unreduced_axes` has duplicate value: ", unreduced));
     }
-    if (dim_index == dim_shards().size()) {
-      break;
-    }
-    cum_size *= minor_to_major().axis_sizes[index];
-    while (dim_index < dim_shards().size() &&
-           cum_size % dim_shards()[dim_index] == 0) {
-      cum_size /= dim_shards()[dim_index];
-      dim_index++;
+    if (unreduced < 0 || unreduced >= axis_size) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("`unreduced_axes` must contain non-negative values "
+                       "less than the number of mesh dimensions (=",
+                       axis_size, "). Saw: ", unreduced));
     }
   }
-  while (dim_index < dim_shards().size() && dim_shards()[dim_index] == 1) {
-    dim_index++;
+  // TODO(b/491122256): Improve validation logic to check if `dim_shards` can be
+  // distributed over the device mesh.
+  int total_dim_shards_size = 1;
+  for (const int dim_shard : dim_shards()) {
+    total_dim_shards_size *= dim_shard;
   }
-  if (dim_index != dim_shards().size()) {
+  if (NumDevices() % total_dim_shards_size != 0) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Can't shard the dims ", absl::StrJoin(dim_shards(), "x"),
         " to the mesh of [", absl::StrJoin(minor_to_major().permutation, ","),
@@ -186,9 +264,8 @@ mlir::LogicalResult ShardingParam::verify(
   auto status = verify();
   if (status.ok()) {
     return mlir::success();
-  } else {
-    return emit_error() << status.message();
   }
+  return emit_error() << status.message();
 }
 
 std::string ShardingParam::DebugString() const {
@@ -246,8 +323,8 @@ ShardingParam::LocalShapeFromGlobalShape(
     if (global_shape[i] % num_shards[i] != 0) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Global shape is not divisible by the number of shards in dimension ",
-          i, ". Global size: ", global_shape[i],
-          ", number of shards: ", num_shards[i], "."));
+          i, ". Global shape: [", absl::StrJoin(global_shape, ","),
+          "], number of shards: ", num_shards[i], "."));
     }
     local_shape.push_back(global_shape[i] / num_shards[i]);
   }
@@ -267,18 +344,76 @@ llvm::hash_code hash_value(ShardingParam sharding) {
 }
 
 mlir::AsmPrinter& operator<<(mlir::AsmPrinter& os, ShardingParam sharding) {
-  os.getStream() << sharding;
+  // V2 if the current ShardingParam version.
+  PrintInternalV2(os.getStream(), sharding);
   return os;
 }
 
 llvm::raw_ostream& operator<<(llvm::raw_ostream& os, ShardingParam sharding) {
-  PrintDims(os, sharding.dim_shards());
-  os << " to [";
-  llvm::interleaveComma(
-      llvm::ArrayRef<int>(sharding.minor_to_major().permutation), os);
-  os << "] on ";
-  PrintDims<int>(os, sharding.minor_to_major().axis_sizes);
+  // V2 if the current ShardingParam version.
+  PrintInternalV2(os, sharding);
   return os;
+}
+
+absl::StatusOr<ShardingParam> ShardingParam::FromProto(
+    const ShardingParamProto& proto) {
+  const SerDesVersionNumber version_number(proto.version_number());
+  // We should only accept <= SerDesVersionNumber(1), but we accidentally used
+  // version 2 instead of 1. Since there is no `ShardingParam` serialization
+  // format change at version 2, we gracefully accept this version number.
+  if (version_number > SerDesVersionNumber(2)) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "Unsupported ", version_number, " for ShardingParam deserialization"));
+  }
+
+  ShardingParam::MinorToMajor minor_to_major;
+  minor_to_major.permutation.append(proto.permutation().begin(),
+                                    proto.permutation().end());
+  minor_to_major.axis_sizes.append(proto.axis_sizes().begin(),
+                                   proto.axis_sizes().end());
+  std::vector<int64_t> dim_shards(proto.dim_shards().begin(),
+                                  proto.dim_shards().end());
+  std::vector<int> unreduced_axes;
+  if (version_number > SerDesVersionNumber(0)) {
+    unreduced_axes = std::vector<int>(proto.unreduced_axes().begin(),
+                                      proto.unreduced_axes().end());
+  }
+  return ShardingParam(std::move(dim_shards), std::move(minor_to_major),
+                       std::move(unreduced_axes));
+}
+
+absl::Status ShardingParam::ToProto(ShardingParamProto& proto,
+                                    SerDesVersion version) const {
+  if (version.version_number() < SerDesVersionNumber(0)) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Unsupported ", version.version_number(),
+                     " for ShardingParam serialization"));
+  }
+  if (version.version_number() < SerDesVersionNumber(1) &&
+      !unreduced_axes().empty()) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("ShardingParamProto with ", version.version_number(),
+                     " does not support `unreduced_axes`"));
+  }
+
+  proto.Clear();
+  if (unreduced_axes().empty()) {
+    // If the SerDes minimum supported version becomes 1 or larger, we can use
+    // the new minimum version here without breaking version compatibility.
+    proto.set_version_number(SerDesVersionNumber(0).value());
+  } else {
+    proto.set_version_number(SerDesVersionNumber(1).value());
+  }
+  proto.mutable_dim_shards()->Add(dim_shards().begin(), dim_shards().end());
+  proto.mutable_permutation()->Add(minor_to_major().permutation.begin(),
+                                   minor_to_major().permutation.end());
+  proto.mutable_axis_sizes()->Add(minor_to_major().axis_sizes.begin(),
+                                  minor_to_major().axis_sizes.end());
+  if (!unreduced_axes().empty()) {
+    proto.mutable_unreduced_axes()->Add(unreduced_axes().begin(),
+                                        unreduced_axes().end());
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace ifrt

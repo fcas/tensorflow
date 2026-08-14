@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/request_cost.h"
 
+#include <string>
+#include <variant>
+#include <vector>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/time/time.h"
@@ -93,6 +97,61 @@ TEST(RequestCostTest, RecordBatchMetrics) {
               4, 2, 1,
               UnorderedElementsAre(Pair("gcu", absl::Milliseconds(40)),
                                    Pair("tpu", absl::Milliseconds(80))))));
+
+  request_cost.ScaleBatchCosts(4);
+  EXPECT_THAT(
+      request_cost.GetBatchMetrics(),
+      ElementsAre(
+          FieldsAre(8, 8, 0,
+                    UnorderedElementsAre(Pair("gcu", absl::Milliseconds(320)),
+                                         Pair("tpu", absl::Milliseconds(640)))),
+          FieldsAre(
+              4, 2, 1,
+              UnorderedElementsAre(Pair("gcu", absl::Milliseconds(160)),
+                                   Pair("tpu", absl::Milliseconds(320))))));
+}
+
+TEST(RequestCostTest, RecordStructuredMetrics) {
+  RequestCost request_cost;
+
+  RequestCost::StructuredMetric m1{.values = std::vector<double>{1.1, 1.2}};
+
+  RequestCost::StructuredMetric m2{.values = std::vector<std::string>{"c"}};
+
+  request_cost.RecordStructuredMetrics({{"metric_v1", m1}, {"metric_v2", m2}});
+
+  auto metrics = request_cost.GetStructuredMetrics();
+  EXPECT_EQ(metrics.size(), 2);
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<double>>(metrics["metric_v1"].values));
+  EXPECT_THAT(std::get<std::vector<double>>(metrics["metric_v1"].values),
+              ElementsAre(1.1, 1.2));
+
+  ASSERT_TRUE(std::holds_alternative<std::vector<std::string>>(
+      metrics["metric_v2"].values));
+  EXPECT_THAT(std::get<std::vector<std::string>>(metrics["metric_v2"].values),
+              ElementsAre("c"));
+}
+
+TEST(RequestCostTest, RecordStructuredCosts) {
+  RequestCost request_cost;
+
+  request_cost.RecordStructuredCosts(
+      {{"cost_a",
+        {{"dim1", absl::Milliseconds(10)}, {"dim2", absl::Milliseconds(5)}}}});
+  request_cost.RecordStructuredCosts(
+      {{"cost_a",
+        {{"dim1", absl::Milliseconds(20)}, {"dim2", absl::Milliseconds(10)}}},
+       {"cost_b", {{"dim1", absl::Milliseconds(3)}}}});
+
+  auto costs = request_cost.GetStructuredCosts();
+  ASSERT_EQ(costs.size(), 2);
+
+  // cost_a should be summed.
+  EXPECT_EQ(costs["cost_a"]["dim1"], absl::Milliseconds(30));
+  EXPECT_EQ(costs["cost_a"]["dim2"], absl::Milliseconds(15));
+
+  EXPECT_EQ(costs["cost_b"]["dim1"], absl::Milliseconds(3));
 }
 
 }  // namespace

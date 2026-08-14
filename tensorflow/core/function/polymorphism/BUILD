@@ -1,7 +1,21 @@
-load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
-load("//tensorflow:strict.default.bzl", "py_strict_test")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
 
-# Placeholder: load py_proto_library
+load("@rules_python//python:proto.bzl", "py_proto_library")
+load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 load(
     "//tensorflow/core/platform:build_config.bzl",
     "tf_proto_library",
@@ -17,17 +31,16 @@ pytype_strict_library(
     srcs = [
         "type_dispatch.py",
     ],
-    srcs_version = "PY3",
     visibility = ["//visibility:private"],
     deps = [
         ":function_type",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "type_dispatch_test",
     srcs = ["type_dispatch_test.py"],
-    python_version = "PY3",
+    strict_deps = True,
     deps = [
         ":function_type",
         ":type_dispatch",
@@ -40,7 +53,6 @@ py_strict_test(
 pytype_strict_library(
     name = "function_cache",
     srcs = ["function_cache.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorflow/python/eager:__subpackages__",
     ],
@@ -51,11 +63,11 @@ pytype_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "function_cache_test",
     size = "medium",
     srcs = ["function_cache_test.py"],
-    python_version = "PY3",
+    strict_deps = True,
     # TODO(b/213375459): For continuous benchmark monitoring
     visibility = ["//learning/brain/contrib/eager/python/examples:__pkg__"],
     deps = [
@@ -74,7 +86,6 @@ pytype_strict_library(
     srcs = [
         "function_type.py",
     ],
-    srcs_version = "PY3",
     visibility = ["//tensorflow:internal"],
     deps = [
         "//tensorflow/core/function/polymorphism:function_type_proto_py",
@@ -91,7 +102,6 @@ tf_proto_library(
     srcs = [
         "function_type.proto",
     ],
-    cc_api_version = 2,
     protodeps = [
         "//tensorflow/core/function/trace_type:serialization_proto",
     ],
@@ -101,16 +111,15 @@ tf_proto_library(
 # copybara:uncomment_begin(google-only)
 # py_proto_library(
 #     name = "function_type_py_pb2",
-#     api_version = 2,
 #     visibility = ["//visibility:private"],
 #     deps = [":function_type_proto"],
 # )
 # copybara:uncomment_end
 
-py_strict_test(
+py_test(
     name = "function_type_test",
     srcs = ["function_type_test.py"],
-    python_version = "PY3",
+    strict_deps = True,
     deps = [
         ":function_type",
         #internal proto upb dep

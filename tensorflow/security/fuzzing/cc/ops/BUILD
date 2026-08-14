@@ -1,3 +1,18 @@
+# Copyright 2026 Google LLC. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Fuzzing TensorFlow ops with GFT
 # Most ops have a similar set of dependencies and a similar fuzzing
 # infrastructure. Hence, we gather everything in one single place.
@@ -22,6 +37,8 @@ tf_cc_fuzz_test(
         "//tensorflow/security/fuzzing/cc:fuzz_session",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_domains",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_shape_domains",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -36,6 +53,8 @@ tf_cc_fuzz_test(
         "//tensorflow/security/fuzzing/cc:fuzz_session",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_domains",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_shape_domains",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -83,6 +102,8 @@ tf_cc_fuzz_test(
         "//tensorflow/security/fuzzing/cc:fuzz_session",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_domains",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_shape_domains",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -92,9 +113,12 @@ tf_cc_fuzz_test(
     tags = ["no_oss"],
     deps = [
         "//tensorflow/cc:cc_ops",
+        "//tensorflow/core/framework:types_proto_cc",
         "//tensorflow/core/kernels:array",
         "//tensorflow/core/kernels:string_to_number_op",
         "//tensorflow/security/fuzzing/cc:fuzz_session",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -104,16 +128,20 @@ tf_cc_fuzz_test(
     tags = ["no_oss"],
     deps = [
         "//tensorflow/cc:cc_ops",
+        "//tensorflow/core/framework:types_proto_cc",
         "//tensorflow/core/kernels:array",
         "//tensorflow/core/kernels:string",
         "//tensorflow/core/kernels:string_split_op",
         "//tensorflow/security/fuzzing/cc:fuzz_session",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
     ],
 )
 
 tf_cc_fuzz_test(
     name = "general_ops_fuzz",
     srcs = ["general_ops_fuzz.cc"],
+    shard_count = 5,
     deps = [
         "//tensorflow/cc:cc_ops",
         "//tensorflow/core/framework:tensor",

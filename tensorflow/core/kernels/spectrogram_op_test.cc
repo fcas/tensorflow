@@ -25,15 +25,15 @@ limitations under the License.
 #include "tensorflow/cc/ops/audio_ops.h"
 #include "tensorflow/cc/ops/const_op.h"
 #include "tensorflow/cc/ops/math_ops.h"
+#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_matchers.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/kernels/ops_util.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/test.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status_matchers.h"
 
 namespace tensorflow {
 namespace ops {
@@ -159,7 +159,25 @@ TEST(SpectrogramOpTest, InvalidWindowSize) {
       AudioSpectrogram(root.WithOpName("spectrogram_op"), audio_const_op,
                        /*window_size=*/1, /*stride=*/1);
   EXPECT_THAT(root.status(),
-              tsl::testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
+              absl_testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
+                                     ::testing::ContainsRegex("window size")));
+}
+
+TEST(SpectrogramOpTest, NegativeWindowSize) {
+  Scope root = Scope::NewRootScope();
+  const int audio_size = 8;
+  const int channel_size = 2;
+  Tensor audio_tensor(DT_FLOAT, TensorShape({audio_size, channel_size}));
+  test::FillValues<float>(
+      &audio_tensor, {-1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, -1.0f,
+                      -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f});
+  Output audio_const_op = Const(root.WithOpName("audio_const_op"),
+                                Input::Initializer(audio_tensor));
+  AudioSpectrogram spectrogram_op =
+      AudioSpectrogram(root.WithOpName("spectrogram_op"), audio_const_op,
+                       /*window_size=*/-1, /*stride=*/1);
+  EXPECT_THAT(root.status(),
+              absl_testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
                                      ::testing::ContainsRegex("window size")));
 }
 
@@ -177,7 +195,7 @@ TEST(SpectrogramOpTest, InvalidStride) {
       AudioSpectrogram(root.WithOpName("spectrogram_op"), audio_const_op,
                        /*window_size=*/2, /*stride=*/0);
   EXPECT_THAT(root.status(),
-              tsl::testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
+              absl_testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
                                      ::testing::ContainsRegex("stride")));
 }
 

@@ -17,11 +17,20 @@ limitations under the License.
 
 #include "tensorflow/c/experimental/ops/resource_variable_ops.h"
 
+#include <cstring>  // NOLINT
+#include <string>
+#include <vector>
+
+#include "absl/status/status.h"
+#include "absl/types/span.h"
 #include "tensorflow/c/eager/abstract_context.h"
+#include "tensorflow/c/eager/abstract_operation.h"
 #include "tensorflow/c/eager/abstract_tensor_handle.h"
 #include "tensorflow/c/eager/tracing_utils.h"
-#include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"  // NOLINT
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/platform/errors.h"  // NOLINT
 
 using tensorflow::tracing::MaybeSetOpName;
 
@@ -32,11 +41,12 @@ namespace ops {
 // Summary: Creates a handle to a Variable resource.
 //
 // Description:
-Status VarHandleOp(AbstractContext* ctx, AbstractTensorHandle** resource,
-                   DataType dtype, const PartialTensorShape shape,
-                   const char* container, const char* shared_name,
-                   absl::Span<string const> allowed_devices, const char* name,
-                   const char* raw_device_name) {
+absl::Status VarHandleOp(AbstractContext* ctx, AbstractTensorHandle** resource,
+                         DataType dtype, const PartialTensorShape shape,
+                         const char* container, const char* shared_name,
+                         const char* debug_name,
+                         absl::Span<std::string const> allowed_devices,
+                         const char* name, const char* raw_device_name) {
   AbstractOperationPtr op_ptr(ctx->CreateOperation());
   TF_RETURN_IF_ERROR(op_ptr->Reset("VarHandleOp", raw_device_name));
   TF_RETURN_IF_ERROR(MaybeSetOpName(op_ptr.get(), name));
@@ -44,6 +54,8 @@ Status VarHandleOp(AbstractContext* ctx, AbstractTensorHandle** resource,
       op_ptr->SetAttrString("container", container, strlen(container)));
   TF_RETURN_IF_ERROR(
       op_ptr->SetAttrString("shared_name", shared_name, strlen(shared_name)));
+  TF_RETURN_IF_ERROR(
+      op_ptr->SetAttrString("debug_name", debug_name, strlen(debug_name)));
   TF_RETURN_IF_ERROR(op_ptr->SetAttrType("dtype", dtype));
   TF_RETURN_IF_ERROR(op_ptr->SetAttrShape("shape", shape));
   TF_RETURN_IF_ERROR(
@@ -62,10 +74,10 @@ Status VarHandleOp(AbstractContext* ctx, AbstractTensorHandle** resource,
 //   the writes on which this operation depends directly or indirectly, and to
 //   not be influenced by any of the writes which depend directly or indirectly
 //   on this operation.
-Status ReadVariableOp(AbstractContext* ctx,
-                      AbstractTensorHandle* const resource,
-                      AbstractTensorHandle** value, DataType dtype,
-                      const char* name, const char* raw_device_name) {
+absl::Status ReadVariableOp(AbstractContext* ctx,
+                            AbstractTensorHandle* const resource,
+                            AbstractTensorHandle** value, DataType dtype,
+                            const char* name, const char* raw_device_name) {
   AbstractOperationPtr op_ptr(ctx->CreateOperation());
   TF_RETURN_IF_ERROR(op_ptr->Reset("ReadVariableOp", raw_device_name));
   TF_RETURN_IF_ERROR(MaybeSetOpName(op_ptr.get(), name));
@@ -81,10 +93,11 @@ Status ReadVariableOp(AbstractContext* ctx,
 // Description:
 //   Any ReadVariableOp with a control dependency on this op is guaranteed to
 //   return this value or a subsequent newer value of the variable.
-Status AssignVariableOp(AbstractContext* ctx,
-                        AbstractTensorHandle* const resource,
-                        AbstractTensorHandle* const value, bool validate_shape,
-                        const char* name, const char* raw_device_name) {
+absl::Status AssignVariableOp(AbstractContext* ctx,
+                              AbstractTensorHandle* const resource,
+                              AbstractTensorHandle* const value,
+                              bool validate_shape, const char* name,
+                              const char* raw_device_name) {
   AbstractOperationPtr op_ptr(ctx->CreateOperation());
   TF_RETURN_IF_ERROR(op_ptr->Reset("AssignVariableOp", raw_device_name));
   TF_RETURN_IF_ERROR(MaybeSetOpName(op_ptr.get(), name));
@@ -102,10 +115,10 @@ Status AssignVariableOp(AbstractContext* ctx,
 // Description:
 //   All subsequent operations using the resource will result in a NotFound
 //   error status.
-Status DestroyResourceOp(AbstractContext* ctx,
-                         AbstractTensorHandle* const resource,
-                         bool ignore_lookup_error, const char* name,
-                         const char* raw_device_name) {
+absl::Status DestroyResourceOp(AbstractContext* ctx,
+                               AbstractTensorHandle* const resource,
+                               bool ignore_lookup_error, const char* name,
+                               const char* raw_device_name) {
   AbstractOperationPtr op_ptr(ctx->CreateOperation());
   TF_RETURN_IF_ERROR(op_ptr->Reset("DestroyResourceOp", raw_device_name));
   TF_RETURN_IF_ERROR(MaybeSetOpName(op_ptr.get(), name));

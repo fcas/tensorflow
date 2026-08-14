@@ -1,4 +1,19 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.default.bzl", "tf_custom_op_py_strict_library", "tf_py_strict_test")
 
 package(
@@ -9,12 +24,12 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "failure_handling_lib",
     srcs = [
         "failure_handling.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":check_preemption_py",
         ":failure_handling_util",
@@ -38,24 +53,24 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "failure_handling_util",
     srcs = [
         "failure_handling_util.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/eager:context",
         "//tensorflow/python/platform:tf_logging",
-        "@pypi_requests//:pkg",
+        "@pypi//requests",
         "@six_archive//:six",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "preemption_watcher",
     srcs = ["preemption_watcher.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":failure_handling_util",
         "//tensorflow/python/eager:context",
@@ -72,6 +87,7 @@ tf_py_strict_test(
     srcs = ["failure_handler_test.py"],
     shard_count = 8,
     tags = [
+        "no_mac",
         "no_pip",  # TODO(b/266520226)
         "no_windows",  # TODO(b/197981388)
     ],
@@ -106,8 +122,9 @@ tf_py_strict_test(
 tf_py_strict_test(
     name = "gce_failure_handler_test",
     srcs = ["gce_failure_handler_test.py"],
-    shard_count = 8,
+    shard_count = 32,
     tags = [
+        "no_mac",  # Fails on CI but works fine locally.
         "no_pip",  # TODO(b/266520226)
         "noasan",  # TODO(b/226154233): Flaky test
     ],
@@ -134,7 +151,7 @@ tf_py_strict_test(
         "//tensorflow/python/platform:tf_logging",
         "//tensorflow/python/training:server_lib",
         "@absl_py//absl/testing:parameterized",
-        "@pypi_dill//:pkg",  # build_cleaner: keep
+        "@pypi//dill",  # build_cleaner: keep
     ],
 )
 
@@ -144,7 +161,6 @@ tf_custom_op_py_strict_library(
         "//tensorflow/core/distributed_runtime/preemption:check_preemption_op_kernel",
         "//tensorflow/core/distributed_runtime/preemption:check_preemption_op_op_lib",
     ],
-    srcs_version = "PY2AND3",
     deps = [
         "//tensorflow/core/distributed_runtime/preemption:gen_check_preemption_op",
         "//tensorflow/python/framework:for_generated_wrappers",

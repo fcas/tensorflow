@@ -25,10 +25,10 @@ limitations under the License.
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/kernels/cpu_backend_context.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
-#include "tensorflow/lite/kernels/internal/kernel_utils.h"
 #include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+#include "tensorflow/lite/kernels/internal/portable_tensor_utils.h"
 #include "tensorflow/lite/kernels/internal/quantization_util.h"
-#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/internal/runtime_shape.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/internal/tensor_utils.h"
 #include "tensorflow/lite/kernels/internal/types.h"
@@ -982,7 +982,7 @@ TfLiteStatus CheckInputTensorDimensions(TfLiteContext* context,
   const TfLiteTensor* input_gate_bias =
       GetOptionalInputTensor(context, node, kInputGateBiasTensor);
   if (use_cifg) {
-    TF_LITE_ENSURE_EQ(context, input_gate_bias, nullptr);
+    TF_LITE_ENSURE(context, input_gate_bias == nullptr);
   } else {
     TF_LITE_ENSURE_EQ(context, input_gate_bias->dims->size, 1);
     TF_LITE_ENSURE_EQ(context, input_gate_bias->dims->data[0], n_cell);
@@ -1061,7 +1061,7 @@ TfLiteStatus CheckInputTensorDimensions(TfLiteContext* context,
     const TfLiteTensor* input_layer_norm_coefficients = GetOptionalInputTensor(
         context, node, kInputLayerNormCoefficientsTensor);
     if (use_cifg) {
-      TF_LITE_ENSURE_EQ(context, input_layer_norm_coefficients, nullptr);
+      TF_LITE_ENSURE(context, input_layer_norm_coefficients == nullptr);
     } else {
       TF_LITE_ENSURE(context, input_layer_norm_coefficients != nullptr);
       TF_LITE_ENSURE_EQ(context, input_layer_norm_coefficients->dims->size, 1);
@@ -1358,8 +1358,10 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   // Check the shape of input state tensors.
   // These tensor may be 1D or 2D. It's fine as long as the total size is
   // correct.
-  TF_LITE_ENSURE_EQ(context, NumElements(output_state), n_batch * n_output);
-  TF_LITE_ENSURE_EQ(context, NumElements(cell_state), n_batch * n_cell);
+  TF_LITE_ENSURE_EQ(context, NumElements(output_state),
+                    static_cast<int64_t>(n_batch) * n_output);
+  TF_LITE_ENSURE_EQ(context, NumElements(cell_state),
+                    static_cast<int64_t>(n_batch) * n_cell);
 
   // Resize the output tensors.
   TfLiteIntArray* output_size = TfLiteIntArrayCreate(2);

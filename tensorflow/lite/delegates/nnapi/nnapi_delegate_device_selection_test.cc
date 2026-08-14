@@ -16,11 +16,12 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <iterator>
 #include <memory>
 #include <numeric>
-#include <ostream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -28,28 +29,30 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "tensorflow/lite/builtin_ops.h"
 #include "tensorflow/lite/core/c/common.h"
-#include "tensorflow/lite/core/model.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate_mock_test.h"
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/nnapi/NeuralNetworksTypes.h"
 #include "tensorflow/lite/nnapi/nnapi_implementation.h"
+#include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 namespace {
 
+void StatefulNnApiDelegateDelete(TfLiteDelegate* delegate) {
+  delete static_cast<StatefulNnApiDelegate*>(delegate);
+}
+
 class FloatAddOpModel : public SingleOpModel {
  public:
   FloatAddOpModel() = default;
-  ~FloatAddOpModel() { stateful_delegate_.reset(); }
   void Init(const NnApi* nnapi, tflite::StatefulNnApiDelegate::Options options,
             const TensorData& input1, const TensorData& input2,
             const TensorData& output, ActivationFunctionType activation_type,
             bool allow_fp32_relax_to_fp16 = false) {
-    stateful_delegate_ =
-        std::make_unique<StatefulNnApiDelegate>(nnapi, options);
-    SetDelegate(stateful_delegate_.get());
+    SetDelegate({new StatefulNnApiDelegate(nnapi, options),
+                 StatefulNnApiDelegateDelete});
 
     input1_ = AddInput(input1);
     input2_ = AddInput(input2);
@@ -74,7 +77,6 @@ class FloatAddOpModel : public SingleOpModel {
   int output_;
 
  private:
-  std::unique_ptr<StatefulNnApiDelegate> stateful_delegate_;
   TfLiteStatus compilation_status_;
 };
 
@@ -216,7 +218,9 @@ struct UnsupportedOperationOnDeviceTest
 
 class AcceleratedModel {
  public:
-  StatefulNnApiDelegate* GetDelegate() { return stateful_delegate_.get(); }
+  Interpreter::TfLiteDelegatePtr MoveDelegate() {
+    return {stateful_delegate_.release(), StatefulNnApiDelegateDelete};
+  }
 
  protected:
   // build a delegate with a target accelerator name.
@@ -269,7 +273,7 @@ class ArgMaxOpModel : public SingleOpModel, public AcceleratedModel {
 
   void Init(std::initializer_list<int> input_shape, TensorType input_type,
             int axis_value, TensorType output_type) {
-    SetDelegate(GetDelegate());
+    SetDelegate(MoveDelegate());
     input_ = AddInput(input_type);
     axis_ = AddConstInput(TensorType_INT32, {axis_value}, {1});
     output_ = AddOutput(output_type);
@@ -380,7 +384,7 @@ class AddSubOpsAcceleratedModel : public MultiOpModel, public AcceleratedModel {
                             const std::string& accelerator_name,
                             bool allow_fp32_relax_to_fp16 = false)
       : MultiOpModel(), AcceleratedModel(nnapi, accelerator_name) {
-    SetDelegate(GetDelegate());
+    SetDelegate(MoveDelegate());
     Init(input1, input2, input3, output, activation_type,
          allow_fp32_relax_to_fp16);
   }
@@ -567,7 +571,7 @@ class HardSwishAddOpsAcceleratedModel : public MultiOpModel,
                                   const std::string& accelerator_name,
                                   bool allow_fp32_relax_to_fp16 = false)
       : MultiOpModel(), AcceleratedModel(nnapi, accelerator_name) {
-    SetDelegate(GetDelegate());
+    SetDelegate(MoveDelegate());
     Init(input1, input2, output, activation_type, allow_fp32_relax_to_fp16);
   }
 
@@ -703,7 +707,7 @@ class QuantizedWeightsConvolutionOpModel : public SingleOpModel,
       int dilation_width_factor = 1, int dilation_height_factor = 1,
       int num_threads = -1, std::initializer_list<uint8_t> filter_data = {})
       : SingleOpModel(), AcceleratedModel(nnapi, accelerator_name) {
-    SetDelegate(GetDelegate());
+    SetDelegate(MoveDelegate());
 
     input_ = AddInput(input);
 
@@ -837,7 +841,7 @@ class LongIdentityModel : public MultiOpModel, public AcceleratedModel {
  private:
   void Init(const std::vector<int>& input_shape, int graph_size,
             const std::unordered_set<int>& custom_nodes_indexes) {
-    SetDelegate(GetDelegate());
+    SetDelegate(MoveDelegate());
 
     const TensorData tensor_data{TensorType_FLOAT32, input_shape};
 

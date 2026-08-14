@@ -1,5 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 ################################################################################
-FROM ubuntu:22.04 as builder
+FROM ubuntu:22.04@sha256:104ae83764a5119017b8e8d6218fa0832b09df65aae7d5a6de29a85d813da2fb as builder
 ################################################################################
 
 # Install devtoolset build dependencies
@@ -16,7 +31,7 @@ COPY builder.devtoolset/glibc2.17-inline.patch /glibc2.17-inline.patch
 RUN /build_devtoolset.sh devtoolset-9 /dt9
 
 ################################################################################
-FROM nvidia/cuda:12.3.1-base-ubuntu22.04 as devel
+FROM nvidia/cuda:12.3.2-base-ubuntu22.04@sha256:8cecfe099315f73127d6d5cc43fce32c7ffff4ea0460eefac48f2b7d811ce857 as devel
 ################################################################################
 COPY --from=builder /dt9 /dt9
 
@@ -29,7 +44,7 @@ COPY devel.packages.txt /devel.packages.txt
 RUN /setup.sources.sh && /setup.packages.sh /devel.packages.txt && /setup.cuda.sh
 
 # Make sure clang is on the path
-RUN ln -s /usr/lib/llvm-17/bin/clang /usr/bin/clang
+RUN ln -s /usr/lib/llvm-18/bin/clang /usr/bin/clang
 
 # Install various tools.
 # - bats: bash unit testing framework

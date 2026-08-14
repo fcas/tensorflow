@@ -1,4 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@flatbuffers//:build_defs.bzl", "flatbuffer_cc_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tensorflow:tensorflow.bzl", "if_google", "workspace_root")
 load(
     "//tensorflow/core/platform:build_config_root.bzl",
@@ -6,15 +23,62 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )
+
+_API_NO_GL_DEPS = [
+    ":cl_command_queue",
+    ":cl_errors",
+    ":cl_event",
+    ":environment",
+    ":inference_context",
+    ":opencl_wrapper",
+    ":tensor",
+    ":tensor_type_util",
+    "@com_google_absl//absl/memory",
+    "@com_google_absl//absl/types:span",
+    "//tensorflow/lite/delegates/gpu:api",
+    "//tensorflow/lite/delegates/gpu:tflite_profile",
+    "//tensorflow/lite/delegates/gpu/cl/kernels:converter",
+    "//tensorflow/lite/delegates/gpu/common:data_type",
+    "//tensorflow/lite/delegates/gpu/common:model",
+    "//tensorflow/lite/delegates/gpu/common:precision",
+    "//tensorflow/lite/delegates/gpu/common:shape",
+    "//tensorflow/lite/delegates/gpu/common:status",
+    "//tensorflow/lite/delegates/gpu/common:tensor",
+    "//tensorflow/lite/delegates/gpu/common/task:tensor_desc",
+]
+
+_GPU_API_DELEGATE_NO_GL_DEPS = [
+    ":opencl_wrapper",
+    ":tensor_type_util",
+    "@com_google_absl//absl/types:span",
+    "//tensorflow/lite:kernel_api",
+    "//tensorflow/lite/core/c:common",
+    "//tensorflow/lite/delegates/gpu:api",
+    "//tensorflow/lite/delegates/gpu/common:model",
+    "//tensorflow/lite/delegates/gpu/common:model_builder",
+    "//tensorflow/lite/delegates/gpu/common:model_transformer",
+    "//tensorflow/lite/delegates/gpu/common:status",
+    "//tensorflow/lite/delegates/gpu/common/transformations:model_transformations",
+]
 
 config_setting(
     name = "opencl_delegate_no_gl",
     values = {"copt": "-DCL_DELEGATE_NO_GL"},
 )
+
+# copybara:uncomment_begin(google-only)
+# cc_library(
+#     name = "api_no_gl",
+#     srcs = ["api.cc"],
+#     hdrs = ["api.h"],
+#     defines = ["CL_DELEGATE_NO_GL"],
+#     deps = _API_NO_GL_DEPS + ["//third_party/GL:EGL_headers"],
+# )
+# copybara:uncomment_end
 
 cc_library(
     name = "api",
@@ -26,28 +90,7 @@ cc_library(
             ":egl_sync",
             ":gl_interop",
         ],
-    }) + [
-        ":cl_command_queue",
-        ":cl_errors",
-        ":cl_event",
-        ":environment",
-        ":inference_context",
-        ":opencl_wrapper",
-        ":tensor",
-        ":tensor_type_util",
-        "//tensorflow/lite/delegates/gpu:api",
-        "//tensorflow/lite/delegates/gpu:tflite_profile",
-        "//tensorflow/lite/delegates/gpu/cl/kernels:converter",
-        "//tensorflow/lite/delegates/gpu/common:data_type",
-        "//tensorflow/lite/delegates/gpu/common:model",
-        "//tensorflow/lite/delegates/gpu/common:precision",
-        "//tensorflow/lite/delegates/gpu/common:shape",
-        "//tensorflow/lite/delegates/gpu/common:status",
-        "//tensorflow/lite/delegates/gpu/common:tensor",
-        "//tensorflow/lite/delegates/gpu/common/task:tensor_desc",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/types:span",
-    ],
+    }) + _API_NO_GL_DEPS,
 )
 
 cc_library(
@@ -273,6 +316,7 @@ cc_library(
         ":cl_kernel",
         ":program_cache",
         ":tensor",
+        "//tensorflow/lite/delegates/gpu/common/task:compiler_options",
         "//tensorflow/lite/delegates/gpu/common/task:gpu_operation",
         "@com_google_absl//absl/strings",
     ],
@@ -324,11 +368,9 @@ cc_library(
         ":cl_context",
         ":cl_device",
         ":program_cache",
-        ":util",
         "//tensorflow/lite/delegates/gpu/common:data_type",
         "//tensorflow/lite/delegates/gpu/common:gpu_info",
         "//tensorflow/lite/delegates/gpu/common:precision",
-        "//tensorflow/lite/delegates/gpu/common:shape",
         "//tensorflow/lite/delegates/gpu/common:status",
         "//tensorflow/lite/delegates/gpu/common:tensor",
         "//tensorflow/lite/delegates/gpu/common/task:tensor_desc",
@@ -359,6 +401,56 @@ cc_library(
     ],
 )
 
+# copybara:uncomment_begin(google-only)
+# cc_library(
+#     name = "gl_interop_no_gl",
+#     srcs = ["gl_interop.cc"],
+#     hdrs = ["gl_interop.h"],
+#     defines = ["CL_DELEGATE_NO_GL"],
+#     deps = [
+#         ":cl_command_queue",
+#         ":cl_device",
+#         ":environment",
+#         "//third_party/GL:EGL_headers",
+#         "//tensorflow/lite/delegates/gpu:spi",
+#         "//tensorflow/lite/delegates/gpu/common:access_type",
+#         "//tensorflow/lite/delegates/gpu/common:status",
+#     ],
+# )
+#
+# cc_test(
+#     name = "gl_interop_no_gl_test",
+#     srcs = ["gl_interop_no_gl_test.cc"],
+#     tags = ["requires-gpu-nvidia"],
+#     deps = [
+#         ":gl_interop_no_gl",
+#         "@com_google_googletest//:gtest_main",
+#     ],
+# )
+# copybara:uncomment_end
+
+# copybara:uncomment_begin(google-only)
+# cc_library(
+#     name = "gpu_api_delegate_no_gl",
+#     srcs = ["gpu_api_delegate.cc"],
+#     hdrs = ["gpu_api_delegate.h"],
+#     defines = ["CL_DELEGATE_NO_GL"],
+#     linkopts = select({
+#         "//tensorflow:android": [
+#             "-lEGL",
+#             "-lGLESv3",
+#         ],
+#         "//conditions:default": [],
+#     }),
+#     deps = _GPU_API_DELEGATE_NO_GL_DEPS + [
+#         ":api_no_gl",
+#         "//third_party/GL:EGL_headers",
+#         "//third_party/GL:GLES3_headers",
+#         "//tensorflow/lite/delegates/gpu:delegate_no_gl",
+#     ],
+# )
+# copybara:uncomment_end
+
 cc_library(
     name = "gpu_api_delegate",
     srcs = ["gpu_api_delegate.cc"],
@@ -370,20 +462,9 @@ cc_library(
         ],
         "//conditions:default": [],
     }),
-    deps = [
+    deps = _GPU_API_DELEGATE_NO_GL_DEPS + [
         ":api",
-        ":opencl_wrapper",
-        ":tensor_type_util",
-        "//tensorflow/lite:kernel_api",
-        "//tensorflow/lite/core/c:common",
-        "//tensorflow/lite/delegates/gpu:api",
         "//tensorflow/lite/delegates/gpu:delegate",
-        "//tensorflow/lite/delegates/gpu/common:model",
-        "//tensorflow/lite/delegates/gpu/common:model_builder",
-        "//tensorflow/lite/delegates/gpu/common:model_transformer",
-        "//tensorflow/lite/delegates/gpu/common:status",
-        "//tensorflow/lite/delegates/gpu/common/transformations:model_transformations",
-        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -446,8 +527,9 @@ cc_library(
     hdrs = ["opencl_wrapper.h"],
     linkopts = select({
         "//tensorflow:android": ["-lm"],
-        "//conditions:default": [],
-    }) + ["-ldl"],  # opencl_wrapper calls dlopen()
+        "//tensorflow:windows": [],  # Windows does not support dlopen().
+        "//conditions:default": ["-ldl"],  # opencl_wrapper calls dlopen()
+    }),
     local_defines = select({
         # copybara:uncomment_begin(google-only)
         # "//tools/cc_target_os:linux-google": ["__LINUX_GOOGLE__"],
@@ -461,9 +543,6 @@ cc_library(
         "//tensorflow/lite/delegates/gpu/cl/" + if_google("google", "default") + ":qcom_wrapper",
         "//tensorflow/lite/tools:logging",
     ] + select({
-        # copybara:uncomment_begin(google-only)
-        # "//tools/cc_target_os:linux-google": ["//third_party/opencl_icd_loader"],
-        # copybara:uncomment_end
         "//conditions:default": [],
     }),
 )

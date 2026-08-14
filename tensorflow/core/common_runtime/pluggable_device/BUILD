@@ -1,4 +1,19 @@
-load("//tensorflow:tensorflow.bzl", "tf_copts")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("//tensorflow:tensorflow.bzl", "tf_cc_test", "tf_copts")
 load("//tensorflow:tensorflow.default.bzl", "filegroup")
 load("//tensorflow/core/platform:build_config_root.bzl", "if_static")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
@@ -55,11 +70,19 @@ cc_library(
         "//tensorflow/core/common_runtime/device:device_event_mgr",
         "//tensorflow/core/platform:stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/framework:device_id_utils",
-        "@local_xla//xla/stream_executor",
-        "@local_xla//xla/stream_executor/integrations:device_mem_allocator",
+        "@com_google_absl//absl/synchronization",
+        "@xla//xla/stream_executor:device_memory",
+        "@xla//xla/stream_executor:stream_executor_h",
+        "@xla//xla/stream_executor/integrations:device_mem_allocator",
+        "@xla//xla/stream_executor/integrations:stream_executor_allocator",
+        "@xla//xla/tsl/framework:device_id_utils",
     ],
     alwayslink = 1,
 )
@@ -86,6 +109,7 @@ cc_library(
         "//tensorflow/compiler/jit:pjrt_device_context",
         "//tensorflow/compiler/jit:xla_device_no_jit_rewrite_registration",
         "//tensorflow/core:core_cpu",
+        "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
@@ -99,11 +123,15 @@ cc_library(
         "//tensorflow/core/common_runtime/next_pluggable_device:next_pluggable_device_factory",
         "//tensorflow/core/platform:stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@local_xla//xla/pjrt:pjrt_api",
-        "@local_xla//xla/pjrt/c:pjrt_c_api_hdrs",
-        "@local_xla//xla/stream_executor",
-        "@local_xla//xla/stream_executor/integrations:device_mem_allocator",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@xla//xla/pjrt:pjrt_api",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/stream_executor:stream_executor_h",
+        "@xla//xla/stream_executor/integrations:device_mem_allocator",
     ] + if_static([
         "//tensorflow/core/common_runtime:copy_tensor",
     ]),
@@ -115,6 +143,7 @@ cc_library(
     linkstatic = 1,
     deps = [
         "//tensorflow/core:core_cpu",
+        "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
@@ -125,8 +154,11 @@ cc_library(
         "//tensorflow/core/lib/core:status",
         "//tensorflow/core/platform:stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@local_xla//xla/stream_executor",
-        "@local_xla//xla/stream_executor/integrations:device_mem_allocator",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@xla//xla/stream_executor:stream_executor_h",
+        "@xla//xla/stream_executor/integrations:device_mem_allocator",
     ] + if_static([
         # Temporary workaround for duplicated symbols issues.
         ":pluggable_device_runtime_impl",
@@ -149,8 +181,11 @@ cc_library(
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/common_runtime:bfc_allocator",
-        "//tensorflow/core/common_runtime/device:device_id",
         "//tensorflow/core/common_runtime/device:device_mem_allocator",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/memory",
+        "@xla//xla/tsl/framework:allocator",
+        "@xla//xla/tsl/framework:bfc_allocator",
     ],
 )
 
@@ -166,8 +201,8 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/core/common_runtime/device:device_id",
-        "//tensorflow/core/common_runtime/device:device_mem_allocator",
+        "//tensorflow/core/framework:allocator",
+        "@xla//xla/tsl/framework:allocator",
     ],
 )
 
@@ -183,6 +218,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/platform:stream_executor",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -203,7 +239,52 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/platform:stream_executor",
-        "@local_xla//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@xla//xla/stream_executor:platform_manager",
     ],
     alwayslink = 1,
+)
+
+tf_cc_test(
+    name = "pluggable_device_plugin_init_test",
+    size = "small",
+    srcs = ["pluggable_device_plugin_init_test.cc"],
+    deps = [
+        ":pluggable_device_plugin_init",
+        "//tensorflow/c:c_api",
+        "//tensorflow/c/experimental/grappler:grappler_hdrs",
+        "//tensorflow/c/experimental/pluggable_profiler:pluggable_profiler_hdrs",
+        "//tensorflow/c/experimental/stream_executor:stream_executor_hdrs",
+        "//tensorflow/c/experimental/stream_executor/test:test_pluggable_device",  # buildcleaner: keep
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/common_runtime/next_pluggable_device/c:plugin_c_api_hdrs",
+        "//tensorflow/core/common_runtime/next_pluggable_device/c:test_next_pluggable_device_plugin",  # buildcleaner: keep
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+    ],
+)
+
+tf_cc_test(
+    name = "pluggable_device_factory_test",
+    size = "small",
+    srcs = ["pluggable_device_factory_test.cc"],
+    deps = [
+        ":pluggable_device_plugin_init",
+        ":pluggable_device_runtime_impl",
+        "//tensorflow/c:c_api",
+        "//tensorflow/c:tf_status_headers",
+        "//tensorflow/c/experimental/stream_executor:stream_executor_hdrs",
+        "//tensorflow/c/experimental/stream_executor/test:test_pluggable_device",  # buildcleaner: keep
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/common_runtime:device",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/stream_executor:platform",
+        "@xla//xla/stream_executor:platform_manager",
+    ],
 )

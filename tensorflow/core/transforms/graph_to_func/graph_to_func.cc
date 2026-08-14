@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <string>
 
-#include "absl/strings/str_cat.h"
+#include "absl/status/status.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Attributes.h"  // from @llvm-project
@@ -48,9 +48,9 @@ static ArrayAttr createLiftedValueAttr(OpBuilder &builder, OpResult value) {
   return builder.getArrayAttr(attrs);
 }
 
-tensorflow::Status GraphToFunc(GraphOp graph, ArrayRef<Value> feeds,
-                               ArrayRef<Value> fetches,
-                               ArrayRef<Value> control_rets) {
+absl::Status GraphToFunc(GraphOp graph, ArrayRef<Value> feeds,
+                         ArrayRef<Value> fetches,
+                         ArrayRef<Value> control_rets) {
   OpBuilder builder(graph);
   ControlType control_ty = ControlType::get(graph.getContext());
   llvm::SmallVector<Type> arg_types;
@@ -66,8 +66,8 @@ tensorflow::Status GraphToFunc(GraphOp graph, ArrayRef<Value> feeds,
 
   FunctionType func_type = builder.getFunctionType(arg_types, ret_types);
   auto loc = graph.getLoc();
-  auto func_op = builder.create<GraphFuncOp>(loc, func_name, func_type,
-                                             /*generic=*/false);
+  auto func_op = GraphFuncOp::create(builder, loc, func_name, func_type,
+                                     /*generic=*/false);
   func_op->setAttr("tfg.lifted_graph_version", graph.getVersion());
   func_op.getRegion().takeBody(graph.getRegion());
 
@@ -75,7 +75,7 @@ tensorflow::Status GraphToFunc(GraphOp graph, ArrayRef<Value> feeds,
   // fetches, the fetch value will be replaced with feed argument.
   OpBuilder body_builder =
       OpBuilder::atBlockEnd(func_op.SingleBlock::getBody());
-  body_builder.create<ReturnOp>(loc, fetches, control_rets);
+  ReturnOp::create(body_builder, loc, fetches, control_rets);
 
   StringAttr tfg_name = dialect->getTfgNameAttrIdentifier();
   StringAttr lifted_value_name = builder.getStringAttr("tfg.lifted_value_attr");

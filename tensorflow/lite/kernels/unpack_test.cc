@@ -23,6 +23,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/types/half.h"
 
 namespace tflite {
 namespace {
@@ -46,15 +47,19 @@ class UnpackOpModel : public SingleOpModel {
     BuildInterpreter({GetShape(input_)});
   }
 
-  void SetInput(std::initializer_list<T> data) {
-    PopulateTensor<T>(input_, data);
+  // In this test, we represent all input and output test data as integers, and
+  // convert it to the intended type here.
+  void SetInput(std::vector<int> data) {
+    std::vector<T> typed_data(data.begin(), data.end());
+    PopulateTensor(input_, typed_data);
   }
 
-  std::vector<std::vector<T>> GetOutputDatas() {
-    std::vector<std::vector<T>> output_datas;
+  std::vector<std::vector<int>> GetOutputDatas() {
+    std::vector<std::vector<int>> output_datas;
     for (const int output : outputs_) {
-      std::cerr << "the output is " << output << std::endl;
-      output_datas.push_back(ExtractVector<T>(output));
+      std::vector<T> typed_output_data = ExtractVector<T>(output);
+      output_datas.emplace_back(typed_output_data.begin(),
+                                typed_output_data.end());
     }
     return output_datas;
   }
@@ -74,9 +79,9 @@ class UnpackOpModel : public SingleOpModel {
 
 template <typename T>
 void Check(int axis, const std::initializer_list<int>& input_shape,
-           const std::initializer_list<T>& input_data,
+           const std::initializer_list<int>& input_data,
            const std::vector<std::vector<int>>& exp_output_shape,
-           const std::vector<std::vector<T>>& exp_output_data,
+           const std::vector<std::vector<int>>& exp_output_data,
            const TensorType& type = TensorType_FLOAT32) {
   UnpackOpModel<T> m({type, input_shape}, axis);
   m.SetInput(input_data);
@@ -92,19 +97,11 @@ void Check(int axis, const std::initializer_list<int>& input_shape,
 template <typename InputType>
 struct UnpackOpTest : public ::testing::Test {
   using TypeToTest = InputType;
-  TensorType TENSOR_TYPE =
-      (std::is_same<InputType, int16_t>::value
-           ? TensorType_INT16
-           : (std::is_same<InputType, uint8_t>::value
-                  ? TensorType_UINT8
-                  : (std::is_same<InputType, int8_t>::value
-                         ? TensorType_INT8
-                         : (std::is_same<InputType, int32_t>::value
-                                ? TensorType_INT32
-                                : TensorType_FLOAT32))));
+  TensorType TENSOR_TYPE = GetTensorType<InputType>();
 };
 
-using TestTypes = testing::Types<float, int32_t, int8_t, uint8_t, int16_t>;
+using TestTypes = testing::Types<float, half, Eigen::bfloat16, int32_t, int8_t,
+                                 uint8_t, int16_t>;
 TYPED_TEST_CASE(UnpackOpTest, TestTypes);
 
 TYPED_TEST(UnpackOpTest, ThreeOutputs) {
@@ -165,6 +162,19 @@ TYPED_TEST(UnpackOpTest, VectorToScalar) {
       /*exp_output_shape=*/{{}, {}, {}, {}, {}},
       /*exp_output_data=*/{{1}, {2}, {3}, {4}, {5}}, TestFixture::TENSOR_TYPE);
 }
+
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+TEST(UnpackOpTest, Float8) {
+  for (TensorType tensor_type :
+       {TensorType_FLOAT8_E4M3FN, TensorType_FLOAT8_E5M2}) {
+    Check<uint8_t>(/*axis=*/0, /*input_shape=*/{2, 2},
+                   /*input_data=*/{0x00, 0x38, 0xbc, 0x7e},
+                   /*exp_output_shape=*/{{2}, {2}},
+                   /*exp_output_data=*/{{0x00, 0x38}, {0xbc, 0x7e}},
+                   tensor_type);
+  }
+}
+#endif
 
 // bool tests.
 TEST(UnpackOpTestBool, BoolThreeOutputs) {

@@ -15,13 +15,13 @@ limitations under the License.
 include "stablehlo/dialect/StablehloOps.td"
 
 class IsStringAttrOf<string value> : Constraint<
-  CPred<"::llvm::isa_and_nonnull<StringAttr>($_self) && $_self.cast<StringAttr>().getValue() == \"" # value # "\"">,
+  CPred<"::llvm::isa_and_nonnull<StringAttr>($_self) && llvm::cast<StringAttr>($_self).getValue() == \"" # value # "\"">,
   "Is a string attribute whose value is \"" # value # "\""
 >;
 
 // Removes `stablehlo.custom_call @Sharding`. Assumes this call always accepts
 // one input. Other attributes are ignored.
 def RemoveShardingCustomCall : Pat<
-  (StableHLO_CustomCallOp (variadic $input0), $call_target_name, $_, $_, $_, $_, $_, $_, $_),
+  (StableHLO_CustomCallOp (variadic $input0), $call_target_name, $_, $_, $_, $_, $_, $_, $_, $_),
   (replaceWithValue $input0),
   [(IsStringAttrOf<"Sharding">:$call_target_name)]>;

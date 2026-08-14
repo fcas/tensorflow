@@ -15,14 +15,20 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/cumsum_spmd_expander.h"
 
-#include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <string>
-#include <utility>
 
-#include "llvm/Support/FormatVariadic.h"
+#include "absl/strings/str_cat.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
@@ -39,8 +45,8 @@ namespace {
 StatusOr<int64_t> GetAxisDimension(mlir::Operation* op) {
   auto cumsum = llvm::dyn_cast<mlir::TF::CumsumOp>(op);
   if (cumsum == nullptr) {
-    return errors::Internal(
-        absl::StrCat("Expected Cumsum op but got : ", OpName(op)).c_str());
+    return absl::InternalError(
+        absl::StrCat("Expected Cumsum op but got : ", OpName(op)));
   }
   TF_ASSIGN_OR_RETURN(int64_t axis_dim,
                       ExtractConstIntFromValue(cumsum.getAxis()));
@@ -50,7 +56,7 @@ StatusOr<int64_t> GetAxisDimension(mlir::Operation* op) {
   if (axis_dim >= -tensor_rank && axis_dim < 0) {
     axis_dim += tensor_rank;
   } else if (axis_dim < -tensor_rank || axis_dim >= tensor_rank) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Invalid axis; expected a value in [-tensor_rank, tensor_rank)");
   }
   return axis_dim;
@@ -77,7 +83,7 @@ StatusOr<mlir::Operation*> CumsumSPMDExpander::ExpandOp(mlir::Operation* op) {
   const auto operand = op->getOperand(0);
   TF_ASSIGN_OR_RETURN(auto operand_layout, ExtractLayoutFromOperand(operand));
   if (!operand_layout)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "input layout of Cumsum op must be known before SPMD "
         "expansion.");
 

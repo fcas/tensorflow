@@ -14,6 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/kernels/data/options_dataset_op.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "tensorflow/core/data/name_utils.h"
@@ -35,14 +39,14 @@ namespace data {
 class OptionsDatasetOp::Dataset : public DatasetBase {
  public:
   Dataset(OpKernelContext* ctx, const DatasetBase* input,
-          const string& serialized_options)
+          const std::string& serialized_options)
       : DatasetBase(DatasetContext(ctx)),
         input_(input),
         serialized_options_(serialized_options) {
     input_->Ref();
     Options options;
     OP_REQUIRES(ctx, options.ParseFromString(serialized_options),
-                errors::InvalidArgument(absl::StrCat(
+                absl::InvalidArgumentError(absl::StrCat(
                     "Could not parse ", OptionsDatasetOp::kSerializedOptions,
                     " as valid Options.")));
     set_options(options);
@@ -55,7 +59,7 @@ class OptionsDatasetOp::Dataset : public DatasetBase {
   ~Dataset() override { input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     DCHECK(false) << "OptionsDatasetOp::Dataset::MakeIteratorInternal is not "
                      "expected to be called because it is supposed to forward "
                      "the iterator to its input dataset(s).";
@@ -76,21 +80,22 @@ class OptionsDatasetOp::Dataset : public DatasetBase {
     return input_->Cardinality(options);
   }
 
-  Status Get(OpKernelContext* ctx, int64 index,
-             std::vector<Tensor>* out_tensors) const override {
+  absl::Status Get(OpKernelContext* ctx, int64_t index,
+                   std::vector<Tensor>* out_tensors) const override {
     return input_->Get(ctx, index, out_tensors);
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     inputs->push_back(input_);
     return absl::OkStatus();
   }
 
-  Status CheckExternalState() const override {
+  absl::Status CheckExternalState() const override {
     return input_->CheckExternalState();
   }
 
@@ -99,9 +104,9 @@ class OptionsDatasetOp::Dataset : public DatasetBase {
   }
 
  protected:
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     Node* input_graph_node = nullptr;
     TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
     AttrValue serialized_options_attr;

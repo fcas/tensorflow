@@ -1,3 +1,17 @@
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: tf-tfrt-opt -split-input-file -tf-to-mlrt %s | FileCheck %s
 
 // CHECK-LABEL: @main_stream_0
@@ -468,10 +482,8 @@ func.func @ifrt_load_variable_test() -> () {
   // CHECK-SAME:  VarHandleOp
   %0 = "tf.VarHandleOp"() {__op_key = 1: i32, device = "/device:CPU:0", container = "", shared_name = "variable"} : () -> tensor<!tf_type.resource<tensor<1x3xf32>>>
   // CHECK-NEXT: "tf_mlrt.ifrt_load_variable"([[HANDLE]])
-  // CHECK-SAME: device_sharding_config_proto_text
-  // CHECK-SAME: name = "__variable"
   // CHECK-SAME: used_by_host = true
-  %1, %2 = "tf_mlrt.tf_ifrt_load_variable"(%0) {used_by_host = true, device_sharding_config_proto_text = "sharding { } device_ids: 0 device_ids: 1 ", name = "__variable", __op_key = 2: i32, device = "/device:CPU:0"} : (tensor<!tf_type.resource<tensor<1x3xf32>>>) -> (tensor<!tf_type.string>, !mlrt.future)
+  %1, %2 = "tf_mlrt.tf_ifrt_load_variable"(%0) {used_by_host = true, __op_key = 2: i32, device = "/device:CPU:0"} : (tensor<!tf_type.resource<tensor<1x3xf32>>>) -> (tensor<!tf_type.string>, !mlrt.future)
   // CHECK-NEXT: mlrt.await_all_control
   // CHECK-NEXT: return
   func.return
@@ -491,10 +503,114 @@ func.func @ifrt_restore_variable_test() -> () {
   %cst_1 = "tf.Const"()  {__op_key = 2: i32, value = dense<["y"]> : tensor<1x!tf_type.string>} : () -> tensor<1x!tf_type.string>
   // CHECK-NEXT: [[HANDLE:%.*]] = tf_mlrt.executeop
   %handle = "tf.VarHandleOp"() {__op_key = 3: i32, container = "x", shared_name = "y"} : () -> tensor<!tf_type.resource<tensor<3x1xf32>>>
-  // CHECK-NEXT: "tf_mlrt.ifrt_restore_variable"([[PREFIX]], [[NAME]], [[SLICE]], [[HANDLE]]) <{restored_dtypes = [f32]}>
-  "tf.IfrtRestoreVariableOp"(%cst, %cst_1, %cst_0, %handle) {restored_dtypes = [f32]} : (tensor<!tf_type.string>, tensor<1x!tf_type.string>, tensor<1x!tf_type.string>, tensor<!tf_type.resource<tensor<3x1xf32>>>) -> ()
+  // CHECK-NEXT: "tf_mlrt.ifrt_restore_variable"([[PREFIX]], [[NAME]], [[SLICE]], [[HANDLE]]) <{restored_dtypes = [f32], returned_tensor_names = [], truncate_in_cast = array<i1: true>}>
+  "tf.IfrtRestoreVariableOp"(%cst, %cst_1, %cst_0, %handle) {restored_dtypes = [f32], returned_tensor_names = [], truncate_in_cast = array<i1: true>} : (tensor<!tf_type.string>, tensor<1x!tf_type.string>, tensor<1x!tf_type.string>, tensor<!tf_type.resource<tensor<3x1xf32>>>) -> ()
   // CHECK-NEXT: return
   func.return
 }
+
+// -----
+
+// Test lowering of tf.IfrtResourceDeserializeOp to tf_mlrt.ifrt_resource_deserialize
+
+// CHECK-LABEL: func @ifrt_resource_deserialize_test
+func.func @ifrt_resource_deserialize_test(%arg0: tensor<!tf_type.resource<tensor<f32>>>) {
+  %input_dir = "tf.Const"() { value = dense<"some/path"> : tensor<!tf_type.string> } : () -> tensor<!tf_type.string>
+  // CHECK: "tf_mlrt.ifrt_resource_deserialize"(%arg0, %{{.*}}) <{tensor_name = "my_tensor"}>
+  "tf.IfrtResourceDeserialize"(%arg0, %input_dir) {require_matching_crc = false, tensor_name = "my_tensor"} : (tensor<!tf_type.resource<tensor<f32>>>, tensor<!tf_type.string>) -> ()
+  func.return
+}
+
+
+// -----
+
+// Test lowering of tf.IfrtRestoreVariableOp with outputs to tf_mlrt.ifrt_restore_variable
+
+// CHECK-LABEL: func @ifrt_restore_variable_with_output_test
+func.func @ifrt_restore_variable_with_output_test() -> (tensor<3x1xf32>) {
+  // CHECK-NEXT: [[PREFIX:%.*]] = tf_mlrt.constop
+  %cst = "tf.Const"() {__op_key = 0: i32, value = dense<"restore_ariables"> : tensor<!tf_type.string>} : () -> tensor<!tf_type.string>
+  // CHECK-NEXT: [[SLICE:%.*]] = tf_mlrt.constop
+  %cst_0 = "tf.Const"()  {__op_key = 1: i32, value = dense<""> : tensor<1x!tf_type.string>} : () -> tensor<1x!tf_type.string>
+  // CHECK-NEXT: [[NAME:%.*]] = tf_mlrt.constop
+  %cst_1 = "tf.Const"()  {__op_key = 2: i32, value = dense<["y"]> : tensor<1x!tf_type.string>} : () -> tensor<1x!tf_type.string>
+  // CHECK-NEXT: [[HANDLE:%.*]] = tf_mlrt.executeop
+  %handle = "tf.VarHandleOp"() {__op_key = 3: i32, container = "x", shared_name = "y"} : () -> tensor<!tf_type.resource<tensor<3x1xf32>>>
+  // CHECK-NEXT: [[RESFUTURE:%.*]] = "tf_mlrt.ifrt_restore_variable"([[PREFIX]], [[NAME]], [[SLICE]], [[HANDLE]]) <{restored_dtypes = [f32], returned_tensor_names = ["y"], truncate_in_cast = array<i1: true>}> : (!tf_mlrt.tensor, !tf_mlrt.tensor, !tf_mlrt.tensor, !tf_mlrt.tensor) -> !mlrt.future
+  %result = "tf.IfrtRestoreVariableOp"(%cst, %cst_1, %cst_0, %handle) {restored_dtypes = [f32], returned_tensor_names = ["y"], truncate_in_cast = array<i1: true>} : (tensor<!tf_type.string>, tensor<1x!tf_type.string>, tensor<1x!tf_type.string>, tensor<!tf_type.resource<tensor<3x1xf32>>>) -> tensor<3x1xf32>
+  // CHECK-NEXT: [[RESULT:%.*]] = tf_mlrt.await [[RESFUTURE]]
+  // CHECK-NEXT: return [[RESULT]] : !tf_mlrt.tensor
+  func.return %result : tensor<3x1xf32>
+}
+
+// -----
+
+// Test lowering of tf.IfrtCall (should use fallback)
+
+// CHECK-LABEL: func @ifrt_call_fallback_test
+func.func @ifrt_call_fallback_test(%arg0: tensor<i32>) -> tensor<i32> {
+  // CHECK: tf_mlrt.executeop
+  // CHECK-SAME: IfrtCall
+  %0 = "tf.IfrtCall"(%arg0) {program_id = 123 : i64, variable_arg_indices = [], __op_key = 0 : i32, operandSegmentSizes = array<i32: 1, 0>} : (tensor<i32>) -> tensor<i32>
+  return %0 : tensor<i32>
+}
+
+// -----
+
+// Test lowering of tf.AsyncIfrtCall (should split into async call and await)
+
+// CHECK-LABEL: func @async_ifrt_call_test
+func.func @async_ifrt_call_test(%arg0: tensor<i32>) -> tensor<i32> {
+  // CHECK: [[FUTURE:%.*]] = tf_mlrt.async_ifrt_call
+  // CHECK: tf_mlrt.await [[FUTURE]]
+  %0 = "tf.AsyncIfrtCall"(%arg0) {program_id = 123 : i64, variable_arg_indices = [], __op_key = 0 : i32, operandSegmentSizes = array<i32: 1, 0>} : (tensor<i32>) -> tensor<i32>
+  return %0 : tensor<i32>
+}
+
+// -----
+
+// Test lowering of tf.PartitionedCall and tf.StatefulPartitionedCall to func.call
+
+// CHECK-LABEL: func private @callee
+// CHECK-SAME: (%arg0: !tf_mlrt.tensor) -> !tf_mlrt.tensor
+func.func private @callee(%arg0: tensor<i32>) -> tensor<i32> {
+  return %arg0 : tensor<i32>
+}
+
+// CHECK-LABEL: func @test_call_ops
+// CHECK-SAME: ([[ARG:%.*]]: !tf_mlrt.tensor) -> (!tf_mlrt.tensor, !tf_mlrt.tensor)
+func.func @test_call_ops(%arg0: tensor<i32>) -> (tensor<i32>, tensor<i32>) {
+  // CHECK: [[RES1:%.*]] = call @callee([[ARG]]) : (!tf_mlrt.tensor) -> !tf_mlrt.tensor
+  %0 = "tf.PartitionedCall"(%arg0) {config = "", config_proto = "", executor_type = "", f = @callee} : (tensor<i32>) -> tensor<i32>
+  
+  // CHECK: [[RES2:%.*]] = call @callee([[ARG]]) : (!tf_mlrt.tensor) -> !tf_mlrt.tensor
+  %1 = "tf.StatefulPartitionedCall"(%arg0) {config = "", config_proto = "", executor_type = "", f = @callee} : (tensor<i32>) -> tensor<i32>
+  
+  // CHECK: return [[RES1]], [[RES2]] : !tf_mlrt.tensor, !tf_mlrt.tensor
+  return %0, %1 : tensor<i32>, tensor<i32>
+}
+
+// -----
+
+// Test lowering of tf.PartitionedCall with a future input (should insert await)
+
+// CHECK-LABEL: func private @callee_future
+// CHECK-SAME: (%arg0: !tf_mlrt.tensor) -> !tf_mlrt.tensor
+func.func private @callee_future(%arg0: tensor<3x1xf32>) -> tensor<3x1xf32> {
+  return %arg0 : tensor<3x1xf32>
+}
+
+// CHECK-LABEL: func @test_call_with_future
+// CHECK-SAME: ([[ARG0:%.*]]: !tf_mlrt.tensor, [[ARG1:%.*]]: !tf_mlrt.tensor, [[ARG2:%.*]]: !tf_mlrt.tensor, [[ARG3:%.*]]: !tf_mlrt.tensor) -> !tf_mlrt.tensor
+func.func @test_call_with_future(%arg0: tensor<!tf_type.string>, %arg1: tensor<1x!tf_type.string>, %arg2: tensor<1x!tf_type.string>, %arg3: tensor<!tf_type.resource<tensor<3x1xf32>>>) -> tensor<3x1xf32> {
+  // CHECK: [[FUTURE:%.*]] = "tf_mlrt.ifrt_restore_variable"([[ARG0]], [[ARG1]], [[ARG2]], [[ARG3]])
+  %result = "tf.IfrtRestoreVariableOp"(%arg0, %arg1, %arg2, %arg3) {restored_dtypes = [f32], returned_tensor_names = ["y"], truncate_in_cast = array<i1: true>} : (tensor<!tf_type.string>, tensor<1x!tf_type.string>, tensor<1x!tf_type.string>, tensor<!tf_type.resource<tensor<3x1xf32>>>) -> tensor<3x1xf32>
+  // CHECK-NEXT: [[AWAITED:%.*]] = tf_mlrt.await [[FUTURE]]
+  // CHECK-NEXT: [[RESULT:%.*]] = call @callee_future([[AWAITED]]) : (!tf_mlrt.tensor) -> !tf_mlrt.tensor
+  %0 = "tf.PartitionedCall"(%result) {config = "", config_proto = "", executor_type = "", f = @callee_future} : (tensor<3x1xf32>) -> tensor<3x1xf32>
+  // CHECK: return [[RESULT]] : !tf_mlrt.tensor
+  return %0 : tensor<3x1xf32>
+}
+
 
 

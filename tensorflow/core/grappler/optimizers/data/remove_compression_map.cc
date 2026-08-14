@@ -41,7 +41,7 @@ absl::StatusOr<std::string> GetCompressionFunctionName(const GraphDef& graph) {
       }
     }
   }
-  return errors::Internal("Compression function not found.");
+  return absl::InternalError("Compression function not found.");
 }
 
 absl::StatusOr<NodeDef> GetCompressionMapNode(const GraphDef& graph) {
@@ -57,15 +57,14 @@ absl::StatusOr<NodeDef> GetCompressionMapNode(const GraphDef& graph) {
       return node;
     }
   }
-  return errors::Internal("Compression map node not found.");
+  return absl::InternalError("Compression map node not found.");
 }
 
 }  // namespace
 
-Status RemoveCompressionMap::OptimizeAndCollectStats(Cluster* cluster,
-                                                     const GrapplerItem& item,
-                                                     GraphDef* output,
-                                                     OptimizationStats* stats) {
+absl::Status RemoveCompressionMap::OptimizeAndCollectStats(
+    Cluster* cluster, const GrapplerItem& item, GraphDef* output,
+    OptimizationStats* stats) {
   *output = item.graph;
   TF_ASSIGN_OR_RETURN(NodeDef compression_map_node,
                       GetCompressionMapNode(*output));

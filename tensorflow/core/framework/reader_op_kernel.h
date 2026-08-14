@@ -59,7 +59,8 @@ class ReaderOpKernel : public ResourceOpKernel<ReaderInterface> {
       if (!already_cancelled) {
         ResourceOpKernel<ReaderInterface>::Compute(context);
       } else {
-        context->SetStatus(errors::Cancelled("read operation was cancelled"));
+        context->SetStatus(
+            absl::CancelledError("read operation was cancelled"));
       }
     }
   }
@@ -68,15 +69,15 @@ class ReaderOpKernel : public ResourceOpKernel<ReaderInterface> {
   virtual bool IsCancellable() const { return false; }
   virtual void Cancel() {}
 
-  Status CreateResource(ReaderInterface** reader)
+  absl::Status CreateResource(ReaderInterface** reader)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) override {
     *reader = factory_();
     if (*reader == nullptr) {
-      return errors::ResourceExhausted("Failed to allocate reader");
+      return absl::ResourceExhaustedError("Failed to allocate reader");
     }
     std::function<ReaderInterface*()> temp = nullptr;
     factory_.swap(temp);
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   std::function<ReaderInterface*()> factory_ TF_GUARDED_BY(mu_);

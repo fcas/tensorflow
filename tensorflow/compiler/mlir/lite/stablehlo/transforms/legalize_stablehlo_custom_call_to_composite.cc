@@ -27,13 +27,13 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
-#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/passes.h"
+#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/stablehlo_passes.h"
 
 namespace mlir {
 namespace odml {
 
 #define GEN_PASS_DEF_LEGALIZESTABLEHLOCUSTOMCALLTOCOMPOSITEPASS
-#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/passes.h.inc"
+#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/stablehlo_passes.h.inc"
 
 struct ReplaceCustomCallWithComposite final
     : OpRewritePattern<mlir::stablehlo::CustomCallOp> {
@@ -69,9 +69,9 @@ struct ReplaceCustomCallWithComposite final
 
     auto decomposition = mlir::cast<FlatSymbolRefAttr>(calledComputations[0]);
 
-    auto composite = rewriter.create<mlir::stablehlo::CompositeOp>(
-        op.getLoc(), op.getResultTypes(), op.getOperands(), name.str(), attrs,
-        decomposition.getValue());
+    auto composite = mlir::stablehlo::CompositeOp::create(
+        rewriter, op.getLoc(), op.getResultTypes(), op.getOperands(),
+        name.str(), attrs, decomposition.getValue());
     rewriter.replaceOp(op, composite.getResults());
     return success();
   }

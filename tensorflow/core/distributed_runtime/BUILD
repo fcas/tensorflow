@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 # A distributed runtime for TensorFlow, which allows graph execution
 # to be distributed and performed in parallel across multiple
@@ -66,6 +81,7 @@ tf_cc_test(
         "//tensorflow/core:lib",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -109,6 +125,7 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
+        "@tsl//tsl/platform:stacktrace",
     ],
 )
 
@@ -151,6 +168,7 @@ tf_cc_test(
         "//tensorflow/core/distributed_runtime/rpc:grpc_worker_cache",
         "//tensorflow/core/kernels:cast_op",
         "//tensorflow/core/kernels:cwise_op",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -172,10 +190,11 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/activity_watcher",
         "//tensorflow/core/protobuf:worker_proto_cc",
-        "@local_tsl//tsl/protobuf:coordination_service_proto_cc",
-        "@local_xla//xla/tsl/distributed_runtime/coordination:coordination_service",
-        "@local_xla//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
-        "@local_xla//xla/tsl/distributed_runtime/coordination:coordination_service_rpc_handler",
+        "@com_google_absl//absl/log",
+        "@xla//xla/tsl/distributed_runtime/coordination:coordination_service",
+        "@xla//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
+        "@xla//xla/tsl/distributed_runtime/coordination:coordination_service_rpc_handler",
+        "@xla//xla/tsl/protobuf:coordination_service_proto_cc",
     ],
 )
 
@@ -218,6 +237,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/protobuf:worker_proto_cc",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -233,6 +253,7 @@ cc_library(
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:lib",
         "//tensorflow/core/protobuf:worker_proto_cc",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -273,7 +294,7 @@ cc_library(
     hdrs = ["call_options.h"],
     # copybara:uncomment copts = ["-Wthread-safety-analysis"],
     deps = [
-        "@local_xla//xla/tsl/distributed_runtime:call_options",
+        "@xla//xla/tsl/distributed_runtime:call_options",
     ],
 )
 
@@ -319,6 +340,7 @@ tf_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core/framework:tensor_testutil",
         "//tensorflow/core/protobuf:worker_proto_cc",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -392,7 +414,8 @@ cc_library(
         "//tensorflow/core/platform:regexp",
         "//tensorflow/core/protobuf:master_proto_cc",
         "//tensorflow/core/protobuf:worker_proto_cc",
-        "@local_tsl//tsl/protobuf:rpc_options_proto_cc",
+        "@com_google_absl//absl/synchronization",
+        "@xla//xla/tsl/protobuf:rpc_options_proto_cc",
     ],
 )
 
@@ -412,13 +435,13 @@ cc_library(
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
-        "//tensorflow/core:graph",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/debug:debug_graph_utils",
         "//tensorflow/core/protobuf:master_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -431,6 +454,8 @@ cc_library(
         ":master",
         ":master_interface",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -481,6 +506,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -492,7 +518,7 @@ cc_library(
         ":worker_cache",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:session_options",
-        "@local_tsl//tsl/protobuf:rpc_options_proto_cc",
+        "@xla//xla/tsl/protobuf:rpc_options_proto_cc",
     ],
 )
 
@@ -512,12 +538,16 @@ cc_library(
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/debug",
-        "//tensorflow/core/profiler/lib:connected_traceme",
-        "//tensorflow/core/profiler/lib:context_types_hdrs",
-        "//tensorflow/core/profiler/lib:traceme",
-        "//tensorflow/core/profiler/lib:traceme_encode",
         "//tensorflow/core/protobuf:worker_proto_cc",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/profiler/lib:connected_traceme",
+        "@tsl//tsl/profiler/lib:context_types_hdrs",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
     ],
 )
 
@@ -605,6 +635,7 @@ tf_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core/nccl:collective_communicator",
         "//tensorflow/core/protobuf:worker_proto_cc",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -624,7 +655,6 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/profiler/lib:scoped_memory_debug_annotation",
         "//tensorflow/core/protobuf:worker_proto_cc",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
     ],
 )
@@ -648,8 +678,8 @@ tf_cc_test(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
-        "//tensorflow/core:testlib",
         "//tensorflow/core/protobuf:worker_proto_cc",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -779,7 +809,39 @@ tf_cuda_cc_test(
         "//tensorflow/core/kernels:identity_op",
         "//tensorflow/core/kernels:variable_ops",
         "//tensorflow/core/protobuf:master_proto_cc",
+        "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
+    ] + tf_grpc_cc_dependencies(),
+)
+
+tf_cuda_cc_test(
+    name = "master_session_oob_test",
+    size = "medium",
+    srcs = ["master_session_oob_test.cc"],
+    extra_copts = ["-Wthread-safety-analysis"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":server_lib",
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
+        "//tensorflow/core:session_options",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "//tensorflow/core/distributed_runtime/rpc:grpc_session",
+        "//tensorflow/core/distributed_runtime/rpc:grpc_testlib",
+        "//tensorflow/core/framework:graph_proto_cc",
+        "//tensorflow/core/framework:op",
+        "//tensorflow/core/framework:tensor",
+        "//tensorflow/core/framework:tensor_shape",
+        "//tensorflow/core/framework:tensor_testutil",
+        "//tensorflow/core/platform:env",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@xla//xla/tsl/lib/core:status_test_util",
+        "@xla//xla/tsl/platform:logging",
     ] + tf_grpc_cc_dependencies(),
 )
 
@@ -812,6 +874,7 @@ tf_cuda_cc_test(
         "//tensorflow/core/distributed_runtime/rpc:grpc_util",
         "//tensorflow/core/distributed_runtime/rpc:grpc_worker_cache",
         "//tensorflow/core/protobuf:master_proto_cc",
+        "@com_google_absl//absl/synchronization",
     ] + tf_grpc_cc_dependencies(),
 )
 

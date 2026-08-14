@@ -12,8 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-
 #include "tensorflow/core/grappler/optimizers/data/use_private_thread_pool.h"
+
+#include <cstdint>
+#include <utility>
 
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/grappler/clusters/cluster.h"
@@ -34,10 +36,9 @@ constexpr char kModelDataset[] = "ModelDataset";
 
 }  // namespace
 
-Status UsePrivateThreadPool::OptimizeAndCollectStats(Cluster* cluster,
-                                                     const GrapplerItem& item,
-                                                     GraphDef* output,
-                                                     OptimizationStats* stats) {
+absl::Status UsePrivateThreadPool::OptimizeAndCollectStats(
+    Cluster* cluster, const GrapplerItem& item, GraphDef* output,
+    OptimizationStats* stats) {
   *output = item.graph;
   MutableGraphView graph(output);
 
@@ -46,9 +47,9 @@ Status UsePrivateThreadPool::OptimizeAndCollectStats(Cluster* cluster,
     return absl::OkStatus();
 
   if (item.fetch.size() != 1) {
-    return errors::InvalidArgument(
-        "Expected only one fetch node but there were ", item.fetch.size(), ": ",
-        absl::StrJoin(item.fetch, ", "));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected only one fetch node but there were ",
+                     item.fetch.size(), ": ", absl::StrJoin(item.fetch, ", ")));
   }
 
   for (const NodeDef& node : item.graph.node()) {

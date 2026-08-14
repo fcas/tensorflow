@@ -13,20 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
+#include <string>
 
-#include "absl/memory/memory.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "xla/tsl/util/stat_summarizer_options.h"
-#include "xla/tsl/util/stats_calculator.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/step_stats.pb.h"
 #include "tensorflow/core/util/stat_summarizer.h"
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(_pywrap_stat_summarizer, m) {
+PYBIND11_MODULE(_pywrap_stat_summarizer, m, pybind11::mod_gil_not_used()) {
   py::class_<tensorflow::StatSummarizer> stat_summ_class(m, "StatSummarizer",
                                                          py::dynamic_attr());
   stat_summ_class

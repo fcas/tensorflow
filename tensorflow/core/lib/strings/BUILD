@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:tensorflow.default.bzl", "filegroup")
 load(
     "//tensorflow/core/platform:rules_cc.bzl",
@@ -14,6 +29,8 @@ package(
         "//tensorflow/core/tpu:__subpackages__",
         # For proto_serialization library
         "//tensorflow/cc/experimental/tf2:__subpackages__",
+        #For ordered_code library
+        "//tensorflow/python/profiler/internal:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -43,7 +60,8 @@ cc_library(
         "//tensorflow/core/platform:macros",
         "//tensorflow/core/platform:stringpiece",
         "//tensorflow/core/platform:types",
-        "@local_tsl//tsl/lib/core:bits",
+        "@com_google_absl//absl/log:check",
+        "@xla//xla/tsl/lib/core:bits",
     ],
 )
 
@@ -51,7 +69,7 @@ cc_library(
     name = "proto_serialization",
     hdrs = ["proto_serialization.h"],
     deps = [
-        "@local_tsl//tsl/lib/strings:proto_serialization",
+        "@xla//xla/tsl/lib/strings:proto_serialization",
     ],
 )
 
@@ -60,12 +78,8 @@ cc_library(
     srcs = ["proto_text_util.cc"],
     hdrs = ["proto_text_util.h"],
     deps = [
-        "//tensorflow/core/lib/strings:scanner",
-        "//tensorflow/core/platform:macros",
         "//tensorflow/core/platform:numbers",
-        "//tensorflow/core/platform:protobuf",
-        "//tensorflow/core/platform:str_util",
-        "//tensorflow/core/platform:strcat",
+        "//tensorflow/core/platform:scanner",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -99,6 +113,13 @@ filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
         "proto_text_util.cc",
+    ],
+    visibility = ["//tensorflow/core:__pkg__"],
+)
+
+filegroup(
+    name = "mobile_hdrs_no_runtime",
+    srcs = [
         "proto_text_util.h",
         "scanner.h",
         "str_util.h",
@@ -111,12 +132,20 @@ filegroup(
 filegroup(
     name = "mobile_srcs_only_runtime",
     srcs = [
+        "ordered_code.cc",
+        "@xla//xla/tsl/lib/strings:mobile_srcs_only_runtime",
+    ],
+    visibility = ["//tensorflow/core:__pkg__"],
+)
+
+filegroup(
+    name = "mobile_hdrs_only_runtime",
+    srcs = [
         "base64.h",
         "numbers.h",
-        "ordered_code.cc",
         "ordered_code.h",
         "proto_serialization.h",
-        "@local_tsl//tsl/lib/strings:mobile_srcs_only_runtime",
+        "@xla//xla/tsl/lib/strings:mobile_hdrs_only_runtime",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -133,7 +162,7 @@ filegroup(
         "str_util.h",
         "strcat.h",
         "stringprintf.h",
-        "@local_tsl//tsl/lib/strings:legacy_lib_strings_all_headers",
+        "@xla//xla/tsl/lib/strings:legacy_lib_strings_all_headers",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -165,7 +194,7 @@ filegroup(
         "str_util.h",
         "strcat.h",
         "stringprintf.h",
-        "@local_tsl//tsl/lib/strings:legacy_lib_string_headers",
+        "@xla//xla/tsl/lib/strings:legacy_lib_string_headers",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -178,7 +207,7 @@ filegroup(
         "proto_serialization.h",
         "proto_text_util.h",
         "scanner.h",
-        "@local_tsl//tsl/lib/strings:legacy_lib_internal_public_string_headers",
+        "@xla//xla/tsl/lib/strings:legacy_lib_internal_public_string_headers",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )

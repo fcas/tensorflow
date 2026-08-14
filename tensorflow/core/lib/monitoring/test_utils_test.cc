@@ -39,7 +39,8 @@ StatusOr<MessageType> ParseTextProto(const std::string& text_proto) {
   protobuf::io::ArrayInputStream input_stream(text_proto.data(),
                                               text_proto.size());
   if (!parser.Parse(&input_stream, &parsed_proto)) {
-    return errors::InvalidArgument("Could not parse text proto: ", text_proto);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Could not parse text proto: ", text_proto));
   }
   return parsed_proto;
 }
@@ -123,7 +124,7 @@ TEST(HistogramTest, ReverseSubtract) {
 
   EXPECT_THAT(
       Histogram(histogram2).Subtract(Histogram(histogram1)),
-      StatusIs(
+      absl_testing::StatusIs(
           error::INVALID_ARGUMENT,
           HasSubstr("Failed to subtract a histogram by a larger histogram.")));
 }
@@ -310,8 +311,9 @@ TEST(HistogramTest, DifferentBuckets) {
 
   EXPECT_THAT(
       Histogram(histogram1).Subtract(Histogram(histogram2)),
-      StatusIs(error::INVALID_ARGUMENT,
-               HasSubstr("Subtracting a histogram with different buckets.")));
+      absl_testing::StatusIs(
+          error::INVALID_ARGUMENT,
+          HasSubstr("Subtracting a histogram with different buckets.")));
 }
 
 TEST(PercentilesTest, Percentiles) {

@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <set>
@@ -24,11 +26,13 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "mlir/Analysis/TopologicalSortUtils.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Block.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
@@ -43,7 +47,6 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/TopologicalSortUtils.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -69,7 +72,7 @@ namespace ops_util = ::mlir::TF::collection_ops_util;
 
 // Pad the merged tensor shape to multiples of 1024B, so delinearization
 // skipping optimization in XLA can get activated.
-constexpr int32 kAllReducePadding = 1024;
+constexpr int32_t kAllReducePadding = 1024;
 
 // Returns true if `successor` depends on `predecessor`.
 // TODO(jiawenhao): Repeatedly computing dependency sets for a large cluster can
@@ -148,10 +151,10 @@ mlir::LogicalResult MergeAllReduceGroup(
   mlir::Location loc = all_reduce_group[0].getLoc();
   mlir::Type elem_type = all_reduce_group[0].getType().getElementType();
   auto zero_scalar = ops_util::CreateScalarConst(0, builder, loc);
-  auto zero_scalar_elem_type = builder.create<mlir::TF::CastOp>(
-      loc, mlir::RankedTensorType::get({}, elem_type), zero_scalar);
-  auto merged = builder.create<mlir::TF::FillOp>(
-      loc, ops_util::GetR1Const({total_num_elements}, builder, loc),
+  auto zero_scalar_elem_type = mlir::TF::CastOp::create(
+      builder, loc, mlir::RankedTensorType::get({}, elem_type), zero_scalar);
+  auto merged = mlir::TF::FillOp::create(
+      builder, loc, ops_util::GetR1Const({total_num_elements}, builder, loc),
       zero_scalar_elem_type);
 
   // Store every all-reduce's input at an offset location in the merged tensor,
@@ -172,23 +175,23 @@ mlir::LogicalResult MergeAllReduceGroup(
     }
 
     int num_elements = all_reduce_ranked_type.getNumElements();
-    auto flattened = builder.create<mlir::TF::ReshapeOp>(
-        DT_LOC2(loc, "CombinedReduceFlatten"), all_reduce.getInput(),
+    auto flattened = mlir::TF::ReshapeOp::create(
+        builder, DT_LOC2(loc, "CombinedReduceFlatten"), all_reduce.getInput(),
         ops_util::GetR1Const({num_elements}, builder, loc));
     flattened_types.push_back(flattened.getType());
     auto indices = ops_util::GetR1Const({offset_num_elements}, builder, loc);
 
     if (all_reduce.getDeviceType().contains("TPU")) {
-      updated = builder.create<mlir::TF::XlaDynamicUpdateSliceOp>(
-          DT_LOC2(loc, "CombinedReduceUpdateSlice"), merged.getType(),
+      updated = mlir::TF::XlaDynamicUpdateSliceOp::create(
+          builder, DT_LOC2(loc, "CombinedReduceUpdateSlice"), merged.getType(),
           /*input=*/i == 0 ? merged.getResult() : updated,
           /*update=*/flattened, indices);
     } else {
       auto end = ops_util::GetR1Const({offset_num_elements + num_elements},
                                       builder, loc);
       auto strides = ops_util::GetR1Const({1}, builder, loc);
-      updated = builder.create<mlir::TF::TensorStridedSliceUpdateOp>(
-          DT_LOC2(loc, "CombinedReduceUpdateSlice"), merged.getType(),
+      updated = mlir::TF::TensorStridedSliceUpdateOp::create(
+          builder, DT_LOC2(loc, "CombinedReduceUpdateSlice"), merged.getType(),
           /*input=*/i == 0 ? merged.getResult() : updated, indices, end,
           strides,
           /*value=*/flattened);
@@ -197,8 +200,8 @@ mlir::LogicalResult MergeAllReduceGroup(
   }
 
   // All-reduce the updated merged tensor.
-  auto merged_all_reduce = builder.create<mlir::TF::DTensorAllReduceOp>(
-      all_reduce_group[0].getLoc(), updated.getType(), updated,
+  auto merged_all_reduce = mlir::TF::DTensorAllReduceOp::create(
+      builder, all_reduce_group[0].getLoc(), updated.getType(), updated,
       all_reduce_group[0].getGroupAssignment(),
       all_reduce_group[0].getReduceOp(), all_reduce_group[0].getDeviceType());
   SetSingleLayoutOnOp(
@@ -220,13 +223,13 @@ mlir::LogicalResult MergeAllReduceGroup(
           all_reduce_ranked_type));
     }
     int num_elements = all_reduce_ranked_type.getNumElements();
-    auto slice = builder.create<mlir::TF::SliceOp>(
-        DT_LOC2(loc, "PostCombinedReduceSlice"), flattened_types[i],
+    auto slice = mlir::TF::SliceOp::create(
+        builder, DT_LOC2(loc, "PostCombinedReduceSlice"), flattened_types[i],
         /*input=*/merged_all_reduce,
         /*begin=*/ops_util::GetR1Const({offset_num_elements}, builder, loc),
         /*size=*/ops_util::GetR1Const({num_elements}, builder, loc));
-    auto replacement = builder.create<mlir::TF::ReshapeOp>(
-        DT_LOC2(loc, "PostCombinedReduceReshape"), slice.getResult(),
+    auto replacement = mlir::TF::ReshapeOp::create(
+        builder, DT_LOC2(loc, "PostCombinedReduceReshape"), slice.getResult(),
         ops_util::GetR1Const(all_reduce_shapes[i], builder, loc));
     replacements.push_back(replacement);
     offset_num_elements += num_elements;
@@ -261,12 +264,12 @@ std::string DrawAllReduceDependencies(
   }
   std::string output = "digraph all_reduces {\n";
   for (int i = 0; i < dependents.size(); i++) {
-    strings::StrAppend(&output, i);
-    strings::StrAppend(&output, "\n");
+    absl::StrAppend(&output, i);
+    absl::StrAppend(&output, "\n");
   }
   for (int i = 0; i < dependents.size(); i++) {
     for (int j : dependents[i]) {
-      strings::StrAppend(&output, i, " -> ", j, "\n");
+      absl::StrAppend(&output, i, " -> ", j, "\n");
     }
   }
   output += "}";
@@ -598,7 +601,7 @@ createSubgroupsByTopoDist(
   // between two ops
   for (auto& all_reduce_group : all_reduce_groups) {
     std::vector<mlir::TF::DTensorAllReduceOp> new_group;
-    Status status = absl::OkStatus();
+    absl::Status status = absl::OkStatus();
 
     // Sort AllReduces by topological level as the input order may not reflect
     // their dependencies on the operands in the compute graph.

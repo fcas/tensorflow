@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+#include <memory>
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -125,8 +128,8 @@ TF::TPUGetLayoutOp BuildGetLayout(const int64_t execute_arg_index,
                                   Value compilation_key,
                                   tf_device::LaunchOp compile_launch,
                                   OpBuilder* builder) {
-  return builder->create<TF::TPUGetLayoutOp>(
-      compile_launch.getLoc(),
+  return TF::TPUGetLayoutOp::create(
+      *builder, compile_launch.getLoc(),
       llvm::ArrayRef<Type>{RankedTensorType::get({ShapedType::kDynamic},
                                                  builder->getIntegerType(64))},
       llvm::ArrayRef<Value>{compilation_key},
@@ -141,8 +144,8 @@ TF::TPUCopyWithLayoutOp BuildCopyWithLayout(tf_device::LaunchOp execute_launch,
                                             tf_device::LaunchOp compile_launch,
                                             TF::TPUGetLayoutOp get_layout,
                                             Value input, OpBuilder* builder) {
-  return builder->create<TF::TPUCopyWithLayoutOp>(
-      execute_launch.getLoc(), llvm::ArrayRef<Type>{input.getType()},
+  return TF::TPUCopyWithLayoutOp::create(
+      *builder, execute_launch.getLoc(), llvm::ArrayRef<Type>{input.getType()},
       llvm::ArrayRef<Value>{input, get_layout.getLayout()});
 }
 

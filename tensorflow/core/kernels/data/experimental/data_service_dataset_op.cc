@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/time/time.h"
+#include "xla/tsl/framework/allocator.h"
 #include "tensorflow/core/data/captured_function.h"
 #include "tensorflow/core/data/dataset_utils.h"
 #include "tensorflow/core/data/name_utils.h"
@@ -151,7 +152,7 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
   ~Dataset() override {
     iteration_counter_->Unref();
     if (owns_resource_) {
-      Status s = resource_mgr_->Delete<IterationCounter>(
+      absl::Status s = resource_mgr_->Delete<IterationCounter>(
           iteration_counter_handle_.container(),
           iteration_counter_handle_.name());
       if (!s.ok()) {
@@ -161,7 +162,7 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
   }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(
         Iterator::Params{this,
                          name_utils::IteratorPrefix(kDatasetType, prefix)},
@@ -180,7 +181,7 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     return output_shapes_;
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
@@ -189,21 +190,22 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
                                is_coordinated_read_);
   }
 
-  Status CheckExternalState() const override {
-    return Status(
+  absl::Status CheckExternalState() const override {
+    return absl::Status(
         absl::StatusCode::kFailedPrecondition,
-        strings::StrCat(DebugString(), " does not yet support serialization."));
+        absl::StrCat(DebugString(), " does not yet support serialization."));
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     inputs->clear();
     return absl::OkStatus();
   }
 
  protected:
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     // Inputs
     std::vector<Node*> inputs;
 
@@ -214,8 +216,8 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     } else {
       int64_t dataset_id_int;
       if (!absl::SimpleAtoi(dataset_id_, &dataset_id_int)) {
-        return errors::Internal("Failed to parse dataset ID: ", dataset_id_,
-                                ". Expect integers.");
+        return absl::InternalError(absl::StrCat(
+            "Failed to parse dataset ID: ", dataset_id_, ". Expect integers."));
       }
       Node* dataset_id;
       TF_RETURN_IF_ERROR(b->AddScalar(dataset_id_int, &dataset_id));
@@ -263,7 +265,7 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     inputs.push_back(iteration_counter_handle);
 
     // Attributes
-    std::vector<std::pair<StringPiece, AttrValue>> attrs;
+    std::vector<std::pair<absl::string_view, AttrValue>> attrs;
     AttrValue task_refresh_interval_hint_ms;
     b->BuildAttrValue(absl::ToInt64Milliseconds(task_refresh_interval_),
                       &task_refresh_interval_hint_ms);
@@ -336,17 +338,21 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
       }
     }
 
-    Status Initialize(IteratorContext* ctx) override {
+    absl::Status Initialize(IteratorContext* ctx) override {
       TF_RETURN_IF_ERROR(RegisterCancellationCallback(
           ctx->cancellation_manager(),
           [this]() { data_service_client_.Cancel(); }, &deregister_fn_));
+      tsl::AllocatorAttributes attrs;
+      if (ctx->options() != nullptr) {
+        attrs.set_gpu_compatible(ctx->options()->service_options().pinned());
+      }
       return data_service_client_.Initialize(ctx->accelerator_device_info(),
-                                             ctx->allocator(/*attrs=*/{}));
+                                             ctx->allocator(attrs));
     }
 
-    Status GetNextInternal(IteratorContext* ctx,
-                           std::vector<Tensor>* out_tensors,
-                           bool* end_of_sequence) override {
+    absl::Status GetNextInternal(IteratorContext* ctx,
+                                 std::vector<Tensor>* out_tensors,
+                                 bool* end_of_sequence) override {
       auto ctx_factory = [ctx, this]() {
         return std::make_unique<DataServiceIteratorContext>(
             ctx, this, buffer_size_, model_node());
@@ -369,14 +375,14 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
                                 /*max=*/std::numeric_limits<double>::max())});
     }
 
-    Status SaveInternal(SerializationContext* ctx,
-                        IteratorStateWriter* writer) override {
-      return errors::Unimplemented("SaveInternal is not yet supported");
+    absl::Status SaveInternal(SerializationContext* ctx,
+                              IteratorStateWriter* writer) override {
+      return absl::UnimplementedError("SaveInternal is not yet supported");
     }
 
-    Status RestoreInternal(IteratorContext* ctx,
-                           IteratorStateReader* reader) override {
-      return errors::Unimplemented("RestoreInternal is not yet supported");
+    absl::Status RestoreInternal(IteratorContext* ctx,
+                                 IteratorStateReader* reader) override {
+      return absl::UnimplementedError("RestoreInternal is not yet supported");
     }
 
     TraceMeMetadata GetTraceMeMetadata() const override {
@@ -399,7 +405,7 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
       DataServiceIteratorContext& operator=(const DataServiceIteratorContext&) =
           delete;
 
-      std::unique_ptr<Thread> StartThread(const string& name,
+      std::unique_ptr<Thread> StartThread(const std::string& name,
                                           std::function<void()> fn) override {
         return ctx_.StartThread(name, std::move(fn));
       }
@@ -414,7 +420,7 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
       double GetTargetProcessingTimeNsec() const override {
         if (ctx_.model() == nullptr) {
-          LOG(WARNING) << "tf.data Model is null in DataServiceIteratorContext";
+          VLOG(1) << "tf.data Model is null in DataServiceIteratorContext";
           return 0.0;
         }
 
@@ -531,8 +537,8 @@ DataServiceDatasetOp::DataServiceDatasetOp(OpKernelConstruction* ctx)
   } else if (op_name == kDataServiceDatasetV4) {
     op_version_ = 4;
   } else {
-    ctx->CtxFailure(errors::FailedPrecondition(
-        "Unrecognized data service dataset op name: ", op_name));
+    ctx->CtxFailure(absl::FailedPreconditionError(
+        absl::StrCat("Unrecognized data service dataset op name: ", op_name)));
     return;
   }
 
@@ -596,7 +602,7 @@ void DataServiceDatasetOp::MakeDataset(OpKernelContext* ctx,
     processing_mode.set_sharding_policy(ProcessingModeDef::DYNAMIC);
   } else {
     OP_REQUIRES(ctx, processing_mode.ParseFromString(processing_mode_str),
-                errors::InvalidArgument(absl::Substitute(
+                absl::InvalidArgumentError(absl::Substitute(
                     "Failed to parse ProcessingModeDef from string: $0",
                     std::string(processing_mode_str))));
   }
@@ -604,12 +610,14 @@ void DataServiceDatasetOp::MakeDataset(OpKernelContext* ctx,
   tstring address;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, kAddress, &address));
   OP_REQUIRES(ctx, !address.empty(),
-              errors::InvalidArgument(kAddress, " must be non-empty."));
+              absl::InvalidArgumentError(
+                  absl::StrCat(kAddress, " must be non-empty.")));
 
   tstring protocol;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, kProtocol, &protocol));
   OP_REQUIRES(ctx, !protocol.empty(),
-              errors::InvalidArgument(kProtocol, " must be non-empty."));
+              absl::InvalidArgumentError(
+                  absl::StrCat(kProtocol, " must be non-empty.")));
 
   tstring job_name;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, kJobName, &job_name));
@@ -655,11 +663,11 @@ void DataServiceDatasetOp::MakeDataset(OpKernelContext* ctx,
   OP_REQUIRES_OK(
       ctx, HandleFromInput(ctx, kIterationCounter, &iteration_counter_handle));
   IterationCounter* iteration_counter = nullptr;
-  Status s = ctx->resource_manager()->Lookup<IterationCounter>(
+  absl::Status s = ctx->resource_manager()->Lookup<IterationCounter>(
       iteration_counter_handle.container(), iteration_counter_handle.name(),
       &iteration_counter);
   bool owns_resource = false;
-  if (errors::IsNotFound(s)) {
+  if (absl::IsNotFound(s)) {
     owns_resource = true;
     static std::atomic<int64_t> resource_id_counter(0);
     const std::string& container = ctx->resource_manager()->default_container();
@@ -683,26 +691,27 @@ void DataServiceDatasetOp::MakeDataset(OpKernelContext* ctx,
       ctx,
       max_outstanding_requests == model::kAutotune ||
           max_outstanding_requests > 0,
-      errors::InvalidArgument(kMaxOutstandingRequests, " must be positive or ",
-                              model::kAutotune));
+      absl::InvalidArgumentError(absl::StrCat(
+          kMaxOutstandingRequests, " must be positive or ", model::kAutotune)));
 
   absl::StatusOr<DataServiceMetadata> metadata =
       GetDataServiceMetadata(dataset_id, address, protocol);
   OP_REQUIRES_OK(ctx, metadata.status());
 
   bool should_uncompress = op_version_ >= 3 && uncompress_;
+  absl::StatusOr<DataServiceMetadata::Compression> compression =
+      GetValidatedCompression(dataset_id, *metadata);
   if (should_uncompress) {
-    absl::StatusOr<DataServiceMetadata::Compression> compression =
-        GetValidatedCompression(dataset_id, *metadata);
     OP_REQUIRES_OK(ctx, compression.status());
     should_uncompress =
         should_uncompress &&
-        (*compression == DataServiceMetadata::COMPRESSION_SNAPPY);
+        (*compression == DataServiceMetadata::COMPRESSION_SNAPPY ||
+         *compression == DataServiceMetadata::COMPRESSION_FORCED_SNAPPY);
   }
   if (should_uncompress) {
     absl::StatusOr<bool> disable_compression_at_runtime =
         DisableCompressionAtRuntime(data_transfer_protocol_,
-                                    config->deployment_mode());
+                                    config->deployment_mode(), *compression);
     OP_REQUIRES_OK(ctx, disable_compression_at_runtime.status());
     absl::StatusOr<bool> compression_disabled_at_runtime =
         CompressionDisabledAtRuntime(dataset_id, address, protocol,

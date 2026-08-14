@@ -20,17 +20,17 @@ include "tensorflow/compiler/mlir/lite/utils/utils.td"
 def FalseBoolAttr : AttrConstraint<CPred<"!$_self.getValue()">>;
 
 def DenseElementsAttr : ElementsAttrBase<
-  CPred<"$_self.isa<DenseElementsAttr>()">,
+  CPred<"llvm::isa<DenseElementsAttr>($_self)">,
   "non-opaque constant tensor">;
 
 def CreateGatherNdOp : NativeCodeCall<
-    "$_builder.create<TF::GatherNdOp>($0.getLoc(), $0.getType(), $1, $2)">;
+    "TF::GatherNdOp::create($_builder, $0.getLoc(), $0.getType(), $1, $2, $3)">;
 
 def CreateTFCastOpI32 : NativeCodeCall<
     "CreateTFCastOpI32(&$_builder, $_loc, $0, $1)">;
 
 // Convert to std constant for statically shaped, non-opaque constants.
-def ConvertTfConst : Pat<(TF_ConstOp:$res DenseElementsAttr:$value), (Arith_ConstantOp $value),
+def ConvertTfConst : Pat<(TF_ConstOp:$res DenseElementsAttr:$value), (TFL_ConstOp $value),
           [(AnyStaticShapeTensor $res)]>;
 
 // Convert the legacy BatchNormWithGlobalNormalization to other ops.
@@ -100,7 +100,7 @@ def ConvertPlaceholderWithDefault : Pat<(TF_PlaceholderWithDefaultOp $arg), (TF_
 // Op removal patterns.
 //===----------------------------------------------------------------------===//
 def RemovePreventGradient : Pat<(TF_PreventGradientOp $op, $msg), (replaceWithValue $op)>;
-def RemoveXlaSharding : Pat<(TF_XlaShardingOp $a, $b, $c), (replaceWithValue $a)>;
+def RemoveXlaSharding : Pat<(TF_XlaShardingOp $a, $b, $c, $d), (replaceWithValue $a)>;
 def RemoveIdentityN : Pat<(TF_IdentityNOp $arg), (replaceWithValue $arg)>;
 
 //===----------------------------------------------------------------------===//
@@ -109,10 +109,10 @@ def RemoveIdentityN : Pat<(TF_IdentityNOp $arg), (replaceWithValue $arg)>;
 // Casts result type of $1 to a quantized type by using the quantization
 // parameters from the type in $0.
 class UpdateShapeWithAxis<int i> : NativeCodeCall<
-  "quant::CastQuantizedTypeAttrFromExpressedType($_builder, $0, $1.getType(), " # i # ")">;
+  "CastQuantizedTypeAttrFromExpressedType($_builder, $0, $1.getType(), " # i # ")">;
 
 class CanUpdateShapeWithAxis<int i> : Constraint<
-  CPred<"quant::CastQuantizedTypeAttrFromExpressedType($_builder, $0, $1.getType(), " # i # ")">>;
+  CPred<"CastQuantizedTypeAttrFromExpressedType($_builder, $0, $1.getType(), " # i # ")">>;
 
 class UsedBy<string op> : Constraint<
   CPred<"llvm::isa<mlir::TFL::" # op # "Op>(*$0.getUsers().begin())">>;
@@ -197,9 +197,14 @@ def ConvertMatrixSetDiagV3ToMatrixSetDiag :
 //===----------------------------------------------------------------------===//
 
 def LowerTensorScatterAdd: Pat<
-  (TF_TensorScatterAddOp $input, $indices, $updates),
-  (TF_TensorScatterUpdateOp $input, $indices,
-     (TF_AddOp $updates, (CreateGatherNdOp $updates, $input, $indices)))>;
+  (TF_TensorScatterAddOp $input, $indices, $updates, $bad_indices_policy),
+  (TF_TensorScatterUpdateOp
+    $input,
+    $indices,
+    (TF_AddOp
+      $updates,
+      (CreateGatherNdOp $updates, $input, $indices, $bad_indices_policy)),
+    $bad_indices_policy)>;
 
 //===----------------------------------------------------------------------===//
 // AddV2 op patterns.

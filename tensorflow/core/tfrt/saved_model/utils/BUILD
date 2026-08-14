@@ -1,3 +1,19 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_shared_test")
 
 package(
@@ -31,8 +47,8 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/platform:env",
         "@tf_runtime//:bef",
+        "@tsl//tsl/platform:env",
     ],
 )
 
@@ -57,11 +73,12 @@ tf_cc_shared_test(
         "//tensorflow/core/tfrt/saved_model:saved_model_testutil",
         "//tensorflow/core/tfrt/saved_model:saved_model_util",
         "//tensorflow/core/tfrt/utils",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:env",
         "@tf_runtime//:bef",
+        "@tsl//tsl/platform:env",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )

@@ -80,8 +80,8 @@ limitations under the License.
 #include "tensorflow/core/platform/stringpiece.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/public/release_version.h"
 #include "tensorflow/core/public/session.h"
-#include "tensorflow/core/public/version.h"
 
 // The implementation below is at the top level instead of the
 // brain namespace because we are defining 'extern "C"' functions.
@@ -138,7 +138,7 @@ void TF_SetTarget(TF_SessionOptions* options, const char* target) {
 void TF_SetConfig(TF_SessionOptions* options, const void* proto,
                   size_t proto_len, TF_Status* status) {
   if (!options->options.config.ParseFromArray(proto, proto_len)) {
-    status->status = InvalidArgument("Unparseable ConfigProto");
+    status->status = absl::InvalidArgumentError("Unparseable ConfigProto");
   }
   // Disable optimizations for static graph to allow calls to Session::Extend.
   options->options.config.mutable_experimental()
@@ -153,9 +153,8 @@ void TF_TensorFromProto(const TF_Buffer* from, TF_Tensor* to,
   if (!status->status.ok()) {
     return;
   }
-  status->status =
-      tensorflow::down_cast<tensorflow::TensorInterface*>(to->tensor)
-          ->FromProto(from_tensor_proto);
+  status->status = absl::down_cast<tensorflow::TensorInterface*>(to->tensor)
+                       ->FromProto(from_tensor_proto);
 }
 // --------------------------------------------------------------------------
 
@@ -186,7 +185,7 @@ void TF_ExtendGraph(TF_DeprecatedSession* s, const void* proto,
                     size_t proto_len, TF_Status* status) {
   GraphDef g;
   if (!tensorflow::ParseProtoUnlimited(&g, proto, proto_len)) {
-    status->status = InvalidArgument("Invalid GraphDef");
+    status->status = absl::InvalidArgumentError("Invalid GraphDef");
     return;
   }
   status->status = s->session->Extend(g);
@@ -266,8 +265,8 @@ void TF_GraphSetOutputHandleShapesAndTypes(TF_Graph* graph, TF_Output output,
   tensorflow::shape_inference::InferenceContext* ic =
       graph->refiner.GetContext(node);
   if (ic == nullptr) {
-    status->status =
-        InvalidArgument("Node ", node->name(), " was not found in the graph");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Node ", node->name(), " was not found in the graph"));
     return;
   }
 
@@ -285,8 +284,8 @@ void TF_GraphSetOutputHandleShapesAndTypes(TF_Graph* graph, TF_Output output,
 }
 
 // Helpers for loading a TensorFlow plugin (a .so file).
-Status LoadDynamicLibrary(const char* library_filename, void** result,
-                          const void** buf, size_t* len);
+absl::Status LoadDynamicLibrary(const char* library_filename, void** result,
+                                const void** buf, size_t* len);
 
 // TODO(josh11b,mrry): Change Session to be able to use a Graph*
 // directly, instead of requiring us to serialize to a GraphDef and
@@ -299,7 +298,7 @@ bool ExtendSessionGraphHelper(TF_Session* session, TF_Status* status) {
     mutex_lock session_lock(session->mu);
     const Graph& graph = session->graph->graph;
 
-    const string& mutation_warning = session->graph->sessions[session];
+    const std::string& mutation_warning = session->graph->sessions[session];
     if (!mutation_warning.empty()) {
       // TODO(b/74949947): turn this back into an error status
       LOG(WARNING) << mutation_warning;
@@ -373,19 +372,19 @@ static Status TF_TensorToTensorV1(const TF_Tensor* src, Tensor* dst) {
   }
   if (dst->dtype() == tensorflow::DT_RESOURCE) {
     const auto tensor_interface =
-        tensorflow::down_cast<const tensorflow::TensorInterface*>(src->tensor);
+        absl::down_cast<const tensorflow::TensorInterface*>(src->tensor);
 
     if (dst->dims() != 0) {
-      return InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Malformed TF_RESOURCE tensor: expected a scalar, got a tensor with "
           "shape ",
-          dst->shape().DebugString());
+          dst->shape().DebugString()));
     }
     *dst = tensorflow::Tensor(tensorflow::DT_RESOURCE, dst->shape());
     if (!dst->scalar<tensorflow::ResourceHandle>()().ParseFromString(
             string(static_cast<const char*>(tensor_interface->Data()),
                    tensor_interface->ByteSize()))) {
-      return InvalidArgument(
+      return absl::InvalidArgumentError(
           "Malformed TF_RESOURCE tensor: unable to parse resource handle");
     }
     return absl::OkStatus();
@@ -440,12 +439,13 @@ static void TF_Run_Helper(
     RunOptions run_options_proto;
     if (run_options != nullptr && !run_options_proto.ParseFromArray(
                                       run_options->data, run_options->length)) {
-      status->status = InvalidArgument("Unparseable RunOptions proto");
+      status->status =
+          absl::InvalidArgumentError("Unparseable RunOptions proto");
       return;
     }
     if (run_metadata != nullptr && run_metadata->data != nullptr) {
-      status->status =
-          InvalidArgument("Passing non-empty run_metadata is invalid.");
+      status->status = absl::InvalidArgumentError(
+          "Passing non-empty run_metadata is invalid.");
       return;
     }
 
@@ -660,7 +660,7 @@ TF_Operation* ToOperation(Node* node) {
 }
 
 string OutputName(const TF_Output& output) {
-  return StrCat(output.oper->node.name(), ":", output.index);
+  return absl::StrCat(output.oper->node.name(), ":", output.index);
 }
 
 const tensorflow::AttrValue* GetAttrValue(TF_Operation* oper,
@@ -668,8 +668,9 @@ const tensorflow::AttrValue* GetAttrValue(TF_Operation* oper,
                                           TF_Status* status) {
   const tensorflow::AttrValue* attr = oper->node.attrs().Find(attr_name);
   if (attr == nullptr) {
-    status->status = InvalidArgument("Operation '", oper->node.name(),
-                                     "' has no attr named '", attr_name, "'.");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Operation '", oper->node.name(), "' has no attr named '",
+                     attr_name, "'."));
   }
   return attr;
 }
@@ -711,8 +712,8 @@ void TF_GraphSetTensorShape(TF_Graph* graph, TF_Output output,
   tensorflow::shape_inference::InferenceContext* ic =
       graph->refiner.GetContext(node);
   if (ic == nullptr) {
-    status->status =
-        InvalidArgument("Node ", node->name(), " was not found in the graph");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Node ", node->name(), " was not found in the graph"));
     return;
   }
   tensorflow::shape_inference::ShapeHandle new_shape =
@@ -728,8 +729,8 @@ int TF_GraphGetTensorNumDims(TF_Graph* graph, TF_Output output,
   tensorflow::shape_inference::InferenceContext* ic =
       graph->refiner.GetContext(node);
   if (ic == nullptr) {
-    status->status =
-        InvalidArgument("Node ", node->name(), " was not found in the graph");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Node ", node->name(), " was not found in the graph"));
     return -1;
   }
 
@@ -751,8 +752,8 @@ void TF_GraphGetTensorShape(TF_Graph* graph, TF_Output output, int64_t* dims,
   tensorflow::shape_inference::InferenceContext* ic =
       graph->refiner.GetContext(node);
   if (ic == nullptr) {
-    status->status =
-        InvalidArgument("Node ", node->name(), " was not found in the graph");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Node ", node->name(), " was not found in the graph"));
     return;
   }
 
@@ -764,8 +765,8 @@ void TF_GraphGetTensorShape(TF_Graph* graph, TF_Output output, int64_t* dims,
   }
 
   if (num_dims != rank) {
-    status->status = InvalidArgument("Expected rank is ", num_dims,
-                                     " but actual rank is ", rank);
+    status->status = absl::InvalidArgumentError(absl::StrCat(
+        "Expected rank is ", num_dims, " but actual rank is ", rank));
     return;
   }
 
@@ -827,12 +828,12 @@ void TF_AddControlInput(TF_OperationDescription* desc, TF_Operation* input) {
 
 void TF_ColocateWith(TF_OperationDescription* desc, TF_Operation* op) {
   desc->colocation_constraints.emplace(
-      StrCat(tensorflow::kColocationGroupPrefix, op->node.name()));
+      absl::StrCat(tensorflow::kColocationGroupPrefix, op->node.name()));
 }
 
 void TF_SetAttrString(TF_OperationDescription* desc, const char* attr_name,
                       const void* value, size_t length) {
-  tensorflow::StringPiece s(static_cast<const char*>(value), length);
+  absl::string_view s(static_cast<const char*>(value), length);
   desc->node_builder.Attr(attr_name, s);
 }
 
@@ -846,7 +847,7 @@ void TF_SetAttrStringList(TF_OperationDescription* desc, const char* attr_name,
                                            lengths[i]);
     }
   } else {
-    std::vector<tensorflow::StringPiece> v;
+    std::vector<absl::string_view> v;
     v.reserve(num_values);
     for (int i = 0; i < num_values; ++i) {
       v.emplace_back(static_cast<const char*>(values[i]), lengths[i]);
@@ -923,8 +924,8 @@ void TF_SetAttrShape(TF_OperationDescription* desc, const char* attr_name,
                      const int64_t* dims, int num_dims) {
   PartialTensorShape shape;
   if (num_dims >= 0) {
-    shape = PartialTensorShape(
-        ArraySlice<int64_t>(reinterpret_cast<const int64_t*>(dims), num_dims));
+    shape = PartialTensorShape(absl::Span<const int64_t>(
+        reinterpret_cast<const int64_t*>(dims), num_dims));
   }
   desc->node_builder.Attr(attr_name, shape);
 }
@@ -938,7 +939,7 @@ void TF_SetAttrShapeList(TF_OperationDescription* desc, const char* attr_name,
     if (num_dims[i] < 0) {
       shapes.emplace_back();
     } else {
-      shapes.emplace_back(ArraySlice<int64_t>(
+      shapes.emplace_back(absl::Span<const int64_t>(
           reinterpret_cast<const int64_t*>(dims[i]), num_dims[i]));
     }
   }
@@ -951,9 +952,9 @@ void TF_SetAttrTensorShapeProto(TF_OperationDescription* desc,
   // shape.ParseFromArray takes an int as length, this function takes size_t,
   // make sure there is no information loss.
   if (proto_len > std::numeric_limits<int>::max()) {
-    status->status = InvalidArgument(
+    status->status = absl::InvalidArgumentError(absl::StrCat(
         "proto_len (", proto_len,
-        " bytes) is too large to be parsed by the protocol buffer library");
+        " bytes) is too large to be parsed by the protocol buffer library"));
     return;
   }
   TensorShapeProto shape;
@@ -961,7 +962,7 @@ void TF_SetAttrTensorShapeProto(TF_OperationDescription* desc,
     desc->node_builder.Attr(attr_name, shape);
     status->status = absl::OkStatus();
   } else {
-    status->status = InvalidArgument("Unparseable TensorShapeProto");
+    status->status = absl::InvalidArgumentError("Unparseable TensorShapeProto");
   }
 }
 
@@ -974,14 +975,14 @@ void TF_SetAttrTensorShapeProtoList(TF_OperationDescription* desc,
   shapes.resize(num_shapes);
   for (int i = 0; i < num_shapes; ++i) {
     if (proto_lens[i] > std::numeric_limits<int>::max()) {
-      status->status = InvalidArgument(
+      status->status = absl::InvalidArgumentError(absl::StrCat(
           "length of element ", i, " in the list (", proto_lens[i],
-          " bytes) is too large to be parsed by the protocol buffer library");
+          " bytes) is too large to be parsed by the protocol buffer library"));
       return;
     }
     if (!shapes[i].ParseFromArray(protos[i], static_cast<int>(proto_lens[i]))) {
-      status->status =
-          InvalidArgument("Unparseable TensorShapeProto at index ", i);
+      status->status = absl::InvalidArgumentError(
+          absl::StrCat("Unparseable TensorShapeProto at index ", i));
       return;
     }
   }
@@ -1017,16 +1018,16 @@ void TF_SetAttrValueProto(TF_OperationDescription* desc, const char* attr_name,
                           TF_Status* status) {
   tensorflow::AttrValue attr_value;
   if (!attr_value.ParseFromArray(proto, proto_len)) {
-    status->status = InvalidArgument("Unparseable AttrValue proto");
+    status->status = absl::InvalidArgumentError("Unparseable AttrValue proto");
     return;
   }
 
   if (strcmp(attr_name, tensorflow::kColocationAttrName) == 0) {
     if (attr_value.value_case() != tensorflow::AttrValue::kList &&
         attr_value.value_case() != tensorflow::AttrValue::VALUE_NOT_SET) {
-      status->status =
-          InvalidArgument("Expected \"list\" field for \"",
-                          tensorflow::kColocationAttrName, "\" attribute");
+      status->status = absl::InvalidArgumentError(
+          absl::StrCat("Expected \"list\" field for \"",
+                       tensorflow::kColocationAttrName, "\" attribute"));
       return;
     }
     desc->colocation_constraints.clear();
@@ -1046,8 +1047,9 @@ TF_Operation* TF_FinishOperationLocked(TF_OperationDescription* desc,
   Node* ret = nullptr;
 
   if (desc->graph->name_map.count(desc->node_builder.node_name())) {
-    status->status = InvalidArgument("Duplicate node name in graph: '",
-                                     desc->node_builder.node_name(), "'");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Duplicate node name in graph: '",
+                     desc->node_builder.node_name(), "'"));
   } else {
     if (!desc->colocation_constraints.empty()) {
       desc->node_builder.Attr(
@@ -1114,7 +1116,8 @@ int TF_OperationOutputListLength(TF_Operation* oper, const char* arg_name,
   if (!status->status.ok()) return -1;
   auto iter = name_ranges.find(arg_name);
   if (iter == name_ranges.end()) {
-    status->status = InvalidArgument("Output arg '", arg_name, "' not found");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Output arg '", arg_name, "' not found"));
     return -1;
   }
   return iter->second.second - iter->second.first;
@@ -1136,7 +1139,8 @@ int TF_OperationInputListLength(TF_Operation* oper, const char* arg_name,
   if (!status->status.ok()) return -1;
   auto iter = name_ranges.find(arg_name);
   if (iter == name_ranges.end()) {
-    status->status = InvalidArgument("Input arg '", arg_name, "' not found");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Input arg '", arg_name, "' not found"));
     return -1;
   }
   return iter->second.second - iter->second.first;
@@ -1313,9 +1317,10 @@ TF_AttrMetadata TF_OperationGetAttrMetadata(TF_Operation* oper,
           } else if (typestr == "list(func)") {
             metadata.type = TF_ATTR_FUNC;
           } else {
-            status->status = InvalidArgument(
-                "Attribute '", attr_name,
-                "' has an empty value of an unrecognized type '", typestr, "'");
+            status->status = absl::InvalidArgumentError(
+                absl::StrCat("Attribute '", attr_name,
+                             "' has an empty value of an unrecognized type '",
+                             typestr, "'"));
             return metadata;
           }
         }
@@ -1337,8 +1342,8 @@ TF_AttrMetadata TF_OperationGetAttrMetadata(TF_Operation* oper,
       break;
 
     case tensorflow::AttrValue::VALUE_NOT_SET:
-      status->status =
-          InvalidArgument("Attribute '", attr_name, "' has no value set");
+      status->status = absl::InvalidArgumentError(
+          absl::StrCat("Attribute '", attr_name, "' has no value set"));
       break;
   }
   return metadata;
@@ -1350,8 +1355,8 @@ void TF_OperationGetAttrString(TF_Operation* oper, const char* attr_name,
   const auto* attr = GetAttrValue(oper, attr_name, status);
   if (!status->status.ok()) return;
   if (attr->value_case() != tensorflow::AttrValue::kS) {
-    status->status =
-        InvalidArgument("Attribute '", attr_name, "' is not a string");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Attribute '", attr_name, "' is not a string"));
     return;
   }
   if (max_length <= 0) {
@@ -1368,8 +1373,8 @@ void TF_OperationGetAttrStringList(TF_Operation* oper, const char* attr_name,
   const auto* attr = GetAttrValue(oper, attr_name, status);
   if (!status->status.ok()) return;
   if (attr->value_case() != tensorflow::AttrValue::kList) {
-    status->status =
-        InvalidArgument("Value for '", attr_name, "' is not a list");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Value for '", attr_name, "' is not a list"));
     return;
   }
   const auto len = std::min(max_values, attr->list().s_size());
@@ -1379,7 +1384,7 @@ void TF_OperationGetAttrStringList(TF_Operation* oper, const char* attr_name,
     values[i] = p;
     lengths[i] = s.size();
     if ((p + s.size()) > (static_cast<char*>(storage) + storage_size)) {
-      status->status = InvalidArgument(
+      status->status = absl::InvalidArgumentError(
           "Not enough storage to hold the requested list of strings");
       return;
     }
@@ -1449,7 +1454,7 @@ void TF_OperationGetAttrShapeList(TF_Operation* oper, const char* attr_name,
       continue;
     }
     if (storage_left < n) {
-      status->status = InvalidArgument(
+      status->status = absl::InvalidArgumentError(
           "Not enough storage to hold the requested list of shapes");
       return;
     }
@@ -1466,8 +1471,8 @@ void TF_OperationGetAttrTensorShapeProto(TF_Operation* oper,
   const auto* attr = GetAttrValue(oper, attr_name, status);
   if (!status->status.ok()) return;
   if (attr->value_case() != tensorflow::AttrValue::kShape) {
-    status->status =
-        InvalidArgument("Value for '", attr_name, "' is not a shape.");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Value for '", attr_name, "' is not a shape."));
     return;
   }
   status->status = MessageToBuffer(attr->shape(), value);
@@ -1480,8 +1485,8 @@ void TF_OperationGetAttrTensorShapeProtoList(TF_Operation* oper,
   const auto* attr = GetAttrValue(oper, attr_name, status);
   if (!status->status.ok()) return;
   if (attr->value_case() != tensorflow::AttrValue::kList) {
-    status->status =
-        InvalidArgument("Value for '", attr_name, "' is not a list");
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("Value for '", attr_name, "' is not a list"));
     return;
   }
   const auto len = std::min(max_values, attr->list().shape_size());
@@ -1557,8 +1562,8 @@ void TF_OperationGetAttrName(TF_Operation* oper, int i, char* output,
     }
     count++;
   }
-  status->status = OutOfRange("Operation only has ", count,
-                              " attributes, can't get the ", i, "th");
+  status->status = absl::OutOfRangeError(absl::StrCat(
+      "Operation only has ", count, " attributes, can't get the ", i, "th"));
 }
 
 void TF_OperationToNodeDef(TF_Operation* oper, TF_Buffer* output_node_def,
@@ -1804,7 +1809,7 @@ TF_ImportGraphDefResults* TF_GraphImportGraphDefWithResults(
   GraphDef def;
   if (!tensorflow::ParseProtoUnlimited(&def, graph_def->data,
                                        graph_def->length)) {
-    status->status = InvalidArgument("Invalid GraphDef");
+    status->status = absl::InvalidArgumentError("Invalid GraphDef");
     return nullptr;
   }
   auto results = new TF_ImportGraphDefResults();
@@ -1837,25 +1842,27 @@ void TF_GraphImportGraphDefWithReturnOutputs(
     const TF_ImportGraphDefOptions* options, TF_Output* return_outputs,
     int num_return_outputs, TF_Status* status) {
   if (num_return_outputs != options->opts.return_tensors.size()) {
-    status->status = InvalidArgument("Expected 'num_return_outputs' to be ",
-                                     options->opts.return_tensors.size(),
-                                     ", got ", num_return_outputs);
+    status->status = absl::InvalidArgumentError(absl::StrCat(
+        "Expected 'num_return_outputs' to be ",
+        options->opts.return_tensors.size(), ", got ", num_return_outputs));
     return;
   }
   if (num_return_outputs > 0 && return_outputs == nullptr) {
-    status->status = InvalidArgument(
-        "'return_outputs' must be preallocated to length ", num_return_outputs);
+    status->status = absl::InvalidArgumentError(
+        absl::StrCat("'return_outputs' must be preallocated to length ",
+                     num_return_outputs));
     return;
   }
   GraphDef def;
   if (!tensorflow::ParseProtoUnlimited(&def, graph_def->data,
                                        graph_def->length)) {
-    status->status = InvalidArgument("Invalid GraphDef");
+    status->status = absl::InvalidArgumentError("Invalid GraphDef");
     return;
   }
   TF_ImportGraphDefResults results;
   mutex_lock l(graph->mu);
   GraphImportGraphDefLocked(graph, def, options, &results, status);
+  if (!status->status.ok()) return;
   DCHECK_EQ(results.return_tensors.size(), num_return_outputs);
   memcpy(return_outputs, results.return_tensors.data(),
          num_return_outputs * sizeof(TF_Output));
@@ -1941,7 +1948,7 @@ bool ValidateConstWhileParams(const TF_WhileParams& params, TF_Status* s) {
       params.cond_graph->parent_inputs != params.body_graph->parent_inputs ||
       params.ninputs <= 0 || params.cond_inputs == nullptr ||
       params.body_inputs == nullptr || params.body_outputs == nullptr) {
-    s->status = InvalidArgument(
+    s->status = absl::InvalidArgumentError(
         "TF_WhileParams must be created by successful TF_NewWhile() call");
     return false;
   }
@@ -1950,18 +1957,20 @@ bool ValidateConstWhileParams(const TF_WhileParams& params, TF_Status* s) {
 
 bool ValidateInputWhileParams(const TF_WhileParams& params, TF_Status* s) {
   if (params.cond_output.oper == nullptr) {
-    s->status = InvalidArgument("TF_WhileParams `cond_output` field isn't set");
+    s->status = absl::InvalidArgumentError(
+        "TF_WhileParams `cond_output` field isn't set");
     return false;
   }
   for (int i = 0; i < params.ninputs; ++i) {
     if (params.body_outputs[i].oper == nullptr) {
-      s->status = InvalidArgument("TF_WhileParams `body_outputs[", i, "]` ",
-                                  "field isn't set");
+      s->status = absl::InvalidArgumentError(absl::StrCat(
+          "TF_WhileParams `body_outputs[", i, "]` ", "field isn't set"));
       return false;
     }
   }
   if (params.name == nullptr) {
-    s->status = InvalidArgument("TF_WhileParams `name` field is null");
+    s->status =
+        absl::InvalidArgumentError("TF_WhileParams `name` field is null");
     return false;
   }
   return true;
@@ -1994,8 +2003,8 @@ TF_WhileParams TF_NewWhile(TF_Graph* g, TF_Output* inputs, int ninputs,
   return EmptyWhileParams();
 #else
   if (ninputs == 0) {
-    status->status =
-        InvalidArgument("TF_NewWhile() must be passed at least one input");
+    status->status = absl::InvalidArgumentError(
+        "TF_NewWhile() must be passed at least one input");
     return EmptyWhileParams();
   }
 
@@ -2015,12 +2024,14 @@ TF_WhileParams TF_NewWhile(TF_Graph* g, TF_Output* inputs, int ninputs,
 
   for (int i = 0; i < ninputs; ++i) {
     // TODO(skyewm): prefix names with underscore (requires some plumbing)
-    if (!CreateInput(inputs[i], cond_graph, StrCat("cond_input", i).c_str(),
-                     &cond_inputs[i], status)) {
+    if (!CreateInput(inputs[i], cond_graph,
+                     absl::StrCat("cond_input", i).c_str(), &cond_inputs[i],
+                     status)) {
       break;
     }
-    if (!CreateInput(inputs[i], body_graph, StrCat("body_input", i).c_str(),
-                     &body_inputs[i], status)) {
+    if (!CreateInput(inputs[i], body_graph,
+                     absl::StrCat("body_input", i).c_str(), &body_inputs[i],
+                     status)) {
       break;
     }
   }
@@ -2165,9 +2176,10 @@ void TF_AddGradientsWithPrefix(TF_Graph* g, const char* prefix, TF_Output* y,
       for (const auto& pair : g->name_map) {
         const string& name = pair.first;
         if ((name == prefix) || absl::StartsWith(name, prefix_cmp)) {
-          status->status = InvalidArgument(
+          status->status = absl::InvalidArgumentError(absl::StrCat(
               "prefix [", prefix,
-              "] conflicts with existing node in the graph named [", name, "]");
+              "] conflicts with existing node in the graph named [", name,
+              "]"));
           return;
         }
       }
@@ -2195,7 +2207,7 @@ void TF_AddGradientsWithPrefix(TF_Graph* g, const char* prefix, TF_Output* y,
       // name collisions only if this prefix has not been provided explicitly
       // by the user. If it was provided, assert that it remained intact.
       if (prefix != nullptr && !absl::StartsWith(n->name(), prefix_cmp)) {
-        status->status = tensorflow::errors::Internal(
+        status->status = absl::InternalError(
             "BUG: The gradients prefix have been unexpectedly altered when "
             "adding the nodes to the graph. This is a bug. Please file an "
             "issue at https://github.com/tensorflow/tensorflow/issues.");
@@ -2206,12 +2218,12 @@ void TF_AddGradientsWithPrefix(TF_Graph* g, const char* prefix, TF_Output* y,
       // (such as uniqueness of the names of nodes) we run with other functions
       // that add a node to the graph (like TF_FinishOperation).
       if (!g->name_map.insert(std::make_pair(n->name(), n)).second) {
-        status->status = tensorflow::errors::Internal(
+        status->status = absl::InternalError(absl::StrCat(
             "BUG: The API allowed construction of a graph with duplicate node "
             "names (",
             n->name(),
             "). This is a bug. Please file an issue at "
-            "https://github.com/tensorflow/tensorflow/issues.");
+            "https://github.com/tensorflow/tensorflow/issues."));
       }
     }
   }
@@ -2259,14 +2271,14 @@ TF_Session* TF_LoadSessionFromSavedModel(
 #else
   mutex_lock l(graph->mu);
   if (!graph->name_map.empty()) {
-    status->status = InvalidArgument("Graph is non-empty.");
+    status->status = absl::InvalidArgumentError("Graph is non-empty.");
     return nullptr;
   }
 
   RunOptions run_options_proto;
   if (run_options != nullptr && !run_options_proto.ParseFromArray(
                                     run_options->data, run_options->length)) {
-    status->status = InvalidArgument("Unparseable RunOptions proto");
+    status->status = absl::InvalidArgumentError("Unparseable RunOptions proto");
     return nullptr;
   }
 
@@ -2469,7 +2481,7 @@ unsigned char TF_TryEvaluateConstant(TF_Graph* graph, TF_Output output,
 TF_ApiDefMap* TF_NewApiDefMap(TF_Buffer* op_list_buffer, TF_Status* status) {
   tensorflow::OpList op_list;
   if (!op_list.ParseFromArray(op_list_buffer->data, op_list_buffer->length)) {
-    status->status = InvalidArgument("Unparseable OpList");
+    status->status = absl::InvalidArgumentError("Unparseable OpList");
     return nullptr;
   }
   status->status = absl::OkStatus();
@@ -2486,7 +2498,7 @@ void TF_ApiDefMapPut(TF_ApiDefMap* api_def_map, const char* text,
 #else
   mutex_lock l(api_def_map->lock);
   if (api_def_map->update_docs_called) {
-    status->status = FailedPrecondition(
+    status->status = absl::FailedPreconditionError(
         "TF_ApiDefMapPut cannot be called after TF_ApiDefMapGet has been "
         "called.");
     return;
@@ -2555,10 +2567,10 @@ void TF_UpdateEdge(TF_Graph* graph, TF_Output new_src, TF_Input dst,
       graph->refiner.GetContext(&new_src.oper->node);
 
   if (ic->num_outputs() <= new_src.index) {
-    status->status = tensorflow::errors::OutOfRange(
-        "Cannot update edge. Output index [", new_src.index,
-        "] is greater than the number of total outputs [", ic->num_outputs(),
-        "].");
+    status->status = absl::OutOfRangeError(
+        absl::StrCat("Cannot update edge. Output index [", new_src.index,
+                     "] is greater than the number of total outputs [",
+                     ic->num_outputs(), "]."));
     return;
   }
   tensorflow::shape_inference::ShapeHandle shape = ic->output(new_src.index);
@@ -2566,16 +2578,16 @@ void TF_UpdateEdge(TF_Graph* graph, TF_Output new_src, TF_Input dst,
   tensorflow::shape_inference::InferenceContext* ic_dst =
       graph->refiner.GetContext(&dst.oper->node);
   if (ic_dst->num_inputs() <= dst.index) {
-    status->status = tensorflow::errors::OutOfRange(
-        "Cannot update edge. Input index [", dst.index,
-        "] is greater than the number of total inputs [", ic_dst->num_inputs(),
-        "].");
+    status->status = absl::OutOfRangeError(
+        absl::StrCat("Cannot update edge. Input index [", dst.index,
+                     "] is greater than the number of total inputs [",
+                     ic_dst->num_inputs(), "]."));
     return;
   }
   if (!ic_dst->MergeInput(dst.index, shape)) {
-    status->status = tensorflow::errors::InvalidArgument(
+    status->status = absl::InvalidArgumentError(absl::StrCat(
         "Cannot update edge, incompatible shapes: ", ic_dst->DebugString(shape),
-        " and ", ic_dst->DebugString(ic_dst->input(dst.index)), ".");
+        " and ", ic_dst->DebugString(ic_dst->input(dst.index)), "."));
     return;
   }
   status->status = graph->graph.UpdateEdge(&new_src.oper->node, new_src.index,
@@ -2749,7 +2761,7 @@ TF_Server* TF_NewServer(const void* proto, size_t proto_len,
 #else
   tensorflow::ServerDef server_def;
   if (!server_def.ParseFromArray(proto, static_cast<int>(proto_len))) {
-    status->status = InvalidArgument(
+    status->status = absl::InvalidArgumentError(
         "Could not parse provided bytes into a ServerDef protocol buffer");
     return nullptr;
   }

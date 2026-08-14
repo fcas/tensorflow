@@ -25,7 +25,7 @@ limitations under the License.
 // (non-virtual) accessor methods and API functions to be declared.
 // The code here uses those methods, so we need to make sure that we get
 // the mutable variant of this header.
-#include "tensorflow/lite/schema/mutable/schema_generated.h"
+#include "tensorflow/compiler/mlir/lite/schema/mutable/schema_generated.h"
 
 #include "tensorflow/lite/python/optimize/calibration_wrapper.h"
 // clang-format on
@@ -36,6 +36,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -49,7 +50,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "tensorflow/compiler/mlir/lite/offset_buffer.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/core/interpreter.h"
@@ -122,6 +122,14 @@ inline TensorType TfLiteTypeToSchemaType(TfLiteType type) {
       return TensorType_INT32;
     case kTfLiteUInt32:
       return TensorType_UINT32;
+    case kTfLiteInt2:
+      return TensorType_INT2;
+    case kTfLiteUInt4:
+      return TensorType_UINT4;
+    case kTfLiteFloat8E4M3FN:
+      return TensorType_FLOAT8_E4M3FN;
+    case kTfLiteFloat8E5M2:
+      return TensorType_FLOAT8_E5M2;
     case kTfLiteInt4:
       return TensorType_INT4;
     case kTfLiteUInt8:
@@ -280,7 +288,8 @@ PyObject* AddIntermediateTensors(PyObject* data) {
   }
 
   std::unique_ptr<FlatBufferModel> model =
-      FlatBufferModel::BuildFromBuffer(buf, length, error_reporter.get());
+      FlatBufferModel::VerifyAndBuildFromBuffer(
+          buf, length, /*extra_verifier=*/nullptr, error_reporter.get());
   if (!model) {
     PyErr_Format(PyExc_ValueError, "Invalid model");
     return nullptr;
@@ -700,14 +709,17 @@ PyObject* CalibrationWrapper::QuantizeModel(int input_py_type,
                                             bool allow_float,
                                             int activations_py_type,
                                             int bias_py_type) {
-  return QuantizeModel(input_py_type, output_py_type, allow_float,
-                       activations_py_type, bias_py_type,
-                       /*disable_per_channel=*/false);
+  return QuantizeModel(
+      input_py_type, output_py_type, allow_float, activations_py_type,
+      bias_py_type,
+      /*disable_per_channel=*/false,
+      /*disable_per_channel_quantization_for_dense_layers=*/false);
 }
 
 PyObject* CalibrationWrapper::QuantizeModel(
     int input_py_type, int output_py_type, bool allow_float,
-    int activations_py_type, int bias_py_type, bool disable_per_channel) {
+    int activations_py_type, int bias_py_type, bool disable_per_channel,
+    bool disable_per_channel_quantization_for_dense_layers) {
   if (NoOpModel(*model_)) {
     return ConvertToPyString(model_str_->data(), model_str_->size());
   }
@@ -732,7 +744,7 @@ PyObject* CalibrationWrapper::QuantizeModel(
       TfLiteTypeToSchemaType(output_type), allow_float,
       TfLiteTypeToSchemaType(activations_type),
       TfLiteTypeToSchemaType(bias_type), disable_per_channel,
-      error_reporter_.get());
+      disable_per_channel_quantization_for_dense_layers, error_reporter_.get());
 
   if (status != kTfLiteOk) {
     error_reporter_->exception();
@@ -789,7 +801,8 @@ PyObject* CalibrationWrapper::QuantizeModel(int input_py_type,
     return nullptr;
   }
   std::unique_ptr<FlatBufferModel> model =
-      FlatBufferModel::BuildFromBuffer(buf, length, error_reporter.get());
+      FlatBufferModel::VerifyAndBuildFromBuffer(
+          buf, length, /*extra_verifier=*/nullptr, error_reporter.get());
   if (!model) {
     *error_msg = "Invalid model";
     return nullptr;

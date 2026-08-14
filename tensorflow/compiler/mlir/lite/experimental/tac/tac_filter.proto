@@ -1,6 +1,23 @@
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+
 syntax = "proto3";
 
 package third_party.tensorflow.compiler.mlir.lite.experimental.tac;
+
+import "google/protobuf/any.proto";
 
 // A list of filters for TAC users to run ops/functions on ML hardwares. The
 // intuition is that, for ops/functions that can be run on ML hardware (e.g.
@@ -46,4 +63,25 @@ message OpFilter {
   // This name corresponds to the mlir::Location of the tensor.
   // `op_name_pattern` supports regex matching.
   string op_name_pattern = 1;
+  enum MatchType {
+    // To match the op name with the `op_name_pattern` directly.
+    MATCH = 0;
+    // To invert the match with the `op_name_pattern`, ie, the filter will
+    // select an op if its name does not match the pattern above.
+    INVERT_MATCH = 1;
+  }
+  MatchType match_type = 2;
+  enum DeviceType {
+    // To run the op on CPU.
+    CPU = 0;
+    // To run the op on an hardware unit other than the CPU.
+    OTHER = 1;
+  }
+  DeviceType device_type = 3;
+  // An arbitrary string that can be used to identify the filter or a set of
+  // filters.
+  string tag = 4;
+  // Custom options that can be used to pass additional information for the
+  // filter.
+  google.protobuf.Any custom_options = 5;
 }

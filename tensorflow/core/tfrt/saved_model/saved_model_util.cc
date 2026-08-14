@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
@@ -42,7 +43,7 @@ limitations under the License.
 #include "tensorflow/cc/saved_model/reader.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_saved_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/import_model.h"
-#include "tensorflow/compiler/mlir/tensorflow/utils/serialize_mlir_module_utils.h"
+#include "tensorflow/compiler/mlir/tensorflow/utils/deserialize_mlir_module_utils.h"
 #include "tensorflow/compiler/mlir/tfrt/ir/tfrt_fallback.h"
 #include "tensorflow/compiler/mlir/tfrt/ir/tfrt_fallback_async.h"
 #include "tensorflow/compiler/mlir/tfrt/saved_model/saved_model.h"
@@ -57,6 +58,7 @@ limitations under the License.
 #include "tensorflow/core/protobuf/meta_graph.pb.h"
 #include "tensorflow/core/protobuf/rewriter_config.pb.h"
 #include "tensorflow/core/tfrt/fallback/fallback_state.h"
+#include "tensorflow/core/tfrt/graph_executor/config.h"
 #include "tensorflow/core/tfrt/mlrt/bytecode/bytecode.h"
 #include "tensorflow/core/tfrt/saved_model/saved_model_import_input.h"
 #include "tensorflow/core/tfrt/saved_model/utils/serialize_utils.h"
@@ -131,9 +133,17 @@ tensorflow::Tensor CreateScalarStringTensor(absl::string_view str) {
 // TODO(chky): For V2 models, the bound input can also be a resource.
 absl::StatusOr<tensorflow::Tensor> CreateTensorFromBoundInput(
     mlir::Operation* bound_input, absl::string_view saved_model_dir) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   // Assets are files in the saved model directory. We pass their filenames to
   // functions so that they can be used.
   if (auto asset = llvm::dyn_cast<mlir::tf_saved_model::AssetOp>(bound_input)) {
+    if (absl::StrContains(asset.getFilename().str(), "..")) {
+      return absl::InvalidArgumentError(
+          "asset filename cannot contain '..' for security reasons.");
+    }
     // The filename in the asset is a relative path. So we prefix it with the
     // directory path.
     return CreateScalarStringTensor(
@@ -227,6 +237,10 @@ absl::StatusOr<InitializersAndSignatures> GetInitializersAndSignatures(
 absl::StatusOr<tensorflow::MetaGraphDef> ReadSavedModel(
     absl::string_view saved_model_dir,
     const std::unordered_set<std::string>& tags) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   LOG(INFO) << "TFRT reading v1 savedmodel: " << saved_model_dir;
   const auto read_start_time = absl::Now();
 
@@ -247,7 +261,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ImportSavedModel(
     mlir::MLIRContext* context, const tensorflow::MetaGraphDef& meta_graph_def,
     const FallbackState& fallback_state, std::string saved_model_dir,
     bool import_user_signatures, bool run_placer_grappler_on_functions,
-    const std::vector<std::string>& import_signature_names) {
+    const std::vector<std::string>& import_signature_names,
+    tensorflow::tfrt_stub::RuntimeConfig* runtime_config) {
   std::vector<std::string> signature_names;
   if (import_user_signatures) {
     if (!import_signature_names.empty()) {
@@ -269,7 +284,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ImportSavedModel(
   TF_ASSIGN_OR_RETURN(auto import_input,
                       TfrtSavedModelMLIRImportInput::Create(
                           fallback_state, &meta_graph_def, /*debug_info=*/{},
-                          run_placer_grappler_on_functions));
+                          run_placer_grappler_on_functions, runtime_config));
 
   TF_ASSIGN_OR_RETURN(
       auto module,
@@ -356,6 +371,10 @@ absl::StatusOr<mlrt::bc::Buffer> LoadMlrtAndMlir(
 absl::Status DeserializeAoTMlirModule(
     absl::string_view saved_model_dir, mlir::MLIRContext* context,
     mlir::OwningOpRef<mlir::ModuleOp>* mlir_module) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   const std::string aot_package_directory = GetAotPackagePath(saved_model_dir);
   const std::string mlir_file_path = GetMlirFilePath(aot_package_directory);
   std::string mlir_module_str;

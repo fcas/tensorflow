@@ -13,6 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "absl/container/flat_hash_set.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
@@ -64,19 +69,17 @@ class PrepareTpuComputationForTfExportPass
 class RewriteXlaHostComputeMlir
     : public OpRewritePattern<TF::_XlaHostComputeMlirOp> {
  public:
-  using OpRewritePattern<TF::_XlaHostComputeMlirOp>::OpRewritePattern;
+  using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult match(TF::_XlaHostComputeMlirOp op) const override {
+  LogicalResult matchAndRewrite(TF::_XlaHostComputeMlirOp op,
+                                PatternRewriter& rewriter) const override {
     if (op.getManualSharding()) {
       // This rewrite does not support manual_sharding. It is expected that the
       // _XlaHostComputeMlirOp registered as an MlirXlaOpKernel will handle this
       // case later once the XlaBuilder graph reaches it.
       return failure();
     }
-    return success();
-  }
-  void rewrite(TF::_XlaHostComputeMlirOp op,
-               PatternRewriter& rewriter) const override {
+
     llvm::SmallVector<Attribute> shape_attrs;
     shape_attrs.reserve(op.getNumResults());
     for (Type ty : op.getResultTypes()) {
@@ -102,13 +105,13 @@ class RewriteXlaHostComputeMlir
       rewriter.setInsertionPointToStart(&cloned_func.getBody().front());
       auto result_type =
           RankedTensorType::get({3}, rewriter.getType<TF::StringType>());
-      auto dynamic_key =
-          rewriter.create<TF::_XlaCompileMlirPlaceholderProgramKeyOp>(
-              func.getLoc(), /*program=*/result_type, llvm::ArrayRef<Value>{});
+      auto dynamic_key = TF::_XlaCompileMlirPlaceholderProgramKeyOp::create(
+          rewriter, func.getLoc(), /*program=*/result_type,
+          llvm::ArrayRef<Value>{});
 
-      auto recv_at_host = rewriter.create<TF::_XlaRecvAtHostOp>(
-          func.getLoc(), op.getOperandTypes(), /*dynamic_key=*/dynamic_key,
-          op.getSendKeyAttr(),
+      auto recv_at_host = TF::_XlaRecvAtHostOp::create(
+          rewriter, func.getLoc(), op.getOperandTypes(),
+          /*dynamic_key=*/dynamic_key, op.getSendKeyAttr(),
           /*device_ordinal=*/rewriter.getI64IntegerAttr(0),
           rewriter.getStringAttr("TPU"));
       for (auto result :
@@ -117,8 +120,8 @@ class RewriteXlaHostComputeMlir
       }
 
       rewriter.setInsertionPoint(cloned_func.getBody().front().getTerminator());
-      rewriter.create<TF::_XlaSendFromHostOp>(
-          func.getLoc(),
+      TF::_XlaSendFromHostOp::create(
+          rewriter, func.getLoc(),
           cloned_func.getBody().front().getTerminator()->getOperands(),
           /*dynamic_key=*/dynamic_key, op.getRecvKeyAttr(),
           /*device_ordinal=*/rewriter.getI64IntegerAttr(0),
@@ -136,6 +139,7 @@ class RewriteXlaHostComputeMlir
         op.getRecvKeyAttr(),
         /*cost_estimate_ns=*/rewriter.getI64IntegerAttr(kDefaultCostEstimate),
         /*tpu_core=*/rewriter.getI64IntegerAttr(0));
+    return success();
   }
 };
 
@@ -151,8 +155,11 @@ void UpdateArgAttributes(mlir::func::FuncOp func) {
         // attributes, only set the 'sharding' attribute. Both attributes are
         // currently required as the XlaSharding xla op kernel doesn't use the
         // 'sharding' attribute.
-        auto updated_arg = builder.create<TF::XlaShardingOp>(
-            func.getLoc(), arg.getType(), arg, sharding, sharding);
+        // TODO(b/414807890): Not sure whether we need to pass a V2 sharding to
+        // the _XlaShardingV2, do this when we actually have a use case.
+        auto updated_arg = TF::XlaShardingOp::create(
+            builder, func.getLoc(), arg.getType(), arg, /*sharding=*/sharding,
+            /*_XlaSharding=*/sharding, /*_XlaShardingV2=*/mlir::StringAttr());
         func.getArgument(i).replaceAllUsesExcept(
             updated_arg, llvm::SmallPtrSet<Operation*, 1>({updated_arg}));
       }
@@ -166,7 +173,7 @@ LogicalResult RewriteCommunicationOps(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   mlir::RewritePatternSet patterns(ctx);
   patterns.add<RewriteXlaHostComputeMlir>(ctx);
-  if (failed(mlir::applyPatternsAndFoldGreedily(module, std::move(patterns)))) {
+  if (failed(mlir::applyPatternsGreedily(module, std::move(patterns)))) {
     return module.emitError("failed to apply tf export preparation patterns");
   }
 

@@ -1,6 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # python/lib/io package
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.bzl", "if_oss")
 load("//tensorflow:tensorflow.default.bzl", "tf_py_strict_test", "tf_python_pybind_extension")
 
@@ -27,9 +42,16 @@ tf_python_pybind_extension(
     ],
     deps = [
         "//tensorflow/core:framework_headers_lib",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:portable_gif_internal",
+        "//tensorflow/core:portable_jpeg_internal",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/platform:file_statistics",
         "//tensorflow/python/lib/core:pybind11_absl",
         "//tensorflow/python/lib/core:pybind11_status",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@pybind11",
     ],
 )
@@ -50,21 +72,30 @@ tf_python_pybind_extension(
         "//tensorflow/core/platform:types",
         "//tensorflow/python/lib/core:pybind11_absl",
         "//tensorflow/python/lib/core:pybind11_status",
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@pybind11",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "file_io",
     srcs = ["file_io.py"],
+    strict_deps = True,
+    # copybara:uncomment_begin(google-only)
+    # visibility = [
+    # "//learning/serving/servables/wiz/lora:__subpackages__",
+    # "//third_party/cloud_tpu/convergence_tools:__subpackages__",
+    # "//third_party/py/tf_slim:__subpackages__",
+    # "//tensorflow:__subpackages__",
+    # "//tensorflow:internal",
+    # ],
+    # copybara:uncomment_end_and_comment_begin
     visibility = [
-        "//tensorflow:__subpackages__",
-        "//tensorflow:internal",
-        "//third_party/cloud_tpu/convergence_tools:__subpackages__",
-        "//third_party/proto_splitter:__subpackages__",  # TODO(b/277279227): remove this dep from proto_splitter
-        "//third_party/py/tf_slim:__subpackages__",
+        "//visibility:public",
     ],
+    # copybara:comment_end
     deps = [
         ":_pywrap_file_io",
         "//tensorflow/python/framework:errors",
@@ -75,9 +106,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "tf_record",
     srcs = ["tf_record.py"],
+    strict_deps = True,
     visibility = [
         "//tensorflow:__subpackages__",
         "//tensorflow:internal",
@@ -91,9 +123,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "python_io",
     srcs = ["python_io.py"],
+    strict_deps = True,
     visibility = [
         "//tensorflow:__subpackages__",
         "//tensorflow:internal",
@@ -105,7 +138,6 @@ tf_py_strict_test(
     name = "file_io_test",
     size = "small",
     srcs = ["file_io_test.py"],
-    python_version = "PY3",
     tags = [
         "no_rocm",
         "no_windows",
@@ -124,7 +156,6 @@ tf_py_strict_test(
     size = "small",
     srcs = ["tf_record_test.py"],
     main = "tf_record_test.py",
-    python_version = "PY3",
     tags = [
         # copybara:uncomment_begin(google-only)
         # "manual",

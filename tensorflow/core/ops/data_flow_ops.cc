@@ -26,7 +26,7 @@ using shape_inference::ShapeHandle;
 
 namespace {
 
-Status DequeueManyV2Shape(InferenceContext* c, ShapeHandle n_shape) {
+absl::Status DequeueManyV2Shape(InferenceContext* c, ShapeHandle n_shape) {
   auto* t = c->input_handle_shapes_and_types(0);
   if (t != nullptr && t->size() == c->num_outputs()) {
     for (int i = 0; i < c->num_outputs(); ++i) {
@@ -88,7 +88,7 @@ REGISTER_OP("DynamicPartition")
 
 namespace {
 
-Status DynamicStitchShapeFunction(InferenceContext* c) {
+absl::Status DynamicStitchShapeFunction(InferenceContext* c) {
   int32_t num_partitions;
   TF_RETURN_IF_ERROR(c->GetAttr("N", &num_partitions));
 
@@ -120,7 +120,7 @@ Status DynamicStitchShapeFunction(InferenceContext* c) {
 
     if (indices_t != nullptr) {
       // The length is based on the highest index from flattened indices.
-      const int32* indices = indices_t->flat<int32>().data();
+      const int32_t* indices = indices_t->flat<int32_t>().data();
       int64_t count = indices_t->NumElements();
       for (int64_t i = 0; i < count; ++i) {
         if (indices[i] > max_index) {
@@ -158,7 +158,7 @@ REGISTER_OP("ParallelDynamicStitch")
 // --------------------------------------------------------------------------
 
 namespace {
-Status TwoElementVectorInputsAndScalarOutputs(InferenceContext* c) {
+absl::Status TwoElementVectorInputsAndScalarOutputs(InferenceContext* c) {
   ShapeHandle handle;
   DimensionHandle unused_handle;
   for (int i = 0; i < c->num_inputs(); ++i) {
@@ -171,7 +171,7 @@ Status TwoElementVectorInputsAndScalarOutputs(InferenceContext* c) {
   return absl::OkStatus();
 }
 
-Status TwoElementOutput(InferenceContext* c) {
+absl::Status TwoElementOutput(InferenceContext* c) {
   c->set_output(0, c->Vector(2));
   return absl::OkStatus();
 }
@@ -340,9 +340,10 @@ REGISTER_OP("QueueDequeueManyV2")
       if (c->input_tensor(1) == nullptr) {
         n_shape = c->Vector(InferenceContext::kUnknownDim);
       } else {
-        const int32_t n = c->input_tensor(1)->scalar<int32>()();
+        const int32_t n = c->input_tensor(1)->scalar<int32_t>()();
         if (n < 0) {
-          return errors::InvalidArgument("Input 'n' must be >= 0, but is ", n);
+          return absl::InvalidArgumentError(
+              absl::StrCat("Input 'n' must be >= 0, but is ", n));
         }
         n_shape = c->Vector(n);
       }

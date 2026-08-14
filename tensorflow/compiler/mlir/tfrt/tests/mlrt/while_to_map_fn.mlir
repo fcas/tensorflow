@@ -1,3 +1,17 @@
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: tf-tfrt-opt -split-input-file -tf-mlrt-while-to-map-fn %s | FileCheck %s
 
 // Test a while to map_fn conversion in which the max iteration is hard coded inside the predicate body.
@@ -683,4 +697,221 @@ func.func @func(%arg0: tensor<?xf32>, %arg1: tensor<!tf_type.variant<tensor<*xf3
   %1:4 = "tf.While"(%cst, %cst, %arg1, %arg0) {_lower_using_switch_merge = true, _num_original_outputs = 6 : i64, _read_only_resource_inputs = [], _xla_propagate_compile_time_consts = true, body = @"map/while_body", cond = @"map/while_cond", device = "/job:localhost/replica:0/task:0/device:CPU:0", is_stateless = true, parallel_iterations = 4 : i64, shape_invariant} : (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<?xf32>) -> (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<?xf32>)
   %2 = "tf.TensorListStack"(%1#2, %cst_0) {device = "/job:localhost/replica:0/task:0/device:CPU:0", num_elements = 3 : i64} : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<0xi32>) -> tensor<3xf32>
   return %2 : tensor<3xf32>
+}
+
+// -----
+
+// Test a while to map_fn conversion in which a tf.StopGradient is inserted to consume the while result.
+// CHECK-LABEL: @while_map_while_body_884030
+func.func private @while_map_while_body_884030(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: tensor<i32>, %arg3: tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, %arg4: tensor<!tf_type.variant<tensor<?x?x1xui8>>> {tf._user_specified_name = "while/map/TensorArrayUnstack/TensorListFromTensor"}) -> (tensor<i32>, tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<!tf_type.variant<tensor<?x?x1xui8>>>) {
+  %cst = "tf.Const"() <{value = dense<[-1, -1, 1]> : tensor<3xi32>}>  : () -> tensor<3xi32>
+  %cst_0 = "tf.Const"() <{value = dense<1> : tensor<i32>}>  : () -> tensor<i32>
+  %0 = "tf.AddV2"(%arg2, %cst_0)  : (tensor<i32>, tensor<i32>) -> tensor<i32>
+  %1 = "tf.Identity"(%0)  : (tensor<i32>) -> tensor<i32>
+  %2 = "tf.TensorListGetItem"(%arg4, %arg2, %cst)  : (tensor<!tf_type.variant<tensor<?x?x1xui8>>>, tensor<i32>, tensor<3xi32>) -> tensor<?x?x1xui8>
+  %3 = "tf.EncodePng"(%2) <{compression = -1 : i64}>  : (tensor<?x?x1xui8>) -> tensor<!tf_type.string>
+  %4 = "tf.TensorListSetItem"(%arg3, %arg2, %3) <{resize_if_index_out_of_bounds = false}>  : (tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<i32>, tensor<!tf_type.string>) -> tensor<!tf_type.variant<tensor<*x!tf_type.string>>>
+  %5 = "tf.Identity"(%4)  : (tensor<!tf_type.variant<tensor<*x!tf_type.string>>>) -> tensor<!tf_type.variant<tensor<*x!tf_type.string>>>
+  %6 = "tf.AddV2"(%arg0, %cst_0)  : (tensor<i32>, tensor<i32>) -> tensor<i32>
+  %7 = "tf.Identity"(%6)  : (tensor<i32>) -> tensor<i32>
+  %8 = "tf.Identity"(%arg1)  : (tensor<i32>) -> tensor<i32>
+  return %7, %8, %1, %5, %arg4 : tensor<i32>, tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<!tf_type.variant<tensor<?x?x1xui8>>>
+}
+
+// CHECK-LABEL:  while_map_while_body_884030/MapFnBody
+// CHECK:         tf.AddV2
+// CHECK-NEXT:    tf.TensorListGetItem
+// CHECK-NEXT:    tf.EncodePng
+// CHECK-NEXT:    tf.AddV2
+// CHECK-NEXT:    tf_await
+// CHECK-NEXT:    tf.TensorListSetItem
+// CHECK-NEXT:    tf_promise
+ 
+// CHECK-LABEL: @while_map_while_cond_884020
+func.func private @while_map_while_cond_884020(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: tensor<i32>, %arg3: tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, %arg4: tensor<!tf_type.variant<tensor<?x?x1xui8>>>) -> tensor<i1> {
+  %cst = "tf.Const"() <{value = dense<11> : tensor<i32>}>  : () -> tensor<i32>
+  %0 = "tf.Less"(%arg2, %cst)  : (tensor<i32>, tensor<i32>) -> tensor<i1>
+  %1 = "tf.Less"(%arg0, %arg1)  : (tensor<i32>, tensor<i32>) -> tensor<i1>
+  %2 = "tf.LogicalAnd"(%1, %0)  : (tensor<i1>, tensor<i1>) -> tensor<i1>
+  %3 = "tf.Identity"(%2)  : (tensor<i1>) -> tensor<i1>
+  return %3 : tensor<i1>
+}
+
+// CHECK-LABEL: @main
+// CHECK:       tf.Cast
+// CHECK-NEXT:  tf.TensorListReserve
+// CHECK-NEXT:  tf.Transpose
+// CHECK-NEXT:  tf.TensorListFromTensor
+// CHECK-NEXT:  tf_mlrt.tf_map_fn
+// CHECK-SAME:   {body_fn = @"while_map_while_body_884030/MapFnBody", num_tensor_list_or_flow_in = 1 : i32} : (tensor<i32>, tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<i32>, tensor<!tf_type.variant<tensor<?x?x1xui8>>>) -> tensor<!tf_type.variant<tensor<*x!tf_type.string>>>
+// CHECK-NEXT:  tf.StopGradient
+// CHECK-NEXT:  tf.TensorListStack
+func.func @main(%arg0: tensor<1x?x?x11xf32>) -> tensor<11x!tf_type.string> {
+  %cst_0 = "tf.Const"() <{value = dense<[3, 1, 2, 0]> : tensor<4xi32>}>  : () -> tensor<4xi32>
+  %cst_10 = "tf.Const"() <{value = dense<0> : tensor<i32>}>  : () -> tensor<i32>
+  %cst_11 = "tf.Const"() <{value = dense<2> : tensor<i32>}>  : () -> tensor<i32>
+  %cst_12 = "tf.Const"() <{value = dense<1> : tensor<i32>}>  : () -> tensor<i32>
+  %cst_13 = "tf.Const"() <{value = dense<[-1, -1, 1]> : tensor<3xi32>}>  : () -> tensor<3xi32>
+  %cst_14 = "tf.Const"() <{value = dense<> : tensor<0xi32>}>  : () -> tensor<0xi32>
+  %cst_15 = "tf.Const"() <{value = dense<-1> : tensor<i32>}>  : () -> tensor<i32>
+  %cst_16 = "tf.Const"() <{value = dense<11> : tensor<i32>}>  : () -> tensor<i32>
+  %92 = "tf.Cast"(%arg0) <{Truncate = false}>  : (tensor<1x?x?x11xf32>) -> tensor<1x?x?x11xui8>
+  %0 = "tf.TensorListReserve"(%cst_15, %cst_16)  : (tensor<i32>, tensor<i32>) -> tensor<!tf_type.variant<tensor<*x!tf_type.string>>>
+  %93 = "tf.Transpose"(%92, %cst_0)  : (tensor<1x?x?x11xui8>, tensor<4xi32>) -> tensor<11x?x?x1xui8>
+  %94 = "tf.TensorListFromTensor"(%93, %cst_13)  : (tensor<11x?x?x1xui8>, tensor<3xi32>) -> tensor<!tf_type.variant<tensor<?x?x1xui8>>>
+  %95:5 = "tf.While"(%cst_10, %cst_16, %cst_10, %0, %94) <{body = @while_map_while_body_884030, cond = @while_map_while_cond_884020, is_stateless = true, parallel_iterations = 16 : i64, shape_invariant}> {T = [i32, i32, i32, !tf_type.variant, !tf_type.variant], _lower_using_switch_merge = true, _num_original_outputs = 5 : i64, _read_only_resource_inputs = [], device = "", output_shapes = [#tf_type.shape<>, #tf_type.shape<>, #tf_type.shape<>, #tf_type.shape<>, #tf_type.shape<>]} : (tensor<i32>, tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<!tf_type.variant<tensor<?x?x1xui8>>>) -> (tensor<i32>, tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<!tf_type.variant<tensor<?x?x1xui8>>>)
+  %96 = "tf.StopGradient"(%95#3)  : (tensor<!tf_type.variant<tensor<*x!tf_type.string>>>) -> tensor<!tf_type.variant<tensor<*x!tf_type.string>>>
+  %97 = "tf.TensorListStack"(%96, %cst_14) <{num_elements = 11 : i64}>  : (tensor<!tf_type.variant<tensor<*x!tf_type.string>>>, tensor<0xi32>) -> tensor<11x!tf_type.string>
+  return %97 : tensor<11x!tf_type.string>
+}
+
+// -----
+
+// Test a while to map_fn conversion where constants are hoisted to resources.
+
+// CHECK-LABEL: hoisted_constants_map_while_cond
+func.func private @hoisted_constants_map_while_cond(%arg0: tensor<*xi32>, %arg1: tensor<*xi32>, %arg2: tensor<!tf_type.variant<tensor<*xf32>>>, %arg3: tensor<i32>) -> tensor<i1> {
+  %0 = "tf.Less"(%arg0, %arg3) : (tensor<*xi32>, tensor<i32>) -> tensor<*xi1>
+  %1 = "tf.Less"(%arg1, %arg3) : (tensor<*xi32>, tensor<i32>) -> tensor<*xi1>
+  %2 = "tf.LogicalAnd"(%0, %1) : (tensor<*xi1>, tensor<*xi1>) -> tensor<*xi1>
+  %3 = "tf.ToBool"(%2) : (tensor<*xi1>) -> tensor<i1>
+  return %3 : tensor<i1>
+}
+
+// CHECK-LABEL: hoisted_constants_map_while_body
+func.func private @hoisted_constants_map_while_body(%arg0: tensor<*xi32>, %arg1: tensor<*xi32>, %arg2: tensor<!tf_type.variant<tensor<*xf32>>>, %arg3: tensor<i32>) -> (tensor<*xi32>, tensor<*xi32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>) {
+  // Resource 1 is constant 1
+  %c1 = "tf._TfrtGetResource"() <{container = [""], indices = [1 : i64], shared_name = [""]}> : () -> tensor<i32>
+  %0 = "tf.AddV2"(%arg0, %c1) : (tensor<*xi32>, tensor<i32>) -> tensor<*xi32>
+  %1 = "tf.AddV2"(%arg1, %c1) : (tensor<*xi32>, tensor<i32>) -> tensor<*xi32>
+  
+  // Dummy work
+  %dummy = "tf.Const"() {value = dense<1.0> : tensor<f32>} : () -> tensor<f32>
+  %2 = "tf.TensorListSetItem"(%arg2, %arg1, %dummy) {resize_if_index_out_of_bounds = false} : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<*xi32>, tensor<f32>) -> tensor<!tf_type.variant<tensor<*xf32>>>
+  
+  return %0, %1, %2, %arg3 : tensor<*xi32>, tensor<*xi32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>
+}
+
+// CHECK-LABEL: @hoisted_constants_main
+// CHECK:       tf.TensorListReserve
+// CHECK-NEXT:  tf_mlrt.tf_map_fn
+// CHECK-SAME:   {body_fn = @"hoisted_constants_map_while_body/MapFnBody", num_tensor_list_or_flow_in = 1 : i32}
+// CHECK-NEXT:  tf.Const
+// CHECK-NEXT:  tf.TensorListStack
+// CHECK-NOT:   tf.While
+func.func @hoisted_constants_main() -> tensor<3xf32> {
+  // Resource 0 is constant 0
+  %c0 = "tf._TfrtGetResource"() <{container = [""], indices = [0 : i64], shared_name = [""]}> : () -> tensor<i32>
+  // Resource 2 is constant 3 (max iterations)
+  %c3 = "tf._TfrtGetResource"() <{container = [""], indices = [2 : i64], shared_name = [""]}> : () -> tensor<i32>
+
+  %c_neg1 = "tf.Const"() {value = dense<-1> : tensor<i32>} : () -> tensor<i32>
+  %tensor_list = "tf.TensorListReserve"(%c_neg1, %c3) : (tensor<i32>, tensor<i32>) -> tensor<!tf_type.variant<tensor<*xf32>>>
+
+  %0:4 = "tf.While"(%c0, %c0, %tensor_list, %c3) {body = @hoisted_constants_map_while_body, cond = @hoisted_constants_map_while_cond, is_stateless = true, parallel_iterations = 10 : i64, shape_invariant} : (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>) -> (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>)
+  %cst_shape = "tf.Const"() {value = dense<[3]> : tensor<1xi32>} : () -> tensor<1xi32>
+  %stacked = "tf.TensorListStack"(%0#2, %cst_shape) {num_elements = 3 : i64} : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<1xi32>) -> tensor<3xf32>
+  return %stacked : tensor<3xf32>
+}
+
+// This function defines the resources.
+func.func private @_tfrt_resource_init() {
+  %c0 = "tf.Const"() {value = dense<0> : tensor<i32>} : () -> tensor<i32>
+  "tf._TfrtSetResource"(%c0) {index = 0 : i64} : (tensor<i32>) -> ()
+
+  %c1 = "tf.Const"() {value = dense<1> : tensor<i32>} : () -> tensor<i32>
+  "tf._TfrtSetResource"(%c1) {index = 1 : i64} : (tensor<i32>) -> ()
+
+  %c3 = "tf.Const"() {value = dense<3> : tensor<i32>} : () -> tensor<i32>
+  "tf._TfrtSetResource"(%c3) {index = 2 : i64} : (tensor<i32>) -> ()
+
+  return
+}
+
+// -----
+
+// Test map_fn conversion with pass-through invariant resource handle,
+// verifying that tf_await is positioned right before TensorListSetItem,
+// allowing independent operations (like MatrixDeterminant) to run in parallel.
+
+// CHECK-LABEL: map_passthrough_cond
+func.func private @map_passthrough_cond(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: tensor<!tf_type.variant<tensor<*xf32>>>, %arg3: tensor<!tf_type.resource<tensor<3x1xf32>>>) -> tensor<i1> {
+  %cst = "tf.Const"() {value = dense<3> : tensor<i32>} : () -> tensor<i32>
+  %0 = "tf.Less"(%arg0, %cst) : (tensor<i32>, tensor<i32>) -> tensor<i1>
+  %1 = "tf.Less"(%arg1, %cst) : (tensor<i32>, tensor<i32>) -> tensor<i1>
+  %2 = "tf.LogicalAnd"(%0, %1) : (tensor<i1>, tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}
+
+// CHECK-LABEL: map_passthrough_body
+func.func private @map_passthrough_body(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: tensor<!tf_type.variant<tensor<*xf32>>>, %arg3: tensor<!tf_type.resource<tensor<3x1xf32>>>) -> (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<!tf_type.resource<tensor<3x1xf32>>>) {
+  %cst_0 = "tf.Const"() {value = dense<0> : tensor<i32>} : () -> tensor<i32>
+  %cst_1 = "tf.Const"() {value = dense<1> : tensor<i32>} : () -> tensor<i32>
+  %0 = "tf.AddV2"(%arg0, %cst_1) : (tensor<i32>, tensor<i32>) -> tensor<i32>
+  %1 = "tf.AddV2"(%arg1, %cst_1) : (tensor<i32>, tensor<i32>) -> tensor<i32>
+  %val = "tf.ReadVariableOp"(%arg3) : (tensor<!tf_type.resource<tensor<3x1xf32>>>) -> tensor<3x1xf32>
+  %det = "tf.MatrixDeterminant"(%val) : (tensor<3x1xf32>) -> tensor<f32>
+  %2 = "tf.TensorListSetItem"(%arg2, %arg1, %det) : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>, tensor<f32>) -> tensor<!tf_type.variant<tensor<*xf32>>>
+  return %0, %1, %2, %arg3 : tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<!tf_type.resource<tensor<3x1xf32>>>
+}
+
+// CHECK-LABEL: map_passthrough_body/MapFnBody
+// CHECK:       [[val:%.*]] = "tf.ReadVariableOp"
+// CHECK-NEXT:  [[det:%.*]] = "tf.MatrixDeterminant"([[val]])
+// CHECK-NEXT:  [[await_out:%.*]] = "tf_mlrt.tf_await"(%arg0)
+// CHECK-NEXT:  [[setItem:%.*]] = "tf.TensorListSetItem"([[await_out]], %arg3, [[det]])
+// CHECK-NEXT:  "tf_mlrt.tf_promise"(%arg1, [[setItem]])
+
+// CHECK-LABEL: @map_passthrough_main
+func.func @map_passthrough_main(%handle: tensor<!tf_type.resource<tensor<3x1xf32>>>) -> tensor<3xf32> {
+  %cst = "tf.Const"() {value = dense<0> : tensor<i32>} : () -> tensor<i32>
+  %cst_1 = "tf.Const"() {value = dense<-1> : tensor<i32>} : () -> tensor<i32>
+  %cst_2 = "tf.Const"() {value = dense<3> : tensor<i32>} : () -> tensor<i32>
+  %0 = "tf.TensorListReserve"(%cst_1, %cst_2) : (tensor<i32>, tensor<i32>) -> tensor<!tf_type.variant<tensor<*xf32>>>
+  %1:4 = "tf.While"(%cst, %cst, %0, %handle) {body = @map_passthrough_body, cond = @map_passthrough_cond, is_stateless = false, parallel_iterations = 4 : i64, shape_invariant} : (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<!tf_type.resource<tensor<3x1xf32>>>) -> (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>, tensor<!tf_type.resource<tensor<3x1xf32>>>)
+  %2 = "tf.TensorListStack"(%1#2, %cst) : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>) -> tensor<3xf32>
+  return %2 : tensor<3xf32>
+}
+
+// -----
+
+// Test map_fn conversion when max iterations is loaded via tf._TfrtGetResourceOp in condition function.
+
+// CHECK-LABEL: map_resource_cond
+func.func private @map_resource_cond(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: tensor<!tf_type.variant<tensor<*xf32>>>) -> tensor<i1> {
+  %max_iter = "tf._TfrtGetResource"() <{container = [""], indices = [14], shared_name = [""]}> : () -> tensor<i32>
+  %0 = "tf.Less"(%arg0, %max_iter) : (tensor<i32>, tensor<i32>) -> tensor<i1>
+  %1 = "tf.Less"(%arg1, %max_iter) : (tensor<i32>, tensor<i32>) -> tensor<i1>
+  %2 = "tf.LogicalAnd"(%0, %1) : (tensor<i1>, tensor<i1>) -> tensor<i1>
+  %3 = "tf.ToBool"(%2) : (tensor<i1>) -> tensor<i1>
+  return %3 : tensor<i1>
+}
+
+// CHECK-LABEL: map_resource_body
+func.func private @map_resource_body(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: tensor<!tf_type.variant<tensor<*xf32>>>) -> (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>) {
+  %cst_1 = "tf.Const"() {value = dense<1> : tensor<i32>} : () -> tensor<i32>
+  %cst_val = "tf.Const"() {value = dense<2.0> : tensor<f32>} : () -> tensor<f32>
+  %0 = "tf.AddV2"(%arg0, %cst_1) : (tensor<i32>, tensor<i32>) -> tensor<i32>
+  %1 = "tf.AddV2"(%arg1, %cst_1) : (tensor<i32>, tensor<i32>) -> tensor<i32>
+  %2 = "tf.TensorListSetItem"(%arg2, %arg1, %cst_val) : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>, tensor<f32>) -> tensor<!tf_type.variant<tensor<*xf32>>>
+  return %0, %1, %2 : tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>
+}
+
+// CHECK-LABEL: @map_resource_main
+// CHECK:       tf_mlrt.tf_map_fn
+// CHECK-NOT:   tf.While
+func.func @map_resource_main() -> tensor<3xf32> {
+  %cst = "tf.Const"() {value = dense<0> : tensor<i32>} : () -> tensor<i32>
+  %cst_1 = "tf.Const"() {value = dense<-1> : tensor<i32>} : () -> tensor<i32>
+  %cst_2 = "tf.Const"() {value = dense<3> : tensor<i32>} : () -> tensor<i32>
+  %0 = "tf.TensorListReserve"(%cst_1, %cst_2) : (tensor<i32>, tensor<i32>) -> tensor<!tf_type.variant<tensor<*xf32>>>
+  %1:3 = "tf.While"(%cst, %cst, %0) {body = @map_resource_body, cond = @map_resource_cond, is_stateless = false, parallel_iterations = 4 : i64, shape_invariant} : (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>) -> (tensor<i32>, tensor<i32>, tensor<!tf_type.variant<tensor<*xf32>>>)
+  %2 = "tf.TensorListStack"(%1#2, %cst) : (tensor<!tf_type.variant<tensor<*xf32>>>, tensor<i32>) -> tensor<3xf32>
+  return %2 : tensor<3xf32>
+}
+
+func.func private @_tfrt_resource_init() {
+  %c3 = "tf.Const"() {value = dense<3> : tensor<i32>} : () -> tensor<i32>
+  "tf._TfrtSetResource"(%c3) {index = 14 : i64} : (tensor<i32>) -> ()
+  return
 }

@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:tensorflow.default.bzl", "tf_grpc_cc_dependencies")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 load(
@@ -17,11 +32,11 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = ["//tensorflow/core/profiler:internal"],
     deps = [
-        "//tensorflow/core:lib",
-        "//tensorflow/core:lib_internal",
-        "//tensorflow/core/profiler/protobuf:xplane_proto_cc",
-        "@local_tsl//tsl/profiler/protobuf:profiler_service_proto_cc",
-        "@local_tsl//tsl/profiler/rpc/client:save_profile",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/profiler/protobuf:profiler_service_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@xla//xla/tsl/profiler/rpc/client:save_profile",
     ],
 )
 
@@ -36,13 +51,10 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":profiler_client_impl",
-        "//tensorflow/core:lib",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/time",
-        "@local_tsl//tsl/profiler/protobuf:profiler_analysis_cc_grpc_proto",
-        "@local_tsl//tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
-        "@local_tsl//tsl/profiler/rpc/client:profiler_client",
-        "@local_tsl//tsl/profiler/rpc/client:profiler_client_impl",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@xla//xla/tsl/profiler/rpc/client:profiler_client",
+        "@xla//xla/tsl/profiler/rpc/client:profiler_client_impl",
     ],
 )
 
@@ -60,25 +72,15 @@ cc_library(
     deps = [
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@local_tsl//tsl/profiler/protobuf:profiler_analysis_cc_grpc_proto",
-        "@local_tsl//tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
-        "@local_tsl//tsl/profiler/rpc/client:profiler_client",
-        "@local_tsl//tsl/profiler/rpc/client:profiler_client_impl",
+        "@tsl//tsl/profiler/protobuf:profiler_analysis_cc_grpc_proto",
+        "@tsl//tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
+        "@xla//xla/tsl/profiler/rpc/client:profiler_client",
+        "@xla//xla/tsl/profiler/rpc/client:profiler_client_impl",
     ] + tf_grpc_cc_dependencies(),
     alwayslink = True,
-)
-
-cc_library(
-    name = "remote_profiler_session_manager",
-    hdrs = ["remote_profiler_session_manager.h"],
-    copts = tf_profiler_copts(),
-    deps = [
-        ":profiler_client_for_pybind",
-        "//tensorflow/core:lib",
-        "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/profiler/rpc/client:remote_profiler_session_manager",
-    ],
 )

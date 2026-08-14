@@ -39,7 +39,7 @@ class RemoteDevice : public Device {
       : Device(env, da),
         local_dev_name_(DeviceNameUtils::LocalName(da.name())) {}
 
-  Status Sync() override { return absl::OkStatus(); }
+  absl::Status Sync() override { return absl::OkStatus(); }
   Allocator* GetAllocator(AllocatorAttributes attr) override { return nullptr; }
 
   ResourceMgr* resource_manager() override {
@@ -53,7 +53,7 @@ class RemoteDevice : public Device {
   bool IsRemoteCallAllowed() const override { return true; }
 
  private:
-  const string local_dev_name_;
+  const std::string local_dev_name_;
 
   RemoteDevice(const RemoteDevice&) = delete;
   void operator=(const RemoteDevice&) = delete;
@@ -78,11 +78,14 @@ void AsRemoteDevices(
 }
 
 void NewRemoteDevices(Env* env, WorkerCacheInterface* worker_cache,
-                      const string& worker_name, NewRemoteDevicesDone done) {
+                      const std::string& worker_name,
+                      NewRemoteDevicesDone done) {
   WorkerInterface* wi = worker_cache->GetOrCreateWorker(worker_name);
   if (wi == nullptr) {
     std::vector<Device*> empty;
-    done(errors::NotFound("Device ", worker_name, " is not found."), &empty);
+    done(absl::NotFoundError(
+             absl::StrCat("Device ", worker_name, " is not found.")),
+         &empty);
     return;
   }
   struct Call {
@@ -91,8 +94,8 @@ void NewRemoteDevices(Env* env, WorkerCacheInterface* worker_cache,
   };
   Call* call = new Call;
   auto cb = [env, worker_cache, worker_name, done, wi,
-             call](const Status& status) {
-    Status s = status;
+             call](const absl::Status& status) {
+    absl::Status s = status;
     std::vector<Device*> remote_devices;
     auto cleanup = gtl::MakeCleanup(
         [&worker_cache, &worker_name, &wi, &done, &remote_devices, &s, call] {
@@ -107,7 +110,8 @@ void NewRemoteDevices(Env* env, WorkerCacheInterface* worker_cache,
     if (!DeviceNameUtils::ParseFullName(worker_name, &worker_name_parsed) ||
         !worker_name_parsed.has_job || !worker_name_parsed.has_replica ||
         !worker_name_parsed.has_task) {
-      s = errors::InvalidArgument("Could not parse worker name: ", worker_name);
+      s = absl::InvalidArgumentError(
+          absl::StrCat("Could not parse worker name: ", worker_name));
       LOG(WARNING) << s;
       return;
     }

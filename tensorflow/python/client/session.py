@@ -41,6 +41,7 @@ from tensorflow.python.training.experimental import mixed_precision_global_state
 from tensorflow.python.util import compat
 from tensorflow.python.util import deprecation
 from tensorflow.python.util import nest
+from tensorflow.python.util import numpy_compat
 from tensorflow.python.util.compat import collections_abc
 from tensorflow.python.util.tf_export import tf_export
 
@@ -140,14 +141,19 @@ _REGISTERED_EXPANSIONS = [
 
 def _convert_to_numpy_obj(numpy_dtype, obj):
   """Explicitly convert obj based on numpy type except for string type."""
-  return numpy_dtype(obj) if numpy_dtype is not object else str(obj)
+  return (
+      numpy_dtype(np.array(obj).astype(numpy_dtype))
+      if numpy_dtype is not object
+      else str(obj)
+  )
 
 
 def register_session_run_conversion_functions(
     tensor_type,
     fetch_function,
     feed_function=None,
-    feed_function_for_partial_run=None):
+    feed_function_for_partial_run=None,
+):
   """Register fetch and feed conversion functions for `tf.Session.run()`.
 
   This function registers a triple of conversion functions for fetching and/or
@@ -692,6 +698,13 @@ class BaseSession(SessionInterface):
       raise TypeError('Argument `config` must be a tf.ConfigProto, but got '
                       f'"{type(config).__name__}"')
 
+    if config.intra_op_parallelism_threads < 0:
+      raise ValueError(
+          'Argument `config.intra_op_parallelism_threads` must be >= 0, '
+          f'but got {config.intra_op_parallelism_threads}. '
+          'Use 0 to let the system pick an appropriate value.'
+      )
+
     if (mixed_precision_global_state.is_mixed_precision_graph_rewrite_enabled()
         and config.graph_options.rewrite_options.auto_mixed_precision !=
         rewriter_config_pb2.RewriterConfig.OFF):
@@ -933,7 +946,33 @@ class BaseSession(SessionInterface):
 
     The optional `options` argument expects a [`RunOptions`] proto. The options
     allow controlling the behavior of this particular step (e.g. turning tracing
-    on).
+    on, setting step execution timeouts, or enabling detailed OOM allocation
+    reporting via `report_tensor_allocations_upon_oom`).
+
+    For example, to report detailed tensor allocation information if an
+    out-of-memory
+    (OOM) error occurs during execution (note: this option is supported in
+    Graph mode / `tf.compat.v1.Session` and not in Eager mode):
+
+    ```python
+    run_options = tf.compat.v1.RunOptions(
+        report_tensor_allocations_upon_oom=True)
+    output = session.run(fetches, feed_dict=feed_dict, options=run_options)
+    ```
+
+    To enable execution tracing and set a step execution timeout:
+
+    ```python
+    run_options = tf.compat.v1.RunOptions(
+        trace_level=tf.compat.v1.RunOptions.FULL_TRACE,
+        timeout_in_ms=5000)
+    run_metadata = tf.compat.v1.RunMetadata()
+    output = session.run(
+        fetches,
+        feed_dict=feed_dict,
+        options=run_options,
+        run_metadata=run_metadata)
+    ```
 
     The optional `run_metadata` argument expects a [`RunMetadata`] proto. When
     appropriate, the non-Tensor output of this step will be collected there. For
@@ -1181,7 +1220,7 @@ class BaseSession(SessionInterface):
             np_val = subfeed_val.to_numpy_array()
             feed_handles[subfeed_t.ref()] = subfeed_val
           else:
-            np_val = np.asarray(subfeed_val, dtype=subfeed_dtype)
+            np_val = numpy_compat.np_asarray(subfeed_val, subfeed_dtype)
 
           if (not is_tensor_handle_feed and
               not subfeed_t.get_shape().is_compatible_with(np_val.shape)):

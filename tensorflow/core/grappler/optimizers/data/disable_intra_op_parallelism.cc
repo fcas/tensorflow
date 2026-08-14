@@ -39,7 +39,7 @@ constexpr std::array<const char*, 2> kMaxIntraOpParallelismDatasetOps = {
 
 }  // namespace
 
-Status DisableIntraOpParallelism::OptimizeAndCollectStats(
+absl::Status DisableIntraOpParallelism::OptimizeAndCollectStats(
     Cluster* cluster, const GrapplerItem& item, GraphDef* output,
     OptimizationStats* stats) {
   *output = item.graph;
@@ -52,9 +52,9 @@ Status DisableIntraOpParallelism::OptimizeAndCollectStats(
     return absl::OkStatus();
 
   if (item.fetch.size() != 1) {
-    return errors::InvalidArgument(
-        "Expected only one fetch node but there were ", item.fetch.size(), ": ",
-        absl::StrJoin(item.fetch, ", "));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected only one fetch node but there were ",
+                     item.fetch.size(), ": ", absl::StrJoin(item.fetch, ", ")));
   }
 
   for (const NodeDef& node : item.graph.node()) {

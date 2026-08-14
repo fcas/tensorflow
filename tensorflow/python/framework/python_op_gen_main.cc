@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_def.pb.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "tensorflow/core/platform/stringpiece.h"
 #include "tensorflow/python/framework/op_reg_offset.pb.h"
 #include "tensorflow/python/framework/python_op_gen.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/str_util.h"
 
 namespace tensorflow {
@@ -47,20 +47,20 @@ namespace {
 constexpr char kUsage[] =
     "This tool generates python wrapper for tensorflow ops.";
 
-Status ReadOpListFromFile(const string& filename,
-                          std::vector<string>* op_list) {
+absl::Status ReadOpListFromFile(const std::string& filename,
+                                std::vector<std::string>* op_list) {
   std::unique_ptr<RandomAccessFile> file;
   TF_RETURN_IF_ERROR(Env::Default()->NewRandomAccessFile(filename, &file));
   std::unique_ptr<io::InputBuffer> input_buffer(
       new io::InputBuffer(file.get(), 256 << 10));
-  string line_contents;
-  Status s = input_buffer->ReadLine(&line_contents);
+  std::string line_contents;
+  absl::Status s = input_buffer->ReadLine(&line_contents);
   while (s.ok()) {
     // The parser assumes that the op name is the first string on each
     // line with no preceding whitespace, and ignores lines that do
     // not start with an op name as a comment.
-    strings::Scanner scanner{StringPiece(line_contents)};
-    StringPiece op_name;
+    strings::Scanner scanner{absl::string_view(line_contents)};
+    absl::string_view op_name;
     if (scanner.One(strings::Scanner::LETTER_DIGIT_DOT)
             .Any(strings::Scanner::LETTER_DIGIT_DASH_DOT_SLASH_UNDERSCORE)
             .GetResult(nullptr, &op_name)) {
@@ -68,30 +68,31 @@ Status ReadOpListFromFile(const string& filename,
     }
     s = input_buffer->ReadLine(&line_contents);
   }
-  if (!errors::IsOutOfRange(s)) return s;
+  if (!absl::IsOutOfRange(s)) return s;
   return absl::OkStatus();
 }
 
-Status ReadOpRegOffsetsFromFile(absl::string_view filename,
-                                OpRegOffsets* op_reg_offsets) {
+absl::Status ReadOpRegOffsetsFromFile(absl::string_view filename,
+                                      OpRegOffsets* op_reg_offsets) {
   std::unique_ptr<RandomAccessFile> file;
   TF_RETURN_IF_ERROR(
       Env::Default()->NewRandomAccessFile(std::string(filename), &file));
   io::RandomAccessInputStream input_stream(file.get());
   io::BufferedInputStream in(&input_stream, 1 << 20);
-  string contents;
+  std::string contents;
   TF_RETURN_IF_ERROR(in.ReadAll(&contents));
   op_reg_offsets->ParseFromString(contents);
   return absl::OkStatus();
 }
 
-std::vector<string> GetSourceFileListFromOpRegOffsets(
+std::vector<std::string> GetSourceFileListFromOpRegOffsets(
     const OpRegOffsets& offsets) {
-  std::unordered_set<string> source_file_list;
+  std::unordered_set<std::string> source_file_list;
   for (const auto& offset : offsets.offsets()) {
     source_file_list.insert(offset.filepath());
   }
-  return std::vector<string>(source_file_list.begin(), source_file_list.end());
+  return std::vector<std::string>(source_file_list.begin(),
+                                  source_file_list.end());
 }
 
 // Generates Python wapper functions for the registered ops given ApiDefs in
@@ -103,12 +104,12 @@ std::vector<string> GetSourceFileListFromOpRegOffsets(
 //
 // If `source_file_name` is not empty, a comment block will be generated
 // to show the source file name that the generated file is generated from.
-Status PrintAllPythonOps(absl::Span<const string> api_def_dirs,
-                         absl::Span<const string> source_file_list,
-                         const string& out_path,
-                         const OpRegOffsets& op_reg_offsets,
-                         absl::Span<const string> op_allowlist = {},
-                         absl::Span<const string> hidden_op_list = {}) {
+absl::Status PrintAllPythonOps(
+    absl::Span<const std::string> api_def_dirs,
+    absl::Span<const std::string> source_file_list, const std::string& out_path,
+    const OpRegOffsets& op_reg_offsets,
+    absl::Span<const std::string> op_allowlist = {},
+    absl::Span<const std::string> hidden_op_list = {}) {
   OpList ops;
   OpRegistry::Global()->Export(false, &ops);
 
@@ -117,7 +118,7 @@ Status PrintAllPythonOps(absl::Span<const string> api_def_dirs,
     Env* env = Env::Default();
 
     for (const auto& api_def_dir : api_def_dirs) {
-      std::vector<string> api_files;
+      std::vector<std::string> api_files;
       TF_RETURN_IF_ERROR(env->GetMatchingPaths(
           io::JoinPath(api_def_dir, "*.pbtxt"), &api_files));
       TF_RETURN_IF_ERROR(api_def_map.LoadFileList(env, api_files));
@@ -127,8 +128,8 @@ Status PrintAllPythonOps(absl::Span<const string> api_def_dirs,
 
   OpList pruned_ops;
   if (!op_allowlist.empty()) {
-    std::unordered_set<string> allowlist(op_allowlist.begin(),
-                                         op_allowlist.end());
+    std::unordered_set<std::string> allowlist(op_allowlist.begin(),
+                                              op_allowlist.end());
     for (const auto& op_def : ops.op()) {
       if (allowlist.find(op_def.name()) != allowlist.end()) {
         *pruned_ops.mutable_op()->Add() = op_def;
@@ -138,8 +139,8 @@ Status PrintAllPythonOps(absl::Span<const string> api_def_dirs,
     pruned_ops = ops;
   }
 
-  string result = GetPythonOps(pruned_ops, api_def_map, op_reg_offsets,
-                               hidden_op_list, source_file_list);
+  std::string result = GetPythonOps(pruned_ops, api_def_map, op_reg_offsets,
+                                    hidden_op_list, source_file_list);
 
   if (out_path.empty()) {
     printf("%s", result.c_str());

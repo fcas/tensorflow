@@ -17,29 +17,32 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/path.h"
-#include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/platform/stringpiece.h"
 #include "tsl/platform/regexp.h"
 
 namespace tensorflow {
 namespace checkpoint {
 
-const absl::string_view kCheckpointCallbackManagerResourceName =
+ABSL_CONST_INIT const absl::string_view kCheckpointCallbackManagerResourceName =
     "checkpoint_callback_manager";
 
 namespace {
 
-const absl::string_view kCheckpointFileRegex = "^part-[0-9]*-of-[0-9]*";
-const absl::string_view kCheckpointTempDirRegex = "-[0-9]*_temp$";
-const absl::string_view kCheckpointDirRegex = "-[0-9]*$";
-const absl::string_view kCheckpointTempDirSuffix = "_temp";
+constexpr LazyRE2 kCheckpointFileRegex = {"^part-[0-9]*-of-[0-9]*"};
+constexpr LazyRE2 kCheckpointTempDirRegex = {"-[0-9]*_temp$"};
+constexpr LazyRE2 kCheckpointDirRegex = {"-[0-9]*$"};
+constexpr absl::string_view kCheckpointTempDirSuffix = "_temp";
 
 void TriggerSaveCallbackIfFileNotExist(absl::string_view checkpoint_id,
                                        absl::string_view checkpoint_dir,
@@ -66,7 +69,7 @@ void TriggerSaveCallbackIfFileNotExist(absl::string_view checkpoint_id,
     return;
   }
 
-  Status write_status =
+  absl::Status write_status =
       WriteStringToFile(Env::Default(), file_path, *save_content);
   if (!write_status.ok()) {
     LOG(WARNING) << write_status;
@@ -86,7 +89,8 @@ void TriggerRestoreCallbackIfFileExists(absl::string_view checkpoint_id,
     return;
   }
   std::string payload;
-  Status read_status = ReadFileToString(Env::Default(), file_path, &payload);
+  absl::Status read_status =
+      ReadFileToString(Env::Default(), file_path, &payload);
   if (!read_status.ok()) {
     LOG(WARNING) << "Failed to read: " << read_status;
     return;
@@ -94,7 +98,7 @@ void TriggerRestoreCallbackIfFileExists(absl::string_view checkpoint_id,
 
   LOG(INFO) << "Calling a restore callback: file_extension = " << file_extension
             << ", checkpoint_id = " << checkpoint_id;
-  Status callback_status = callback(checkpoint_id, payload);
+  absl::Status callback_status = callback(checkpoint_id, payload);
   if (!callback_status.ok()) {
     LOG(WARNING) << callback_status;
   }
@@ -119,10 +123,10 @@ CheckpointCallbackManager::GetCheckpointIdAndPathFromPrefix(
     if (basename.empty()) break;
 
     // Skip known checkpoint file: e.g., part-00000-of-00001
-    if (RE2::PartialMatch(basename, kCheckpointFileRegex)) continue;
+    if (RE2::PartialMatch(basename, *kCheckpointFileRegex)) continue;
 
     // With _temp suffix: e.g., checkpoint-1_temp
-    if (RE2::PartialMatch(basename, kCheckpointTempDirRegex)) {
+    if (RE2::PartialMatch(basename, *kCheckpointTempDirRegex)) {
       // Trim suffix, "_temp".
       return std::make_pair(
           std::string(basename.substr(
@@ -131,16 +135,16 @@ CheckpointCallbackManager::GetCheckpointIdAndPathFromPrefix(
     }
 
     // Without _temp suffix: e.g., checkpoint-1
-    if (RE2::PartialMatch(basename, kCheckpointDirRegex)) {
+    if (RE2::PartialMatch(basename, *kCheckpointDirRegex)) {
       return std::make_pair(std::string(basename),
                             std::string(io::Dirname(path)));
     }
   }
-  return errors::NotFound(
+  return absl::NotFoundError(
       absl::StrCat("Failed to find a checkpoint id. prefix = ", prefix));
 }
 
-Status CheckpointCallbackManager::RegisterSaveCallback(
+absl::Status CheckpointCallbackManager::RegisterSaveCallback(
     absl::string_view file_extension, SaveCallback callback) {
   SaveCallback lazy_callback = nullptr;
   std::string checkpoint_id;
@@ -149,7 +153,7 @@ Status CheckpointCallbackManager::RegisterSaveCallback(
     mutex_lock l(mu_);
     if (!save_callbacks_.try_emplace(file_extension, std::move(callback))
              .second) {
-      return errors::AlreadyExists("A callback already exists.");
+      return absl::AlreadyExistsError("A callback already exists.");
     }
 
     // If last_saved_checkpoint_id_and_dir_ is not empty,
@@ -174,7 +178,7 @@ bool CheckpointCallbackManager::DoesSaveCallbackExist(
   return save_callbacks_.contains(file_extension);
 }
 
-Status CheckpointCallbackManager::RegisterRestoreCallback(
+absl::Status CheckpointCallbackManager::RegisterRestoreCallback(
     absl::string_view file_extension, RestoreCallback callback) {
   RestoreCallback lazy_callback = nullptr;
   std::string checkpoint_id;
@@ -183,7 +187,7 @@ Status CheckpointCallbackManager::RegisterRestoreCallback(
     mutex_lock l(mu_);
     if (!restore_callbacks_.try_emplace(file_extension, std::move(callback))
              .second) {
-      return errors::AlreadyExists("A callback already exists.");
+      return absl::AlreadyExistsError("A callback already exists.");
     }
 
     // If last_restored_checkpoint_id_and_dir_ is not empty,

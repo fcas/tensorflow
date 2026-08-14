@@ -23,11 +23,13 @@ limitations under the License.
 #include <set>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "tensorflow/compiler/jit/variable_info.h"
 #include "tensorflow/compiler/jit/xla_tensor.h"
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
 #include "xla/client/local_client.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/service/maybe_owning_device_memory.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "tensorflow/core/framework/allocation_description.pb.h"
@@ -49,7 +51,7 @@ std::vector<const Tensor*> InputsFromContext(OpKernelContext* ctx);
 absl::StatusOr<std::vector<int>> GetConstantInputIndicesFromContext(
     OpKernelContext* ctx);
 
-Status SetOutputForConstant(
+absl::Status SetOutputForConstant(
     OpKernelContext* ctx, bool requires_copy_to_device,
     const XlaCompiler::CompilationResult* compilation_result, int output_num);
 
@@ -78,7 +80,7 @@ Status SetOutputForConstant(
 // complete. Therefore we put the newly created PjRtBuffer into `owned_args`.
 // Caller is responsible to ensure `owned_args` lives till the end of XLA
 // computation.
-Status PreparePjRtExecutableArguments(
+absl::Status PreparePjRtExecutableArguments(
     int num_missing_prefix_ctx_inputs, const std::vector<int>& input_mapping,
     const std::vector<const Tensor*>& inputs,
     const absl::flat_hash_map<int, const Tensor*>& variable_snapshots,
@@ -95,7 +97,7 @@ Status PreparePjRtExecutableArguments(
 // Assumes that the first `num_missing_prefix_ctx_inputs` inputs to the
 // compilation_result are missing in `inputs` and adjusts indexing into `inputs`
 // accordingly.
-Status PopulateCtxOutputsFromPjRtExecutableOutputs(
+absl::Status PopulateCtxOutputsFromPjRtExecutableOutputs(
     int num_missing_prefix_ctx_inputs, const std::vector<const Tensor*>& inputs,
     const std::vector<VariableInfo>& variables,
     const XlaCompiler::CompilationResult& compilation_result,
@@ -118,7 +120,7 @@ DeviceType GetDeviceType(OpKernelContext* ctx);
 // `variables` are the input arguments to the computation, usually read from the
 // OpKernelContext, `ctx`. Requires the device-appropriate `pjrt_client` and the
 // `compilation_result` used to build the `executable`.
-Status RunPjRtExecutable(
+absl::Status RunPjRtExecutable(
     const std::vector<const Tensor*>& inputs,
     const std::vector<VariableInfo>& variables,
     const XlaCompiler::CompilationResult& compilation_result,
@@ -132,7 +134,7 @@ Status RunPjRtExecutable(
 // Assumes that the first `num_missing_prefix_ctx_inputs` inputs to the
 // compilation_result are missing in `inputs` and adjusts indexing into `inputs`
 // accordingly.
-Status RunPjRtExecutable(
+absl::Status RunPjRtExecutable(
     int num_missing_prefix_ctx_inputs, const std::vector<const Tensor*>& inputs,
     const absl::flat_hash_map<int, const Tensor*>& variable_snapshots,
     const std::vector<VariableInfo>& updated_variables,
@@ -164,10 +166,10 @@ class XlaComputationLaunchContext {
   // 'use_multiple_streams' is true, 'allocate_xla_tensors' must also be true
   // because we track inter-stream dependencies through events inside XlaTensor
   // objects.
-  XlaComputationLaunchContext(xla::LocalClient* client,
-                              se::DeviceMemoryAllocator* xla_allocator,
-                              int device_ordinal, bool allocate_xla_tensors,
-                              bool use_multiple_streams);
+  XlaComputationLaunchContext(
+      xla::LocalClient* client,
+      stream_executor::DeviceAddressAllocator* xla_allocator,
+      int device_ordinal, bool allocate_xla_tensors, bool use_multiple_streams);
 
   // Builds a XlaCompiler::Argument vector from the arguments to an XlaLaunch
   // op.
@@ -188,7 +190,7 @@ class XlaComputationLaunchContext {
   absl::StatusOr<std::vector<xla::ExecutionInput>> PopulateInputs(
       OpKernelContext* ctx,
       const XlaCompiler::CompilationResult* compilation_result,
-      const std::map<int, const Tensor*>& resource_vars,
+      const absl::flat_hash_map<int, const Tensor*>& resource_vars,
       int missing_ctx_input_prefix,
       const xla::HloInputOutputAliasConfig& input_output_alias);
 
@@ -202,17 +204,17 @@ class XlaComputationLaunchContext {
   //
   // Assumes that the first `missing_ctx_input_prefix` inputs to the
   // compilation_result are missing and adjusts input indices accordingly.
-  Status PopulateOutputs(
+  absl::Status PopulateOutputs(
       OpKernelContext* ctx,
       const XlaCompiler::CompilationResult* compilation_result,
       xla::ScopedShapedBuffer output, int missing_ctx_input_prefix,
       absl::Span<VariableInfo> variable_infos,
       const xla::HloInputOutputAliasConfig& input_output_alias,
-      const std::map<int, const Tensor*>& resource_vars);
+      const absl::flat_hash_map<int, const Tensor*>& resource_vars);
 
  private:
   xla::LocalClient* client_;
-  se::DeviceMemoryAllocator* xla_allocator_;
+  stream_executor::DeviceAddressAllocator* xla_allocator_;
   bool allocate_xla_tensors_;
   bool use_multiple_streams_;
   int device_ordinal_;

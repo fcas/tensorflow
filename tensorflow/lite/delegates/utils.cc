@@ -23,9 +23,12 @@ limitations under the License.
 #include <vector>
 
 #include "tensorflow/lite/builtin_ops.h"
+#include "tensorflow/lite/c/c_api_types.h"
+#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/context_util.h"
 #include "tensorflow/lite/core/subgraph.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/util.h"
 
 namespace tflite {
 namespace delegates {
@@ -41,7 +44,11 @@ TfLiteStatus CreateNewTensorWithDifferentType(TfLiteContext* context,
   (*new_tensor)->type = new_type;
   (*new_tensor)->allocation_type = kTfLiteArenaRw;
   const auto* original_dims = original_tensor.dims;
+#if defined(_WIN32)
+  TfLiteIntArray* dims = context->TfLiteIntArrayCreate(original_dims->size);
+#else
   TfLiteIntArray* dims = TfLiteIntArrayCreate(original_dims->size);
+#endif
   for (int i = 0; i < original_dims->size; ++i) {
     dims->data[i] = original_dims->data[i];
   }
@@ -173,13 +180,11 @@ TfLiteStatus GraphPartitionHelper::PrepareSupportedNodes(
     std::string unsupported_details;
     if (IsNodeSupported(context_, node, registration, node_id,
                         &unsupported_details)) {
-#ifdef TFLITE_DEBUG_DELEGATE
       if (node_id < start_node_index) {
         continue;
       } else if (node_id > end_node_index) {
         break;
       }
-#endif  // TFLITE_DEBUG_DELEGATE
       supported_nodes_->data[supported_nodes_->size++] = node_id;
     } else if (unsupported_nodes_info) {
       std::string node_info = GetOpNameByRegistration(*registration);
@@ -231,7 +236,8 @@ FP16GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl(
 bool FP16GraphPartitionHelper::IsNodeSupported(
     TfLiteContext* context, TfLiteNode* node, TfLiteRegistration* registration,
     int node_id, std::string* unsupported_details) {
-  if (registration->builtin_code == kTfLiteBuiltinDequantize) {
+  if (registration->builtin_code == kTfLiteBuiltinDequantize &&
+      node->inputs->size > 0) {
     auto& dequantize_input = context_->tensors[node->inputs->data[0]];
     if (dequantize_input.type == kTfLiteFloat16 &&
         IsConstantTensor(&dequantize_input)) {

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_LIB_MONITORING_COLLECTION_REGISTRY_H_
 #define TENSORFLOW_CORE_LIB_MONITORING_COLLECTION_REGISTRY_H_
 
-#include "tsl/lib/monitoring/collection_registry.h"
+#include "xla/tsl/lib/monitoring/collection_registry.h"
 // clang-format off
 // Required for IS_MOBILE_PLATFORM
 #include "tensorflow/core/platform/platform.h"
@@ -48,6 +48,7 @@ using tsl::monitoring::MetricCollectorGetter;
 
 #include "tensorflow/core/framework/summary.pb.h"
 #include "tensorflow/core/lib/monitoring/collected_metrics.h"
+#include "tensorflow/core/lib/monitoring/collection_registry.h"
 #include "tensorflow/core/lib/monitoring/metric_def.h"
 #include "tensorflow/core/lib/monitoring/types.h"
 #include "tensorflow/core/platform/env.h"
@@ -67,9 +68,6 @@ using tsl::monitoring::MetricCollector;
 using tsl::monitoring::MetricCollectorGetter;
 using tsl::monitoring::exporter_registration::ExporterRegistration;
 using tsl::monitoring::internal::Collector;
-namespace test_util {
-class CollectionRegistryTestAccess;
-}  // namespace test_util
 // NOLINTEND(misc-unused-using-decls)
 }  // namespace monitoring
 }  // namespace tensorflow

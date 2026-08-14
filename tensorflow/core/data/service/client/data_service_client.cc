@@ -15,6 +15,8 @@ limitations under the License.
 #include "tensorflow/core/data/service/client/data_service_client.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -27,16 +29,23 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/substitute.h"
 #include "absl/time/time.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
 #include "tensorflow/core/data/service/client/common.h"
 #include "tensorflow/core/data/service/client/validate_utils.h"
 #include "tensorflow/core/data/service/common.h"
 #include "tensorflow/core/data/service/common.pb.h"
+#include "tensorflow/core/data/service/dispatcher.pb.h"
 #include "tensorflow/core/data/service/dispatcher_client.h"
 #include "tensorflow/core/data/service/grpc_util.h"
+#include "tensorflow/core/data/service/worker.pb.h"
 #include "tensorflow/core/data/service/worker_client.h"
 #include "tensorflow/core/data/service/worker_impl.h"
 #include "tensorflow/core/data/utils.h"
@@ -53,9 +62,8 @@ limitations under the License.
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/profiler/lib/traceme_encode.h"
-#include "tsl/platform/host_info.h"
+#include "tsl/platform/random.h"
 #include "tsl/platform/retrying_utils.h"
-#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tensorflow {
 namespace data {
@@ -74,9 +82,9 @@ absl::StatusOr<DataTransferServerInfo> GetTransferServer(
       return transfer_server;
     }
   }
-  return errors::NotFound("protocol ", protocol,
-                          " is not available for worker ",
-                          task_info.worker_address());
+  return absl::NotFoundError(absl::StrCat("Protocol '", protocol,
+                                          "' is not available for worker '",
+                                          task_info.worker_address(), "'."));
 }
 
 }  // namespace
@@ -90,7 +98,7 @@ DataServiceClient::~DataServiceClient() {
           << iteration_client_id_;
   task_thread_manager_.reset();
   if (initialized_) {
-    Status s = dispatcher_->ReleaseIterationClient(iteration_client_id_);
+    absl::Status s = dispatcher_->ReleaseIterationClient(iteration_client_id_);
     if (!s.ok()) {
       LOG(WARNING) << "Failed to release iteration client id: " << s;
     }
@@ -103,7 +111,7 @@ DataServiceClient::~DataServiceClient() {
           << iteration_client_id_;
 }
 
-Status DataServiceClient::Initialize(
+absl::Status DataServiceClient::Initialize(
     const DeviceBase::AcceleratorDeviceInfo* accelerator_device_info,
     Allocator* allocator) {
   accelerator_device_info_ = accelerator_device_info;
@@ -113,7 +121,7 @@ Status DataServiceClient::Initialize(
           << " in tf.data service client.";
   dispatcher_ = std::make_unique<DataServiceDispatcherClient>(params_.address,
                                                               params_.protocol);
-  int64_t deadline_micros = kint64max;
+  int64_t deadline_micros = std::numeric_limits<int64_t>::max();
   std::optional<std::string> job_name;
   if (!params_.job_name.empty()) {
     job_name = params_.job_name;
@@ -127,7 +135,7 @@ Status DataServiceClient::Initialize(
             params_.target_workers, job_id_);
       },
       /*description=*/
-      strings::StrCat("get or create job with dispatcher at ", params_.address),
+      absl::StrCat("get or create job with dispatcher at ", params_.address),
       deadline_micros));
   TF_RETURN_IF_ERROR(grpc_util::Retry(
       [&]() {
@@ -135,8 +143,8 @@ Status DataServiceClient::Initialize(
                                                  iteration_client_id_);
       },
       /*description=*/
-      strings::StrCat("get or create iteration with dispatcher at ",
-                      params_.address),
+      absl::StrCat("get or create iteration with dispatcher at ",
+                   params_.address),
       deadline_micros));
   initialized_ = true;
   return absl::OkStatus();
@@ -158,7 +166,7 @@ absl::StatusOr<GetNextResult> DataServiceClient::GetNext(
     }
     if (cancelled_) {
       VLOG(3) << "Returning from GetNext due to cancellation";
-      return errors::Cancelled("Data service iterator was cancelled");
+      return absl::CancelledError("Data service iterator was cancelled");
     }
     if (!status_.ok()) {
       VLOG(3) << "Returning from GetNext with error " << status_;
@@ -170,7 +178,8 @@ absl::StatusOr<GetNextResult> DataServiceClient::GetNext(
     }
     if (!ResultReady()) {
       VLOG(3) << "Returning from GetNext with internal error";
-      return errors::Internal("Expected a result to be ready, but none were.");
+      return absl::InternalError(
+          "Expected a result to be ready, but none were.");
     }
     result = PopNextResult();
     worker_thread_cv_.notify_one();
@@ -220,16 +229,16 @@ TraceMeMetadata DataServiceClient::GetTraceMeMetadata() const {
       "num_tasks",
       num_tasks == -1
           ? kTraceInfoUnavailable
-          : strings::Printf("%lld", static_cast<long long>(num_tasks))));
+          : absl::StrFormat("%lld", static_cast<long long>(num_tasks))));
   result.push_back(std::make_pair("job_name", params_.job_name));
   result.push_back(std::make_pair(
       "max_outstanding_requests",
-      strings::Printf(
+      absl::StrFormat(
           "%lld", static_cast<long long>(params_.max_outstanding_requests))));
   if (params_.max_outstanding_requests == model::kAutotune) {
     result.push_back(std::make_pair(
         "autotuned_max_outstanding_requests",
-        strings::Printf("%lld", static_cast<long long>(
+        absl::StrFormat("%lld", static_cast<long long>(
                                     autotuned_max_outstanding_requests))));
   }
   return result;
@@ -289,7 +298,7 @@ void DataServiceClient::TaskThreadManager() TF_LOCKS_EXCLUDED(mu_) {
   auto cleanup =
       gtl::MakeCleanup([] { VLOG(1) << "Task thread manager exiting"; });
   VLOG(1) << "Starting task thread manager";
-  uint64 next_check = Env::Default()->NowMicros();
+  uint64_t next_check = Env::Default()->NowMicros();
   while (true) {
     {
       mutex_lock l(mu_);
@@ -356,7 +365,7 @@ DataServiceClient::CreateGrpcWorkerClient(const TaskInfo& task_info) {
 }
 
 absl::StatusOr<std::unique_ptr<DataServiceWorkerClient>>
-DataServiceClient::CreateAlternativeWorkerClientWithGrpcFallback(
+DataServiceClient::CreateAlternativeWorkerClientMaybeWithGrpcFallback(
     const DataTransferServerInfo& transfer_server, const TaskInfo& task_info) {
   absl::StatusOr<std::unique_ptr<DataServiceWorkerClient>> worker =
       CreateDataServiceWorkerClient(params_.protocol, transfer_server,
@@ -367,10 +376,17 @@ DataServiceClient::CreateAlternativeWorkerClientWithGrpcFallback(
               << task_info.worker_address() << "'.";
     return worker;
   }
-  LOG(INFO) << "Failed to start client for data transfer protocol '"
-            << transfer_server.protocol() << "' for worker '"
-            << task_info.worker_address() << "'; falling back to grpc. "
-            << "Original error: " << worker.status();
+  std::string client_creation_error_message =
+      absl::StrCat("Failed to start client for data transfer protocol '",
+                   transfer_server.protocol(), "' for worker '",
+                   task_info.worker_address(), "'.");
+  if (!transfer_server.fall_back_to_grpc_at_client_creation_time()) {
+    return absl::InternalError(
+        absl::StrCat(client_creation_error_message,
+                     " Original error: ", worker.status().message()));
+  }
+  LOG(INFO) << client_creation_error_message
+            << "; falling back to gRPC. Original error: " << worker.status();
   metrics::RecordTFDataServiceDataTransferProtocolFallback(
       transfer_server.protocol(),
       static_cast<error::Code>(worker.status().raw_code()),
@@ -381,9 +397,7 @@ DataServiceClient::CreateAlternativeWorkerClientWithGrpcFallback(
 absl::StatusOr<std::unique_ptr<DataServiceWorkerClient>>
 DataServiceClient::CreateWorkerClient(const TaskInfo& task_info) {
   if (params_.data_transfer_protocol == kLocalTransferProtocol ||
-      // TODO(b/291994182): Use remote workers in unit tests.
-      (tsl::port::JobUid() != -1 &&
-       LocalWorkers::Get(task_info.worker_address()) != nullptr)) {
+      ForceLocalProtocol(task_info.worker_address())) {
     DataTransferServerInfo info;
     info.set_protocol(kLocalTransferProtocol);
     info.set_address(task_info.worker_address());
@@ -394,16 +408,16 @@ DataServiceClient::CreateWorkerClient(const TaskInfo& task_info) {
     TF_ASSIGN_OR_RETURN(
         DataTransferServerInfo transfer_server,
         GetTransferServer(params_.data_transfer_protocol, task_info));
-    return CreateAlternativeWorkerClientWithGrpcFallback(transfer_server,
-                                                         task_info);
+    return CreateAlternativeWorkerClientMaybeWithGrpcFallback(transfer_server,
+                                                              task_info);
   }
   if (std::string default_protocol = DefaultDataTransferProtocol();
       default_protocol != kGrpcTransferProtocol) {
     absl::StatusOr<DataTransferServerInfo> transfer_server =
         GetTransferServer(default_protocol, task_info);
     if (transfer_server.ok()) {
-      return CreateAlternativeWorkerClientWithGrpcFallback(*transfer_server,
-                                                           task_info);
+      return CreateAlternativeWorkerClientMaybeWithGrpcFallback(
+          *transfer_server, task_info);
     }
     VLOG(1) << "Failed to find transfer server for default data transfer "
                "protocol '"
@@ -418,7 +432,7 @@ DataServiceClient::CreateWorkerClient(const TaskInfo& task_info) {
   return CreateGrpcWorkerClient(task_info);
 }
 
-Status DataServiceClient::AddTask(const TaskInfo& task_info)
+absl::Status DataServiceClient::AddTask(const TaskInfo& task_info)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<DataServiceWorkerClient> worker,
                       CreateWorkerClient(task_info));
@@ -436,11 +450,6 @@ Status DataServiceClient::AddTask(const TaskInfo& task_info)
     if (current_round_ == task_info.starting_round()) {
       DCHECK_EQ(next_task_index_, 0);
     }
-  }
-  if (!IsCoordinatedRead()) {
-    // Shuffle task order within each client to avoid thundering herd effect.
-    std::mt19937 rng;
-    std::shuffle(tasks_.begin(), tasks_.end(), rng);
   }
   return absl::OkStatus();
 }
@@ -461,7 +470,7 @@ void DataServiceClient::Heartbeat() TF_LOCKS_EXCLUDED(mu_) {
     req.set_target_processing_time_nsec(target_processing_time_nsec);
   }
   ClientHeartbeatResponse resp;
-  Status s = dispatcher_->ClientHeartbeat(req, resp);
+  absl::Status s = dispatcher_->ClientHeartbeat(req, resp);
   if (!s.ok()) {
     if (IsPreemptedError(s)) {
       LOG(WARNING)
@@ -529,12 +538,17 @@ void DataServiceClient::UpdateTasks(const ClientHeartbeatResponse& resp)
       should_finish_iteration_ = false;
       continue;
     }
-    Status s = AddTask(it->second);
+    absl::Status s = AddTask(it->second);
     if (!s.ok()) {
       status_ = s;
       get_next_cv_.notify_all();
       break;
     }
+  }
+  if (!IsCoordinatedRead()) {
+    // Shuffle task order within each client to avoid thundering herd effect.
+    std::mt19937 rng(tsl::random::New64());
+    std::shuffle(tasks_.begin(), tasks_.end(), rng);
   }
 }
 
@@ -602,14 +616,17 @@ void DataServiceClient::UpdateWorkerThreads() TF_LOCKS_EXCLUDED(mu_) {
       num_running_worker_threads_--;
       get_next_cv_.notify_all();
     };
-    worker_threads_.push_back(ctx_->StartThread(
-        "tf-data-service-task_thread", [this, done = std::move(done)]() {
-          RunWorkerThread(std::move(done));
-        }));
+    int64_t thread_index = worker_threads_.size();
+    worker_threads_.push_back(
+        ctx_->StartThread("tf-data-service-task_thread",
+                          [this, thread_index, done = std::move(done)]() {
+                            RunWorkerThread(thread_index, std::move(done));
+                          }));
   }
 }
 
-void DataServiceClient::RunWorkerThread(std::function<void()> done)
+void DataServiceClient::RunWorkerThread(int64_t thread_index,
+                                        std::function<void()> done)
     TF_LOCKS_EXCLUDED(mu_) {
   auto cleanup = gtl::MakeCleanup([done = std::move(done)]() {
     done();
@@ -657,10 +674,10 @@ void DataServiceClient::RunWorkerThread(std::function<void()> done)
       }
       VLOG(3) << "Processing task " << task_to_process->info.task_id();
     }
-    int64_t deadline_micros = kint64max;
-    Status s = GetElementTraced(task_to_process.get(), deadline_micros,
-                                /*enqueue_result=*/!IsCoordinatedRead(),
-                                allow_skip, result);
+    int64_t deadline_micros = std::numeric_limits<int64_t>::max();
+    absl::Status s = GetElementTraced(task_to_process.get(), deadline_micros,
+                                      /*enqueue_result=*/!IsCoordinatedRead(),
+                                      allow_skip, result, thread_index);
     if (!s.ok()) {
       mutex_lock l(mu_);
       VLOG(1) << "Failed to get element from worker "
@@ -757,8 +774,8 @@ void DataServiceClient::AdvanceTaskIndex() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
   }
 }
 
-Status DataServiceClient::TryGetElement(const Task& task, bool allow_skip,
-                                        GetElementResult& result) {
+absl::Status DataServiceClient::TryGetElement(const Task& task, bool allow_skip,
+                                              GetElementResult& result) {
   GetElementRequest req;
   req.set_task_id(task.info.task_id());
   req.set_skipped_previous_round(task.skipped_previous_round);
@@ -800,10 +817,9 @@ void DataServiceClient::ProcessGetElementResponse(
   get_next_cv_.notify_all();
 }
 
-Status DataServiceClient::GetElementTraced(Task* task, int64_t deadline_micros,
-                                           bool enqueue_result, bool allow_skip,
-                                           std::shared_ptr<Result> result)
-    TF_LOCKS_EXCLUDED(mu_) {
+absl::Status DataServiceClient::GetElementTraced(
+    Task* task, int64_t deadline_micros, bool enqueue_result, bool allow_skip,
+    std::shared_ptr<Result> result, int64_t thread_index) {
   VLOG(3) << "Getting an element for task id " << task->info.task_id();
   tsl::profiler::TraceMe activity("GetDataServiceElement",
                                   tsl::profiler::TraceMeLevel::kInfo);
@@ -820,15 +836,15 @@ Status DataServiceClient::GetElementTraced(Task* task, int64_t deadline_micros,
            {"round_index", task->round}});
     });
   }
-  Status s =
-      GetElement(task, deadline_micros, enqueue_result, allow_skip, result);
-  mutex_lock l(mu_);
+  absl::Status s = GetElement(task, deadline_micros, enqueue_result, allow_skip,
+                              result, thread_index);
   VLOG(3) << "Got an element for task id " << task->info.task_id();
   return s;
 }
 
-Status DataServiceClient::MaybeRemoveTask(Task& task, int64_t deadline_micros,
-                                          Result& result)
+absl::Status DataServiceClient::MaybeRemoveTask(Task& task,
+                                                int64_t deadline_micros,
+                                                Result& result)
     TF_LOCKS_EXCLUDED(mu_) {
   bool removed;
   VLOG(1) << "Requesting task removal for worker " << task.info.worker_address()
@@ -857,26 +873,49 @@ Status DataServiceClient::MaybeRemoveTask(Task& task, int64_t deadline_micros,
   return absl::OkStatus();
 }
 
-Status DataServiceClient::GetElement(Task* task, int64_t deadline_micros,
-                                     bool enqueue_result, bool allow_skip,
-                                     std::shared_ptr<Result> result)
+absl::Status DataServiceClient::GetElement(Task* task, int64_t deadline_micros,
+                                           bool enqueue_result, bool allow_skip,
+                                           std::shared_ptr<Result> result,
+                                           int64_t thread_index)
     TF_LOCKS_EXCLUDED(mu_) {
   GetElementResult get_element_result;
   while (true) {
-    Status s = TryGetElement(*task, allow_skip, get_element_result);
+    absl::Status s = TryGetElement(*task, allow_skip, get_element_result);
     if (s.ok()) {
       task->num_retries = 0;
+      if (get_element_result.skip) {
+        metrics::RecordTFDataClientGetElementAction(
+            "skip_empty_buffer", absl::StrCat(iteration_client_id_),
+            task->info.worker_address(), absl::StrCat(thread_index));
+      } else if (!get_element_result.end_of_sequence) {
+        metrics::RecordTFDataClientGetElementAction(
+            "success", absl::StrCat(iteration_client_id_),
+            task->info.worker_address(), absl::StrCat(thread_index));
+      }
       break;
     }
     if (!IsPreemptedError(s)) {
       if (task->worker->GetDataTransferProtocol() == kGrpcTransferProtocol ||
           task->worker->GetDataTransferProtocol() == kLocalTransferProtocol) {
-        return s;
+        return absl::Status(
+            s.code(),
+            absl::StrCat(
+                "Failed to get an element, with a nonretryable error: ",
+                s.message()));
       }
-      LOG(ERROR) << "Failed to use alternative data transfer protocol '"
-                 << task->worker->GetDataTransferProtocol() << "' for worker '"
-                 << task->info.worker_address()
-                 << "'; falling back to grpc. Original error: " << s;
+      if (!task->worker->FallBackToGrpcAtGetElementTime()) {
+        return absl::Status(
+            s.code(),
+            absl::StrCat("Failed to get an element over data "
+                         "transfer protocol '",
+                         task->worker->GetDataTransferProtocol(),
+                         "', with a nonretryable error: ", s.message()));
+      }
+      LOG(ERROR) << "Failed to get an element over data transfer protocol '"
+                 << task->worker->GetDataTransferProtocol()
+                 << "', with a nonretryable error; falling back to grpc. "
+                    "Original error: "
+                 << s;
       metrics::RecordTFDataServiceDataTransferProtocolError(
           task->worker->GetDataTransferProtocol(),
           static_cast<error::Code>(s.raw_code()), std::string(s.message()));
@@ -889,7 +928,7 @@ Status DataServiceClient::GetElement(Task* task, int64_t deadline_micros,
     {
       mutex_lock l(mu_);
       if (cancelled_) {
-        return errors::Cancelled("DataServiceDataset iterator cancelled");
+        return absl::CancelledError("DataServiceDataset iterator cancelled");
       }
     }
     int64_t now_micros = Env::Default()->NowMicros();
@@ -917,6 +956,9 @@ Status DataServiceClient::GetElement(Task* task, int64_t deadline_micros,
       // task before returning to this one.
       result->ready = true;
       result->skip = true;
+      metrics::RecordTFDataClientGetElementAction(
+          "skip_error", absl::StrCat(iteration_client_id_),
+          task->info.worker_address(), absl::StrCat(thread_index));
       return absl::OkStatus();
     }
   }

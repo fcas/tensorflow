@@ -22,9 +22,10 @@ limitations under the License.
 #include <unordered_map>
 
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/framework/allocator.h"
-#include "tsl/framework/device_id.h"
-#include "tsl/platform/macros.h"
+#include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/framework/device_id.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tensorflow {
 

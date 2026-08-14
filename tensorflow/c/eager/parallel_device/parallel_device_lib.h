@@ -16,12 +16,17 @@ limitations under the License.
 #ifndef TENSORFLOW_C_EAGER_PARALLEL_DEVICE_PARALLEL_DEVICE_LIB_H_
 #define TENSORFLOW_C_EAGER_PARALLEL_DEVICE_PARALLEL_DEVICE_LIB_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/optional.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
@@ -30,9 +35,13 @@ limitations under the License.
 #include "tensorflow/c/eager/c_api_experimental.h"
 #include "tensorflow/c/eager/tfe_op_internal.h"
 #include "tensorflow/c/safe_ptr.h"
+#include "tensorflow/c/tf_datatype.h"
+#include "tensorflow/c/tf_status.h"
+#include "tensorflow/c/tf_tensor.h"
 #include "tensorflow/core/framework/cancellation.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/platform/status.h"
 
 namespace tensorflow {
 namespace parallel_device {
@@ -91,7 +100,7 @@ class ParallelDevice {
   // The returned optional has a value if and only if `status` evaluates to
   // TF_OK. Bad statuses are forwarded from underlying `TFE_Execute` calls, or
   // if sanity checks on dtypes/metadata fail.
-  absl::optional<std::vector<std::unique_ptr<ParallelTensor>>> Execute(
+  std::optional<std::vector<std::unique_ptr<ParallelTensor>>> Execute(
       TFE_Context* context, const std::vector<ParallelTensor*>& inputs,
       const char* operation_name, const TFE_OpAttrs* attributes,
       int expected_max_outputs, TF_Status* status) const;
@@ -136,7 +145,7 @@ class ParallelDevice {
   // computation to continue without blocking.
   //
   // The return status and value is the same as `Execute`.
-  absl::optional<std::vector<std::unique_ptr<ParallelTensor>>> Join(
+  std::optional<std::vector<std::unique_ptr<ParallelTensor>>> Join(
       const std::vector<PartialTensorShape>& expected_output_shapes,
       TF_Status* status) const;
 
@@ -196,12 +205,12 @@ class ParallelTensor {
   // `shape` output argument. This blocks waiting for async tensors, may return
   // a delayed bad status encountered during async execution, and will return a
   // bad status unless all tensors have the same shape.
-  Status Shape(const std::vector<int64_t>** shape) const;
+  absl::Status Shape(const std::vector<int64_t>** shape) const;
   TF_DataType dtype() const { return dtype_; }
 
   // Sets its output argument to a summary of the values of this tensor on every
   // component device.
-  Status SummarizeValue(std::string& summary);
+  absl::Status SummarizeValue(std::string& summary);
 
   std::vector<TensorHandlePtr> release_tensors() { return std::move(tensors_); }
 
@@ -226,7 +235,7 @@ class ParallelTensor {
                  std::vector<TensorHandlePtr> tensors, const TF_DataType dtype)
       : device_(device),
         tensors_(std::move(tensors)),
-        shape_(absl::nullopt),
+        shape_(std::nullopt),
         dtype_(dtype) {}
 
   const ParallelDevice& device_;
@@ -234,7 +243,8 @@ class ParallelTensor {
   // Parallel tensors are immutable but compute their shape lazily unless it is
   // provided on construction. The optional has a value if the lazy computation
   // has been completed or the shape was provided on construction.
-  mutable absl::optional<std::vector<int64_t>> shape_;
+  mutable absl::Mutex mu_;
+  mutable std::optional<std::vector<int64_t>> shape_ ABSL_GUARDED_BY(mu_);
   const TF_DataType dtype_;
 };
 

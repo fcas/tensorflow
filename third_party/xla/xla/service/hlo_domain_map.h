@@ -16,24 +16,27 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_DOMAIN_MAP_H_
 #define XLA_SERVICE_HLO_DOMAIN_MAP_H_
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/statusor.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 
 // The HloDomainMap splits a set of instructions within a module or computation,
 // into different domains, separated by kDomain instructions.
 // A domain is composed by a set of instructions which can reach each other via
-// operand/user edges, without crossing a kDomain insutrction of a given kind.
+// operand/user edges, without crossing a kDomain instruction of a given kind.
 // A domain never crosses computation boundaries.
 class HloDomainMap {
  public:
@@ -87,13 +90,13 @@ class HloDomainMap {
   // kDomain instruction of the same kind, hence defining an empty domain.
   // If that is the case, create the empty domain and call the proper
   // normalizer.
-  Status TryProcessEmptyDomain(HloInstruction* instruction);
+  absl::Status TryProcessEmptyDomain(HloInstruction* instruction);
 
-  Status Populate(HloComputation* computation);
+  absl::Status Populate(HloComputation* computation);
 
   // Inserts the provided domain into the ones tracked by this object,
   // creating a new domain ID.
-  Status InsertDomain(std::unique_ptr<DomainMetadata::Domain> domain);
+  absl::Status InsertDomain(std::unique_ptr<DomainMetadata::Domain> domain);
 
   // From the given instruction, expands operand and user wise, the set of
   // instructions which can be reached without crossing a kDomain instruction
@@ -101,8 +104,8 @@ class HloDomainMap {
   // The domain data structure will be populated with all the reached
   // instructions, and the boundaries of the domain, with the kDomain
   // instructions encountered while expanding the reach.
-  Status ExpandDomain(HloInstruction* instruction,
-                      DomainMetadata::Domain* domain) const;
+  absl::Status ExpandDomain(HloInstruction* instruction,
+                            DomainMetadata::Domain* domain) const;
 
   // Creates a domain data structure using the ExpandDomain() API.
   absl::StatusOr<std::unique_ptr<DomainMetadata::Domain>> CreateDomain(
@@ -117,7 +120,7 @@ class HloDomainMap {
 
   // Populates domain_metadata_id_ that maps each HloInstruction to the unique
   // ID of its associated domain metatadata.
-  Status PopulateDomainMetadataMap();
+  absl::Status PopulateDomainMetadataMap();
 
   std::string domain_kind_;
   std::vector<std::unique_ptr<DomainMetadata::Domain>> instruction_domains_;

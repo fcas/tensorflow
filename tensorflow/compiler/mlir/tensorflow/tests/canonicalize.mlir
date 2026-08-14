@@ -1,3 +1,17 @@
+// Copyright 2026 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: tf-opt %s -pass-pipeline='builtin.module(func.func(canonicalize{test-convergence}))' | FileCheck %s
 
 // CHECK-LABEL: func @tfAssertTrue
@@ -565,13 +579,29 @@ func.func @testDoubleNeg(%arg0: tensor<8x16x32x64xi32>) -> tensor<8x16x32x64xi32
 // CHECK: return %arg0
 }
 
+// Reciprocal is not an exact involution (1 / (1 / x) rounds in floating
+// point and truncates to zero for integer |x| > 1), so a Reciprocal pair
+// must not fold away.
 // CHECK-LABEL: testDoubleReciprocal
 func.func @testDoubleReciprocal(%arg0: tensor<8x16x32x64xi32>) -> tensor<8x16x32x64xi32> {
   %0 = "tf.Reciprocal"(%arg0) : (tensor<8x16x32x64xi32>) -> tensor<8x16x32x64xi32>
   %1 = "tf.Reciprocal"(%0) : (tensor<8x16x32x64xi32>) -> tensor<8x16x32x64xi32>
   func.return %1: tensor<8x16x32x64xi32>
 
-// CHECK: return %arg0
+// CHECK: %[[RECIPROCAL0:.*]] = "tf.Reciprocal"(%arg0)
+// CHECK: %[[RECIPROCAL1:.*]] = "tf.Reciprocal"(%[[RECIPROCAL0]])
+// CHECK: return %[[RECIPROCAL1]]
+}
+
+// CHECK-LABEL: testDoubleReciprocalFloat
+func.func @testDoubleReciprocalFloat(%arg0: tensor<8x16x32x64xf32>) -> tensor<8x16x32x64xf32> {
+  %0 = "tf.Reciprocal"(%arg0) : (tensor<8x16x32x64xf32>) -> tensor<8x16x32x64xf32>
+  %1 = "tf.Reciprocal"(%0) : (tensor<8x16x32x64xf32>) -> tensor<8x16x32x64xf32>
+  func.return %1: tensor<8x16x32x64xf32>
+
+// CHECK: %[[RECIPROCAL0:.*]] = "tf.Reciprocal"(%arg0)
+// CHECK: %[[RECIPROCAL1:.*]] = "tf.Reciprocal"(%[[RECIPROCAL0]])
+// CHECK: return %[[RECIPROCAL1]]
 }
 
 // CHECK-LABEL: testRedundantReshape
@@ -676,6 +706,92 @@ func.func @testTileMultiplesAllOnes(%arg0: tensor<2x3xf32>) -> tensor<2x3xf32> {
   // CHECK: return %arg0
   %0 = "tf.Tile"(%arg0, %cst) : (tensor<2x3xf32>, tensor<2xi32>) -> tensor<2x3xf32>
   func.return %0: tensor<2x3xf32>
+}
+
+// -----
+
+// CHECK-LABEL: testTileFold
+func.func @testTileFold(%arg0: tensor<2x3x1xf32>, %arg1: tensor<2x3x20xf32>) -> tensor<2x3x20xf32> {
+  %cst = "tf.Const"() <{value = dense<[1, 1, 20]> : tensor<3xi64>}> : () -> tensor<3xi64>
+  %0 = "tf.Tile"(%arg0, %cst) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x3x20xf32>
+  %1 = "tf.AddV2"(%0, %arg1) {device = ""} : (tensor<2x3x20xf32>, tensor<2x3x20xf32>) -> tensor<2x3x20xf32>
+  // CHECK: "tf.AddV2"(%arg0, %arg1)
+  func.return %1 : tensor<2x3x20xf32>
+}
+
+// CHECK-LABEL: testSecondOperandTileFold
+func.func @testSecondOperandTileFold(%arg0: tensor<1x128x1x128x128xf32>, %arg1: tensor<1x128x8x128x128xf32>) -> tensor<1x128x8x128x128xf32> {
+  %cst = "tf.Const"() <{value = dense<[1, 1, 8, 1, 1]> : tensor<5xi64>}> : () -> tensor<5xi64>
+  %cst_783 = "tf.Const"() <{value = dense<2.500000e-01> : tensor<f32>}> {device = ""} : () -> tensor<f32>
+  %3278 = "tf.Tile"(%arg0, %cst) {device = ""} : (tensor<1x128x1x128x128xf32>, tensor<5xi64>) -> tensor<1x128x8x128x128xf32>
+  %3588 = "tf.Mul"(%arg1, %cst_783) {device = ""} : (tensor<1x128x8x128x128xf32>, tensor<f32>) -> tensor<1x128x8x128x128xf32>
+  %3589 = "tf.AddV2"(%3588, %3278) {device = ""} : (tensor<1x128x8x128x128xf32>, tensor<1x128x8x128x128xf32>) -> tensor<1x128x8x128x128xf32>
+  // CHECK: "tf.Mul"(%arg1, %cst)
+  // CHECK: "tf.AddV2"(%0, %arg0)
+  return %3589 : tensor<1x128x8x128x128xf32>
+}
+
+// CHECK-LABEL: testFoldTileIntoSelect
+func.func @testFoldTileIntoSelect(%arg0: tensor<1xi1>, %arg1: tensor<8xf32>, %arg2: tensor<8xf32>) -> tensor<8xf32> {
+  %cst = "tf.Const"() <{value = dense<[8]> : tensor<1xi64>}> : () -> tensor<1xi64>
+  %0 = "tf.Tile"(%arg0, %cst) : (tensor<1xi1>, tensor<1xi64>) -> tensor<8xi1>
+  %1 = "tf.SelectV2"(%0, %arg1, %arg2) : (tensor<8xi1>, tensor<8xf32>, tensor<8xf32>) -> tensor<8xf32>
+  // CHECK: "tf.SelectV2"(%arg0, %arg1, %arg2) : (tensor<1xi1>, tensor<8xf32>, tensor<8xf32>) -> tensor<8xf32>
+  func.return %1: tensor<8xf32>
+}
+
+// CHECK-LABEL: testMixedFoldTileIntoSelect
+func.func @testMixedFoldTileIntoSelect(%arg0: tensor<4xi1>, %arg1: tensor<1xf32>) -> tensor<8xf32> {
+  %cst = "tf.Const"() <{value = dense<[8]> : tensor<1xi64>}> : () -> tensor<1xi64>
+  %cst_0 = "tf.Const"() <{value = dense<[2]> : tensor<1xi64>}> : () -> tensor<1xi64>
+  %0 = "tf.Tile"(%arg0, %cst_0) : (tensor<4xi1>, tensor<1xi64>) -> tensor<8xi1>
+  %1 = "tf.Tile"(%arg1, %cst) : (tensor<1xf32>, tensor<1xi64>) -> tensor<8xf32>
+  %2 = "tf.SelectV2"(%0, %1, %1) : (tensor<8xi1>, tensor<8xf32>, tensor<8xf32>) -> tensor<8xf32>
+  // CHECK: "tf.Tile"(%arg0, %cst) : (tensor<4xi1>, tensor<1xi64>) -> tensor<8xi1>
+  // CHECK: "tf.SelectV2"(%0, %arg1, %arg1) : (tensor<8xi1>, tensor<1xf32>, tensor<1xf32>) -> tensor<8xf32>
+  func.return %2: tensor<8xf32>
+}
+
+// CHECK-LABEL: testDoNotFoldTileOnNonUnitDimension
+func.func @testDoNotFoldTileOnNonUnitDimension(%arg0: tensor<2x3x1xf32>, %arg1: tensor<2x6x1xf32>) -> tensor<2x6x1xf32> {
+  %cst = "tf.Const"() <{value = dense<[1, 2, 1]> : tensor<3xi64>}> {device = ""} : () -> tensor<3xi64>
+  %0 = "tf.Tile"(%arg0, %cst) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x6x1xf32>
+  %1 = "tf.AddV2"(%0, %arg1) {device = ""} : (tensor<2x6x1xf32>, tensor<2x6x1xf32>) -> tensor<2x6x1xf32>
+ // CHECK: "tf.Tile"(%arg0, %cst) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x6x1xf32>
+ // CHECK: "tf.AddV2"(%0, %arg1) {device = ""} : (tensor<2x6x1xf32>, tensor<2x6x1xf32>) -> tensor<2x6x1xf32>
+ func.return %1 : tensor<2x6x1xf32>
+}
+
+// CHECK-LABEL: testDoNotFoldTileWithConcat
+func.func @testDoNotFoldTileWithConcat(%arg0: tensor<2x3x1xf32>, %arg1: tensor<2x3x1xf32>, %arg2: tensor<2x3x1xf32>) -> tensor<2x3x4xf32> {
+  %cst = "tf.Const"() { value = dense<2> : tensor<i32> } : () -> tensor<i32>
+  %cst_0 = "tf.Const"() <{value = dense<[1, 1, 2]> : tensor<3xi64>}> {device = ""} : () -> tensor<3xi64>
+  %0 = "tf.Tile"(%arg0, %cst_0) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x3x2xf32>
+  %1 = "tf.ConcatV2"(%0, %arg1, %arg2, %cst) : (tensor<2x3x2xf32>, tensor<2x3x1xf32>, tensor<2x3x1xf32>, tensor<i32>) -> tensor<2x3x4xf32>
+  // CHECK: %0 = "tf.Tile"(%arg0, %cst_0) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x3x2xf32>
+  // CHECK: %1 = "tf.ConcatV2"(%0, %arg1, %arg2, %cst) : (tensor<2x3x2xf32>, tensor<2x3x1xf32>, tensor<2x3x1xf32>, tensor<i32>) -> tensor<2x3x4xf32>
+  func.return %1 : tensor<2x3x4xf32>
+}
+
+// CHECK-LABEL: testDoNotFoldTileWithCast
+func.func @testDoNotFoldTileWithCast(%arg0: tensor<2x3x1xf32>, %arg1: tensor<2x3x20xf32>) -> tensor<2x3x20xf64> {
+  %cst = "tf.Const"() <{value = dense<[1, 1, 20]> : tensor<3xi64>}> {device = ""} : () -> tensor<3xi64>
+  %0 = "tf.Tile"(%arg0, %cst) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x3x20xf32>
+  %1 = "tf.Cast"(%0) <{Truncate = false}> {device = ""} : (tensor<2x3x20xf32>) -> tensor<2x3x20xf64>
+  // CHECK: "tf.Tile"(%arg0, %cst) : (tensor<2x3x1xf32>, tensor<3xi64>) -> tensor<2x3x20xf32>
+  // CHECK: "tf.Cast"(%0) <{Truncate = false}> {device = ""} : (tensor<2x3x20xf32>) -> tensor<2x3x20xf64>
+  func.return %1 : tensor<2x3x20xf64>
+}
+
+// CHECK-LABEL: testDoNotFoldTileWithExpandDims
+func.func @testDoNotFoldTileWithExpandDims(%arg0: tensor<1x1x392xi1>) -> (tensor<1x1x392x392xi1>) {
+  %cst_534 = "tf.Const"() <{value = dense<-3> : tensor<i32>}> {device = ""} : () -> tensor<i32>
+  %cst_19 = "tf.Const"() <{value = dense<[1, 392, 1]> : tensor<3xi32>}> : () -> tensor<3xi32>
+  %663 = "tf.Tile"(%arg0, %cst_19) {device = ""} : (tensor<1x1x392xi1>, tensor<3xi32>) -> tensor<1x392x392xi1>
+  %664 = "tf.ExpandDims"(%663, %cst_534) {device = ""} : (tensor<1x392x392xi1>, tensor<i32>) -> tensor<1x1x392x392xi1>
+  // CHECK: %0 = "tf.Tile"(%arg0, %cst_0) {device = ""} : (tensor<1x1x392xi1>, tensor<3xi32>) -> tensor<1x392x392xi1>
+  // CHECK: %1 = "tf.ExpandDims"(%0, %cst) {device = ""} : (tensor<1x392x392xi1>, tensor<i32>) -> tensor<1x1x392x392xi1>
+  return %664 : tensor<1x1x392x392xi1>
 }
 
 // CHECK-LABEL: func @testStaticAndIdenticalTypeForEqualOp

@@ -62,17 +62,18 @@ REGISTER_OP("RecvTPUEmbeddingActivations")
     .Attr("num_outputs: int >= 1")
     .Attr("config: string")
     .SetIsStateful()
-    .SetShapeFn([](shape_inference::InferenceContext* c) -> Status {
+    .SetShapeFn([](shape_inference::InferenceContext* c) -> absl::Status {
       std::string config_string;
       TF_RETURN_IF_ERROR(c->GetAttr("config", &config_string));
       tpu::TPUEmbeddingConfiguration config;
       if (!config.ParseFromString(config_string)) {
-        return errors::InvalidArgument("Malformed tpu_embedding_config.");
+        return absl::InvalidArgumentError("Malformed tpu_embedding_config.");
       }
       std::vector<TensorShapeProto> output_shapes;
       TF_RETURN_IF_ERROR(ComputeOutputTensorShapes(config, &output_shapes));
       if (c->num_outputs() != output_shapes.size()) {
-        return errors::InvalidArgument("num outputs != size of output shapes");
+        return absl::InvalidArgumentError(
+            "num outputs != size of output shapes");
       }
       for (int i = 0; i < c->num_outputs(); ++i) {
         shape_inference::ShapeHandle output_shape;
@@ -101,7 +102,7 @@ REGISTER_OP("SendTPUEmbeddingGradients")
     .Attr("NN: int >= 0 = 0")
     .Attr("config: string")
     .SetIsStateful()
-    .SetShapeFn([](shape_inference::InferenceContext* c) -> Status {
+    .SetShapeFn([](shape_inference::InferenceContext* c) -> absl::Status {
       int nn;
       TF_RETURN_IF_ERROR(c->GetAttr("NN", &nn));
       std::vector<shape_inference::ShapeHandle> learning_rates;
@@ -136,15 +137,15 @@ REGISTER_OP("EnqueueTPUEmbeddingSparseBatch")
     .Attr("device_ordinal: int = -1")
     .Attr("combiners: list(string) = []")
     .SetIsStateful()
-    .SetShapeFn([](shape_inference::InferenceContext* c) -> Status {
-      std::vector<string> combiners;
+    .SetShapeFn([](shape_inference::InferenceContext* c) -> absl::Status {
+      std::vector<std::string> combiners;
       TF_RETURN_IF_ERROR(c->GetAttr("combiners", &combiners));
       int n;
       TF_RETURN_IF_ERROR(c->GetAttr("N", &n));
       if (!combiners.empty() && combiners.size() != n) {
-        return errors::InvalidArgument("Invalid length of combiners. Have ",
-                                       combiners.size(), " but expected 0 or ",
-                                       n);
+        return absl::InvalidArgumentError(
+            absl::StrCat("Invalid length of combiners. Have ", combiners.size(),
+                         " but expected 0 or ", n));
       }
 
       return absl::OkStatus();

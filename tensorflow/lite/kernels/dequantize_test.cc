@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <memory>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/memory/memory.h"
 #include "Eigen/Core"  // from @eigen_archive
-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
-#include "tensorflow/lite/core/api/op_resolver.h"
 #include "tensorflow/lite/core/interpreter.h"
-#include "tensorflow/lite/kernels/internal/types.h"
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+#include "tensorflow/lite/kernels/internal/float8.h"
+#endif
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
@@ -41,6 +41,28 @@ TfLiteRegistration* Register_DEQUANTIZE();
 namespace {
 
 using ::testing::ElementsAreArray;
+
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+template <typename Float8T>
+std::vector<uint8_t> Float8Bytes(std::initializer_list<float> values) {
+  std::vector<uint8_t> result;
+  result.reserve(values.size());
+  for (float value : values) {
+    result.push_back(Float8T::ConvertFrom(value).rep());
+  }
+  return result;
+}
+
+template <typename Float8T>
+std::vector<float> Float8Values(const std::vector<uint8_t>& bytes) {
+  std::vector<float> result;
+  result.reserve(bytes.size());
+  for (uint8_t byte : bytes) {
+    result.push_back(static_cast<float>(Float8T::FromRep(byte)));
+  }
+  return result;
+}
+#endif
 
 class DequantizeOpModel : public SingleOpModel {
  public:
@@ -66,12 +88,67 @@ class DequantizeOpModel : public SingleOpModel {
     PopulateTensor(input_, data);
   }
 
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+  void SetRawInput(const std::vector<uint8_t>& data) {
+    TfLiteTensor* tensor = GetInputTensor(0);
+    ASSERT_EQ(tensor->bytes, data.size());
+    std::memcpy(tensor->data.uint8, data.data(), data.size());
+  }
+#endif
+
+  template <typename T>
+  void SetInputInt4(int input, const std::vector<T> data) {
+    auto non_const = *const_cast<std::vector<T>*>(&data);
+    std::vector<int8_t> data_int8(non_const.size());
+    std::copy(non_const.begin(), non_const.end(), data_int8.begin());
+    PopulateTensor4bit(input, 0, data_int8.data(),
+                       data_int8.data() + data_int8.size());
+  }
+
+  template <typename T>
+  void SetInputInt2(int input, const std::vector<T> data) {
+    auto non_const = *const_cast<std::vector<T>*>(&data);
+    std::vector<int8_t> data_int8(non_const.size());
+    std::copy(non_const.begin(), non_const.end(), data_int8.begin());
+    PopulateTensor2bit(input, 0, data_int8.data(),
+                       data_int8.data() + data_int8.size());
+  }
+
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
  protected:
   int input_;
   int output_;
 };
+
+TEST(DequantizeOpTest, Int4) {
+  // [-3.5, 4] -> scale=0.5, zero_point=1 for INT4
+  DequantizeOpModel m(TensorType_INT4, {2, 2}, 0.5, -1, 6);
+
+  m.SetInputInt4<int8_t>(0, {7, 6, -7, -8});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear({4, 3.5, -3, -3.5})));
+}
+
+TEST(DequantizeOpTest, Uint4) {
+  // [0, 7.5] -> scale=0.5, zero_point=0 for UINT4
+  DequantizeOpModel m(TensorType_UINT4, {2, 2}, 0.5, 0, 8);
+
+  m.SetInputInt4<uint8_t>(0, {15, 14, 1, 0});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear({7.5, 7.0, 0.5, 0.0})));
+}
+
+TEST(DequantizeOpTest, Int2) {
+  DequantizeOpModel m(TensorType_INT2, {1, 4}, 0.5, -1, 6);
+
+  m.SetInputInt2<int8_t>(0, {1, 0, -1, -2});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear({1.0, 0.5, 0.0, -0.5})));
+}
 
 TEST(DequantizeOpTest, Uint8) {
   // [-63.5, 64] -> scale=0.5 zero_point=127 for UINT8
@@ -106,8 +183,34 @@ TEST(DequantizeOpTest, Float16) {
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_THAT(m.GetOutput(), ElementsAreArray(ArrayFloatNear(
                                  {-535.54f, -100.0f, -1.0f, 0.f, 1.0f, 100.32f},
-                                 /*max_abs_error=*/0.1f)));
+                                 /*max_abs_err=*/0.1f)));
 }
+
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+TEST(DequantizeOpTest, Float8E4M3FN) {
+  DequantizeOpModel m(TensorType_FLOAT8_E4M3FN, {2, 3}, 1.0f, 0, 9);
+
+  const std::vector<uint8_t> input = Float8Bytes<float8_internal::Float8E4M3FN>(
+      {-2.f, -1.f, -0.5f, 0.f, 1.f, 16.f});
+  m.SetRawInput(input);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear(
+                  Float8Values<float8_internal::Float8E4M3FN>(input))));
+}
+
+TEST(DequantizeOpTest, Float8E5M2) {
+  DequantizeOpModel m(TensorType_FLOAT8_E5M2, {2, 3}, 1.0f, 0, 9);
+
+  const std::vector<uint8_t> input = Float8Bytes<float8_internal::Float8E5M2>(
+      {-2.f, -1.f, -0.5f, 0.f, 1.f, 16.f});
+  m.SetRawInput(input);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear(
+                  Float8Values<float8_internal::Float8E5M2>(input))));
+}
+#endif
 
 TEST(DequantizeOpTest, Int16) {
   DequantizeOpModel m(TensorType_INT16, {2, 5}, 0.5, 0, 4);
@@ -164,6 +267,39 @@ TEST(DequantizePerChannelOpTest, Int8) {
   EXPECT_THAT(m.GetOutput(),
               ElementsAreArray(ArrayFloatNear(
                   {-63.5, -63, -62.5, -62, -61.5, 62, 62.5, 63, 63.5, 64})));
+}
+
+TEST(DequantizePerChannelOpTest, Int2) {
+  // scales={0.5, 1.0}, zero_points={-1, 0}, channel_dim=0
+  DequantizePerChannelOpModel m(TensorType_INT2, {2, 2}, {0.5, 1.0}, {-1, 0}, 0,
+                                6);
+  m.SetInputInt2<int8_t>(0, {1, 0, -1, -2});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  // Dequantization formula: (val - zp) * scale
+  // Channel 0: scale=0.5, zp=-1.
+  // val=1: (1 - (-1)) * 0.5 = 1.0
+  // val=0: (0 - (-1)) * 0.5 = 0.5
+  // Channel 1: scale=1.0, zp=0
+  // val=-1: (-1 - 0) * 1.0 = -1.0
+  // val=-2: (-2 - 0) * 1.0 = -2.0
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear({1.0, 0.5, -1.0, -2.0})));
+}
+
+TEST(DequantizePerChannelOpTest, Uint4) {
+  // scales={0.5, 1.0}, zero_points={0, 1}, channel_dim=0
+  DequantizePerChannelOpModel m(TensorType_UINT4, {2, 2}, {0.5, 1.0}, {0, 1}, 0,
+                                8);
+  m.SetInputInt4<uint8_t>(0, {15, 1, 15, 1});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  // Channel 0: scale=0.5, zp=0
+  // val=15: (15 - 0) * 0.5 = 7.5
+  // val=1: (1 - 0) * 0.5 = 0.5
+  // Channel 1: scale=1.0, zp=1
+  // val=15: (15 - 1) * 1.0 = 14.0
+  // val=1: (1 - 1) * 1.0 = 0.0
+  EXPECT_THAT(m.GetOutput(),
+              ElementsAreArray(ArrayFloatNear({7.5, 0.5, 14.0, 0.0})));
 }
 
 }  // namespace

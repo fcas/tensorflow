@@ -16,35 +16,47 @@ limitations under the License.
 #include "tensorflow/dtensor/mlir/expansions/random_op_spmd_expander.h"
 
 #include <algorithm>
+#include <cstdint>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/IntegerSet.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "tensorflow/compiler/mlir/tensorflow/transforms/collection_ops_util.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/dtensor/cc/constants.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/dtensor_location.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
+#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/mlir/value_utils.h"
 
 namespace tensorflow {
 namespace dtensor {
 namespace {
 
-Status CheckLayoutIsSupported(const Layout& layout) {
+absl::Status CheckLayoutIsSupported(const Layout& layout) {
   // Currently we support small mesh rank for arbitrary layout.
   if (layout.mesh().rank() > 3)
-    return errors::InvalidArgument("Large mesh rank size is not supported",
-                                   layout.ToString());
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Large mesh rank size is not supported", layout.ToString()));
 
   return absl::OkStatus();
 }
 
-Status ValidateShapeAndGetNewShape(
+absl::Status ValidateShapeAndGetNewShape(
     const llvm::SmallVector<int64_t, 4>& op_shape, const Layout& layout,
     llvm::SmallVectorImpl<int64_t>& new_random_shape) {
   TF_RETURN_IF_ERROR(CheckLayoutIsSupported(layout));
@@ -55,19 +67,19 @@ Status ValidateShapeAndGetNewShape(
   new_random_shape.reserve(op_shape.size());
 
   if (op_sharding.size() != op_shape.size())
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Sharding dimension of random op does not match rank of the "
         "random op. Received sharding: ",
-        layout.ToString());
+        layout.ToString()));
 
   for (int i = 0; i < op_sharding.size(); ++i) {
     const auto dimension_sharding = op_sharding[i];
     const auto op_dimension_size = op_shape[i];
     if (op_dimension_size % dimension_sharding != 0) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Sharding of random op incompatible with shape. Received "
           "sharding: ",
-          layout.ToString());
+          layout.ToString()));
     }
     new_random_shape.emplace_back(op_dimension_size / dimension_sharding);
   }
@@ -96,7 +108,7 @@ StatusOr<mlir::Value> GetDeviceSeed(const Layout& layout, mlir::Operation* op) {
   mlir::tf_device::ClusterOp cluster =
       op->getParentOfType<mlir::tf_device::ClusterOp>();
   if (!cluster)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "random op not in ClusterOp when it should be");
 
   for (mlir::TF::SqueezeOp squeeze : cluster.getOps<mlir::TF::SqueezeOp>())
@@ -134,31 +146,32 @@ StatusOr<mlir::Value> GetDeviceSeed(const Layout& layout, mlir::Operation* op) {
     }
   }
 
-  mlir::RankedTensorType const_type = mlir::RankedTensorType::get(
-      {static_cast<int64>(multipliers.size()), 1}, builder.getIntegerType(32));
+  mlir::RankedTensorType const_type =
+      mlir::RankedTensorType::get({static_cast<int64_t>(multipliers.size()), 1},
+                                  builder.getIntegerType(32));
   mlir::Attribute const_attr =
       mlir::DenseIntElementsAttr::get(const_type, multipliers);
   mlir::Value multiplier =
-      builder.create<mlir::TF::ConstOp>(cluster.getLoc(), const_attr)
+      mlir::TF::ConstOp::create(builder, cluster.getLoc(), const_attr)
           .getOutput();
 
   const mlir::RankedTensorType one_by_one =
       mlir::RankedTensorType::get({1, 1}, builder.getIntegerType(32));
 
-  mlir::Value seed = builder.create<mlir::TF::MatMulOp>(
-      cluster.getLoc(), one_by_one, mesh_coordinates, multiplier);
+  mlir::Value seed = mlir::TF::MatMulOp::create(
+      builder, cluster.getLoc(), one_by_one, mesh_coordinates, multiplier);
 
   // Largest prime in 16 bits.
   mlir::Value prime = CreateIntScalarConst(
       /*value=*/65521, builder, cluster.getLoc(), /*use_int64=*/false);
 
   mlir::Value seed_plus_prime =
-      builder
-          .create<mlir::TF::AddV2Op>(cluster.getLoc(), one_by_one, seed, prime)
+      mlir::TF::AddV2Op::create(builder, cluster.getLoc(), one_by_one, seed,
+                                prime)
           .getZ();
 
-  mlir::TF::SqueezeOp squeeze = builder.create<mlir::TF::SqueezeOp>(
-      cluster.getLoc(),
+  mlir::TF::SqueezeOp squeeze = mlir::TF::SqueezeOp::create(
+      builder, cluster.getLoc(),
       mlir::RankedTensorType::get({}, builder.getIntegerType(32)),
       seed_plus_prime, builder.getI64ArrayAttr({0, 1}));
 
@@ -195,11 +208,12 @@ StatusOr<mlir::Value> ComputeNewSeed(mlir::OpBuilder& builder,
   mlir::Type seed_type =
       mlir::cast<mlir::TensorType>(op_seed.getType()).getElementType();
 
-  device_id_seed = builder.create<mlir::TF::CastOp>(
-      location, mlir::RankedTensorType::get({}, seed_type), device_id_seed);
+  device_id_seed = mlir::TF::CastOp::create(
+      builder, location, mlir::RankedTensorType::get({}, seed_type),
+      device_id_seed);
 
-  mlir::Value seed_xor =
-      builder.create<mlir::TF::BitwiseXorOp>(location, op_seed, device_id_seed);
+  mlir::Value seed_xor = mlir::TF::BitwiseXorOp::create(
+      builder, location, op_seed, device_id_seed);
   return seed_xor;
 }
 
@@ -228,8 +242,8 @@ StatusOr<mlir::Operation*> CreatedShardedLocalRandomOpV1(const Layout& layout,
 
   auto new_shape_value = Int64Const(builder, location, new_random_shape);
   // TODO(zhonglinhan) : check different input for StatelessRandomUniformInt
-  auto local_random = builder.create<RandomOp>(location, new_random_type,
-                                               new_shape_value, seed_xor);
+  auto local_random = RandomOp::create(builder, location, new_random_type,
+                                       new_shape_value, seed_xor);
   op->getResult(0).replaceAllUsesWith(local_random.getOutput());
   op->erase();
   return local_random.getOperation();
@@ -260,9 +274,9 @@ StatusOr<mlir::Operation*> CreatedShardedLocalRandomOpV2(const Layout& layout,
 
   auto new_shape_value = Int64Const(builder, location, new_random_shape);
 
-  auto local_random = builder.create<RandomOp>(
-      location, new_random_type, new_shape_value, seed_xor,
-      random_op.getCounter(), random_op.getAlg());
+  auto local_random =
+      RandomOp::create(builder, location, new_random_type, new_shape_value,
+                       seed_xor, random_op.getCounter(), random_op.getAlg());
   op->getResult(0).replaceAllUsesWith(local_random.getOutput());
   op->erase();
   return local_random.getOperation();
@@ -293,10 +307,10 @@ StatusOr<mlir::Operation*> CreatedShardedLocalRandomOpV2Range(
 
   auto new_shape_value = Int64Const(builder, location, new_random_shape);
 
-  auto local_random = builder.create<RandomOp>(
-      location, new_random_type, new_shape_value, seed_xor,
-      random_op.getCounter(), random_op.getAlg(), random_op.getMinval(),
-      random_op.getMaxval());
+  auto local_random =
+      RandomOp::create(builder, location, new_random_type, new_shape_value,
+                       seed_xor, random_op.getCounter(), random_op.getAlg(),
+                       random_op.getMinval(), random_op.getMaxval());
   op->getResult(0).replaceAllUsesWith(local_random.getOutput());
   op->erase();
   return local_random.getOperation();
@@ -308,7 +322,7 @@ StatusOr<mlir::Operation*> RandomOpSPMDExpander::ExpandOp(mlir::Operation* op) {
   TF_ASSIGN_OR_RETURN(auto layout, ExtractSingleLayoutFromOp(op));
 
   if (!layout)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "layout of Random op must be known before SPMD expansion.");
 
   // For fully replicated random ops, all devices have the same random
@@ -350,7 +364,7 @@ StatusOr<mlir::Operation*> RandomOpSPMDExpander::ExpandOp(mlir::Operation* op) {
     return CreatedShardedLocalRandomOpV2Range<
         mlir::TF::StatelessRandomUniformIntV2Op>(*layout, op);
   }
-  return errors::Unimplemented(absl::StrCat(
+  return absl::UnimplementedError(absl::StrCat(
       "SPMD expansion for op : ", OpName(op), " is not implemented"));
 }
 

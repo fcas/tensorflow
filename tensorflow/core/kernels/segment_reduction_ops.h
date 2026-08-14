@@ -53,9 +53,19 @@ struct Prod {
 
 // Note that we don't use gpuprim::Min/Max because they use operator<, which is
 // not implemented for AlignedVector types.
+// Note: While functor::Min and functor::Max check for NaNs to support NaN
+// propagation, GPU segment reductions using atomic operations (GpuAtomicMin/
+// GpuAtomicMax) or standard CUDA min/max functions do not propagate NaNs
+// in the same way. This leads to a CPU-GPU discrepancy where CPU propagates
+// NaNs but GPU prefers numeric values (ignores NaNs).
 struct Min {
   template <typename T>
   __host__ __device__ T operator()(const T& a, const T& b) const {
+    if constexpr (!Eigen::NumTraits<T>::IsInteger) {
+      if (Eigen::numext::isnan(a) || Eigen::numext::isnan(b)) {
+        return Eigen::numext::isnan(a) ? a : b;
+      }
+    }
     return min(a, b);
   }
 };
@@ -63,6 +73,11 @@ struct Min {
 struct Max {
   template <typename T>
   __host__ __device__ T operator()(const T& a, const T& b) const {
+    if constexpr (!Eigen::NumTraits<T>::IsInteger) {
+      if (Eigen::numext::isnan(a) || Eigen::numext::isnan(b)) {
+        return Eigen::numext::isnan(a) ? a : b;
+      }
+    }
     return max(a, b);
   }
 };
@@ -138,11 +153,12 @@ struct Highest {
 
 template <typename T, typename Index, typename SegmentId>
 struct SparseSegmentReductionFunctor {
-  Status operator()(OpKernelContext* context, bool is_mean, bool is_sqrtn,
-                    T default_value, typename TTypes<T, 2>::ConstTensor input,
-                    typename TTypes<Index>::ConstVec indices,
-                    typename TTypes<SegmentId>::ConstVec segment_ids,
-                    typename TTypes<T, 2>::Tensor output);
+  absl::Status operator()(OpKernelContext* context, bool is_mean, bool is_sqrtn,
+                          T default_value,
+                          typename TTypes<T, 2>::ConstTensor input,
+                          typename TTypes<Index>::ConstVec indices,
+                          typename TTypes<SegmentId>::ConstVec segment_ids,
+                          typename TTypes<T, 2>::Tensor output);
 };
 
 template <class Device, typename T, typename Index, typename SegmentId>
@@ -152,7 +168,7 @@ struct SparseSegmentGradFunctor {
                   typename TTypes<T>::ConstMatrix input_flat,
                   typename TTypes<Index>::ConstVec indices_vec,
                   typename TTypes<SegmentId>::ConstVec segment_vec,
-                  typename TTypes<T>::Matrix output_flat);
+                  Tensor* output);
 };
 
 template <class Device, typename T, typename Index, typename SegmentId>

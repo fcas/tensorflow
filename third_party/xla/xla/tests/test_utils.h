@@ -16,17 +16,24 @@ limitations under the License.
 #ifndef XLA_TESTS_TEST_UTILS_H_
 #define XLA_TESTS_TEST_UTILS_H_
 
+#include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -53,12 +60,10 @@ class PseudorandomGenerator {
   std::mt19937 generator_;
 };
 
-// Generates fake data in a literal of the given shape, or returns an error
-// status if the element type is currently unhandled for fake data
-// generation. See below for documentation of pseudo_random and use_large_range.
-absl::StatusOr<Literal> MakeFakeLiteral(const Shape& shape,
-                                        bool pseudo_random = true,
-                                        bool use_large_range = false);
+// Lambda function type to extract known zeroes bitmask for the given dimension
+// of a DynamicSlice or DynamicUpdateSlice instruction.
+using GetIndexKnownZeroesFn =
+    std::function<std::optional<uint64_t>(const HloInstruction*, int64_t)>;
 
 // Generates a vector of arguments containing fake data. The number, shape and
 // layout of the arguments is appropriate for given HLO module.
@@ -94,10 +99,18 @@ absl::StatusOr<Literal> MakeFakeLiteral(const Shape& shape,
 // TODO(b/79942829): Make interesting argument generation fast enough that using
 // pseudo_random does not save any noticeable amount of time so that the
 // parameter can be removed.
+//
+// If `generate_aligned_ds_indices` is true, the generated indices will be
+// aligned to the given alignment. If `get_index_known_zeroes` is set, the
+// generated indices will have the given number of zeroes in the given
+// dimension.
 absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
     const HloModule* module, bool pseudo_random = true,
     bool use_large_range = false, bool treat_gte_as_data_formatting = false,
-    std::optional<int64_t> max_bits_of_precision = std::nullopt);
+    std::optional<int64_t> max_bits_of_precision = std::nullopt,
+    std::minstd_rand0* engine = nullptr,
+    bool generate_aligned_ds_indices = false,
+    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr);
 
 // Overload which accepts a random number generator. This enables generation of
 // different random values with sequential calls to MakeFakeArguments by reusing
@@ -105,7 +118,37 @@ absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
 absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
     const HloModule* module, std::minstd_rand0* engine,
     bool use_large_range = false, bool treat_gte_as_data_formatting = false,
-    std::optional<int64_t> max_bits_of_precision = std::nullopt);
+    std::optional<int64_t> max_bits_of_precision = std::nullopt,
+    bool generate_aligned_ds_indices = false,
+    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr);
+
+// Generates a vector of arguments containing fake data using reverse constraint
+// propagation. The constraint propagator seeds initial constraints based on HLO
+// op semantics (e.g., `sqrt(x)` implies `x >= 0`) and then propagates these
+// constraints backward through the graph. This allows generating test inputs
+// that are more likely to be valid for the graph.
+//
+// If `use_large_range` is false, the generated floating point numbers will be
+// sampled from a small range of possible values. If `use_large_range` is true,
+// the generated floating point numbers will be sampled from a uniform-log
+// distribution of most possible floats, with a small chance to instead be
+// sampled from a list of special floating point values (such as 0, inf, etc.).
+//
+// If `max_bits_of_precision` is set to a number, then floating point & integer
+// types will be constrained to be represented in that number of bits. Setting
+// it to 5 for integers would mean it only creates integers between -32 and 32.
+//
+// If `generate_aligned_ds_indices` is true, the generated indices will be
+// aligned to the given alignment.
+//
+// If `get_index_known_zeroes` is set, the generated indices will have the given
+// number of zeroes in the given dimension.
+absl::StatusOr<std::vector<Literal>> MakeDataflowConstrainedArguments(
+    const HloModule* module, std::minstd_rand0* engine = nullptr,
+    bool use_large_range = false,
+    std::optional<int64_t> max_bits_of_precision = std::nullopt,
+    bool generate_aligned_ds_indices = false,
+    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr);
 
 // Check that a given module satisfies various constraints before trying to
 // execute it.
@@ -119,8 +162,18 @@ std::unique_ptr<HloDotInstruction> CreateCanonicalDot(const Shape& shape,
                                                       HloInstruction* lhs,
                                                       HloInstruction* rhs);
 
-// Checks whether MLIR lowering is enabled through XLA_FLAGS.
-bool IsMlirLoweringEnabled();
+template <typename MessageType>
+absl::StatusOr<MessageType> ParseTextProto(const std::string& text_proto) {
+  tsl::protobuf::TextFormat::Parser parser;
+  MessageType parsed_proto;
+  tsl::protobuf::io::ArrayInputStream input_stream(
+      text_proto.data(), static_cast<int32_t>(text_proto.size()));
+  if (!parser.Parse(&input_stream, &parsed_proto)) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Could not parse text proto: ", text_proto));
+  }
+  return parsed_proto;
+}
 
 }  // namespace xla
 

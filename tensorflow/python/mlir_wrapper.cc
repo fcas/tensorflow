@@ -13,16 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <string>
+
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "pybind11/stl.h"  // from @pybind11
+#include "tensorflow/c/eager/c_api.h"
 #include "tensorflow/c/safe_ptr.h"
 #include "tensorflow/c/tf_status.h"
 #include "tensorflow/compiler/mlir/python/mlir.h"
 #include "tensorflow/python/lib/core/pybind11_lib.h"
 #include "tensorflow/python/lib/core/pybind11_status.h"
 
-PYBIND11_MODULE(_pywrap_mlir, m) {
+PYBIND11_MODULE(_pywrap_mlir, m, pybind11::mod_gil_not_used()) {
   m.def("ImportGraphDef",
         [](const std::string &graphdef, const std::string &pass_pipeline,
            bool show_debug_info) {
@@ -39,8 +42,8 @@ PYBIND11_MODULE(_pywrap_mlir, m) {
            const std::string &pass_pipeline, bool show_debug_info) {
           tensorflow::Safe_TF_StatusPtr status =
               tensorflow::make_safe(TF_NewStatus());
-          auto *ctxt = static_cast<TFE_Context *>(
-              PyCapsule_GetPointer(context.ptr(), nullptr));
+          auto* ctxt = static_cast<TFE_Context*>(
+              PyCapsule_GetPointer(context.ptr(), "TFE_Context"));
           if (!ctxt) throw py::error_already_set();
           std::string output = tensorflow::ImportFunction(
               functiondef, pass_pipeline, show_debug_info, ctxt, status.get());
@@ -122,17 +125,4 @@ PYBIND11_MODULE(_pywrap_mlir, m) {
     tensorflow::ExperimentalWriteBytecode(filename, mlir_txt, status.get());
     tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
   });
-
-  m.def("ExperimentalTFLiteToTosaBytecode",
-        [](const std::string &flatbuffer_file,
-           const std::string &tosa_bytecode_file, bool use_external_constant,
-           const std::vector<std::string> &ordered_input_arrays,
-           const std::vector<std::string> &ordered_output_arrays) {
-          tensorflow::Safe_TF_StatusPtr status =
-              tensorflow::make_safe(TF_NewStatus());
-          tensorflow::ExperimentalTFLiteToTosaBytecode(
-              flatbuffer_file, tosa_bytecode_file, use_external_constant,
-              ordered_input_arrays, ordered_output_arrays, status.get());
-          tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
-        });
 };

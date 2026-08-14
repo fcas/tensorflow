@@ -22,6 +22,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 
 namespace mlir {
@@ -30,8 +31,8 @@ namespace {
 // Checks if a character is legal for a TensorFlow node name, with special
 // handling if a character is at the beginning.
 bool IsLegalChar(char c, bool first_char) {
-  if (isalpha(c)) return true;
-  if (isdigit(c)) return true;
+  if (llvm::isAlpha(c)) return true;
+  if (llvm::isDigit(c)) return true;
   if (c == '.') return true;
   if (c == '_') return true;
 

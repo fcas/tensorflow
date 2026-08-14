@@ -56,7 +56,7 @@ namespace {
 bool ShouldSimulateGpu() {
   bool is_enabled = [] {
     bool ret = false;
-    string var;
+    std::string var;
     TF_CHECK_OK(ReadStringFromEnvVar(
         "TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_SIMULATE_GPU", "", &var));
     TF_CHECK_OK(
@@ -83,19 +83,19 @@ const char kCastToFp32[] = "CastToFp32";
 std::pair<int, int> GetDeviceGPUArch(
     const DeviceProperties& device_properties) {
   if (device_properties.type() != "GPU") return {0, 0};
-  string arch_str = device_properties.environment().at("architecture");
-  std::vector<string> split_arch_str = str_util::Split(arch_str, '.');
+  std::string arch_str = device_properties.environment().at("architecture");
+  std::vector<std::string> split_arch_str = str_util::Split(arch_str, '.');
   if (split_arch_str.empty()) {
     return {0, 0};
   }
 
   int major, minor;
-  if (!strings::safe_strto32(split_arch_str[0], &major)) {
+  if (!absl::SimpleAtoi(split_arch_str[0], &major)) {
     return {0, 0};
   }
 
   if (split_arch_str.size() > 1) {
-    if (strings::safe_strto32(split_arch_str[1], &minor)) {
+    if (absl::SimpleAtoi(split_arch_str[1], &minor)) {
       return {major, minor};
     } else {
       return {0, 0};
@@ -129,7 +129,8 @@ bool HasFastFP16Support(const DeviceProperties& props) {
 struct TypeAttrId {
   static constexpr int kSingleType = -1;
 
-  explicit TypeAttrId(const string& _attr_name, int _type_index = kSingleType)
+  explicit TypeAttrId(const std::string& _attr_name,
+                      int _type_index = kSingleType)
       : attr_name(_attr_name),
         type_index(_type_index),
         fixed_type(DT_INVALID) {}
@@ -152,19 +153,19 @@ struct TypeAttrId {
     return H::combine(std::move(h), ta.attr_name, ta.type_index, ta.fixed_type);
   }
 
-  string DebugString() const {
+  std::string DebugString() const {
     if (!attr_name.empty()) {
       if (type_index == kSingleType) {
         return attr_name;
       } else {
-        return strings::StrCat(attr_name, "[", type_index, "]");
+        return absl::StrCat(attr_name, "[", type_index, "]");
       }
     } else {
       return tensorflow::DataTypeString(fixed_type);
     }
   }
 
-  string attr_name;
+  std::string attr_name;
   // If attr_name is a list(type), this is the index into the list. Otherwise
   // this is kSingleType.
   int type_index;
@@ -289,9 +290,10 @@ class NodeTypeAttrMap {
 
   explicit NodeTypeAttrMap(const GraphDef& graph) { TF_CHECK_OK(Init(graph)); }
 
-  Status Init(const GraphDef& graph) {
+  absl::Status Init(const GraphDef& graph) {
     if (graph_ != nullptr) {
-      return errors::InvalidArgument("NodeTypeAttrMap is already initialized.");
+      return absl::InvalidArgumentError(
+          "NodeTypeAttrMap is already initialized.");
     }
     graph_ = &graph;
     function_library_.reset(
@@ -348,7 +350,7 @@ class NodeTypeAttrMap {
   }
 
  private:
-  Status AddNode(const NodeDef& node) {
+  absl::Status AddNode(const NodeDef& node) {
     const OpDef* op_def_ptr = nullptr;
     TF_RETURN_IF_ERROR(function_library_->LookUpOpDef(node.op(), &op_def_ptr));
     const OpDef& op_def = *op_def_ptr;
@@ -356,10 +358,10 @@ class NodeTypeAttrMap {
     auto& io2type_entry = io2type_[&node];
     auto input_arg_inds = InputPortArgDefIndexes(node, op_def);
     if (NonControlInputs(node).size() != input_arg_inds.size()) {
-      return errors::InvalidArgument(
-          "Expected ", node.op(), " node ", node.name(), " to have ",
-          input_arg_inds.size(), " non-control input(s), but got ",
-          node.input_size());
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected ", node.op(), " node ", node.name(),
+                       " to have ", input_arg_inds.size(),
+                       " non-control input(s), but got ", node.input_size()));
     }
     // Note that the mappings generated here include inputs/outputs with fixed
     // types. This makes the mappings complete (all inputs and outputs are
@@ -372,8 +374,9 @@ class NodeTypeAttrMap {
       TypeAttrId type_attr = GetTypeAttrId(arg_def, arg_inds.second);
       if (!type_attr.attr_name.empty() &&
           !node.attr().count(type_attr.attr_name)) {
-        return errors::InvalidArgument("Type attribute ", type_attr.attr_name,
-                                       " is not present in node ", node.name());
+        return absl::InvalidArgumentError(
+            absl::StrCat("Type attribute ", type_attr.attr_name,
+                         " is not present in node ", node.name()));
       }
       type2io_entry[type_attr].first.insert(i);
       io2type_entry.first.push_back(type_attr);
@@ -387,8 +390,9 @@ class NodeTypeAttrMap {
       TypeAttrId type_attr = GetTypeAttrId(arg_def, arg_inds.second);
       if (!type_attr.attr_name.empty() &&
           !node.attr().count(type_attr.attr_name)) {
-        return errors::InvalidArgument("Type attribute ", type_attr.attr_name,
-                                       " is not present in node ", node.name());
+        return absl::InvalidArgumentError(
+            absl::StrCat("Type attribute ", type_attr.attr_name,
+                         " is not present in node ", node.name()));
       }
       type2io_entry[type_attr].second.insert(i);
       io2type_entry.second.push_back(type_attr);
@@ -397,13 +401,14 @@ class NodeTypeAttrMap {
     // Also ensure that type attributes that aren't associated with any inputs
     // or outputs (e.g., StackV2's elem_type) are added to the map.
     for (const auto& attr : node.attr()) {
-      const string& attr_name = attr.first;
+      const std::string& attr_name = attr.first;
       if (!attr_name.empty() && attr_name[0] == '_') continue;
       const AttrValue& attr_value = attr.second;
       const OpDef::AttrDef* attr_def = FindAttr(attr_name, op_def);
       if (!attr_def) {
-        return errors::InvalidArgument("AttrDef not found for attribute ",
-                                       attr_name, " of node ", node.name());
+        return absl::InvalidArgumentError(
+            absl::StrCat("AttrDef not found for attribute ", attr_name,
+                         " of node ", node.name()));
       }
       if (attr_def->type() == "type") {
         type2io_entry[TypeAttrId(attr_name)];
@@ -474,10 +479,11 @@ class GraphTypeTopologyView {
   // computing graph topology. Example: Tensorflow runtime allows concurrent
   // execution of dequeue/enqueue ops from the same queue resource, but we might
   // want to enforce ordering between them for the purpose of graph analysis.
-  Status InitializeFromGraph(const GraphDef& graph,
-                             const NodeTypeAttrMap& node_type_map);
+  absl::Status InitializeFromGraph(const GraphDef& graph,
+                                   const NodeTypeAttrMap& node_type_map);
 
-  Status AddEphemeralEdges(absl::Span<const NodeTypeIdEdge> ephemeral_edges);
+  absl::Status AddEphemeralEdges(
+      absl::Span<const NodeTypeIdEdge> ephemeral_edges);
 
   bool is_initialized() const { return graph_ != nullptr; }
   int num_nodes() const { return num_nodes_; }
@@ -548,10 +554,10 @@ inline void SortAndRemoveDuplicates(T* v) {
   v->erase(std::unique(v->begin(), v->end()), v->end());
 }
 
-Status GraphTypeTopologyView::InitializeFromGraph(
+absl::Status GraphTypeTopologyView::InitializeFromGraph(
     const GraphDef& graph, const NodeTypeAttrMap& node_type_map) {
   if (graph_ != nullptr) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "GraphTypeTopologyView is already initialized.");
   }
 
@@ -584,18 +590,18 @@ Status GraphTypeTopologyView::InitializeFromGraph(
         node_type_map.GetInputPorts(*node_type.node, node_type.type_attr);
     fanins_[node_type_idx].reserve(input_ports.size());
     for (int port : input_ports) {
-      const string& input = node_type.node->input(port);
+      const std::string& input = node_type.node->input(port);
       TensorId tensor = ParseTensorName(input);
       const auto it = node_name_to_index_.find(tensor.node());
       const bool valid_input = it != node_name_to_index_.end();
 
       if (!valid_input) {
-        const string error_message = absl::StrCat(
+        const std::string error_message = absl::StrCat(
             "Non-existent input ", input, " in node ", node_type.node->name());
         if (skip_invalid_edges_) {
           VLOG(3) << "Skip error: " << error_message;
         } else {
-          return errors::InvalidArgument(error_message);
+          return absl::InvalidArgumentError(error_message);
         }
       }
 
@@ -608,9 +614,9 @@ Status GraphTypeTopologyView::InitializeFromGraph(
             NodeTypeKey(input_node.name(), input_type_attr));
         if (it2 == node_type_name_to_index_.end()) {
           if (!skip_invalid_edges_) {
-            return errors::InvalidArgument("Did not find type attr ",
-                                           input_type_attr.DebugString(),
-                                           " in node ", input_node.name());
+            return absl::InvalidArgumentError(absl::StrCat(
+                "Did not find type attr ", input_type_attr.DebugString(),
+                " in node ", input_node.name()));
           }
           continue;
         }
@@ -632,7 +638,7 @@ Status GraphTypeTopologyView::InitializeFromGraph(
   return absl::OkStatus();
 }
 
-Status GraphTypeTopologyView::AddEphemeralEdges(
+absl::Status GraphTypeTopologyView::AddEphemeralEdges(
     absl::Span<const NodeTypeIdEdge> ephemeral_edges) {
   // Add ephemeral edges to the adjacency lists.
   for (const NodeTypeIdEdge& edge : ephemeral_edges) {
@@ -640,12 +646,12 @@ Status GraphTypeTopologyView::AddEphemeralEdges(
     const bool valid_src = src != node_name_to_index_.end();
 
     if (!valid_src) {
-      const string error_message =
+      const std::string error_message =
           absl::StrCat("Non-existent src node: ", edge.src.node->name());
       if (skip_invalid_edges_) {
         VLOG(0) << "Skip error: " << error_message;
       } else {
-        return errors::InvalidArgument(error_message);
+        return absl::InvalidArgumentError(error_message);
       }
     }
 
@@ -653,12 +659,12 @@ Status GraphTypeTopologyView::AddEphemeralEdges(
     const bool valid_dst = dst != node_name_to_index_.end();
 
     if (!valid_dst) {
-      const string error_message =
+      const std::string error_message =
           absl::StrCat("Non-existent dst node: ", edge.dst.node->name());
       if (skip_invalid_edges_) {
         VLOG(0) << "Skip error: " << error_message;
       } else {
-        return errors::InvalidArgument(error_message);
+        return absl::InvalidArgumentError(error_message);
       }
     }
 
@@ -713,8 +719,8 @@ const absl::optional<int> GraphTypeTopologyView::GetNodeIndex(
   const auto it = node_type_name_to_index_.find(key);
   DCHECK(it != node_type_name_to_index_.end())
       << "Node doesn't exist in a graph";
-  return it == node_type_name_to_index_.end() ? absl::nullopt
-                                              : absl::make_optional(it->second);
+  return it == node_type_name_to_index_.end() ? std::nullopt
+                                              : std::make_optional(it->second);
 }
 
 const absl::optional<int> GraphTypeTopologyView::GetNodeIndex(
@@ -896,7 +902,7 @@ DataTypeSet AllowedDataTypes(const OpDef::AttrDef& attr_def) {
   if (allowed_types.empty()) {
     return AllTypes();
   }
-  uint32 dtype_mask = 0;
+  uint32_t dtype_mask = 0;
   for (int dtype : allowed_types) {
     dtype_mask |= 1u << dtype;
   }
@@ -912,13 +918,13 @@ DataTypeSet AllowedDataTypes(const OpDef& op_def, const TypeAttrId& t_attr_id) {
   return AllowedDataTypes(*attr_def);
 }
 
-Status ValidateLists(const gtl::FlatSet<string>& allow_list,
-                     const gtl::FlatSet<string>& deny_list,
-                     const gtl::FlatSet<string>& infer_list,
-                     const gtl::FlatSet<string>& clear_list) {
-  std::vector<gtl::FlatSet<string>> lists{allow_list, deny_list, infer_list,
-                                          clear_list};
-  std::multiset<string> counts;
+absl::Status ValidateLists(const gtl::FlatSet<std::string>& allow_list,
+                           const gtl::FlatSet<std::string>& deny_list,
+                           const gtl::FlatSet<std::string>& infer_list,
+                           const gtl::FlatSet<std::string>& clear_list) {
+  std::vector<gtl::FlatSet<std::string>> lists{allow_list, deny_list,
+                                               infer_list, clear_list};
+  std::multiset<std::string> counts;
   for (const auto& list : lists) {
     counts.insert(list.begin(), list.end());
   }
@@ -930,7 +936,7 @@ Status ValidateLists(const gtl::FlatSet<string>& allow_list,
     }
   }
   if (duplicates) {
-    return errors::InvalidArgument("Op lists have conflicting entries");
+    return absl::InvalidArgumentError("Op lists have conflicting entries");
   } else {
     return absl::OkStatus();
   }
@@ -938,7 +944,7 @@ Status ValidateLists(const gtl::FlatSet<string>& allow_list,
 
 bool HasInputOrOutputRefs(const NodeDef& node) {
   const OpDef* op_def;
-  Status status = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
+  absl::Status status = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
   if (!status.ok()) {
     return true;
   }
@@ -962,14 +968,14 @@ bool CanForceFP16(const NodeDef& node) {
 }
 
 int GetCudaVersion(
-    const std::unordered_map<string, DeviceProperties>& devices) {
+    const std::unordered_map<std::string, DeviceProperties>& devices) {
   for (const auto& device : devices) {
     const DeviceProperties& device_properties = device.second;
     if (device_properties.type() == "GPU") {
       const auto& device_env = device_properties.environment();
       auto it = device_env.find("cuda");
       if (it != device_env.end()) {
-        string cuda_version_str = it->second;
+        std::string cuda_version_str = it->second;
         return std::stoi(cuda_version_str);
       }
     }
@@ -978,14 +984,14 @@ int GetCudaVersion(
 }
 
 int GetCudnnVersion(
-    const std::unordered_map<string, DeviceProperties>& devices) {
+    const std::unordered_map<std::string, DeviceProperties>& devices) {
   for (const auto& device : devices) {
     const DeviceProperties& device_properties = device.second;
     if (device_properties.type() == "GPU") {
       const auto& device_env = device_properties.environment();
       auto it = device_env.find("cudnn");
       if (it != device_env.end()) {
-        string cudnn_version_str = it->second;
+        std::string cudnn_version_str = it->second;
         return std::stoi(cudnn_version_str);
       }
     }
@@ -993,7 +999,7 @@ int GetCudnnVersion(
   return 0;
 }
 
-std::unordered_map<string, DeviceProperties> GetDevices(Cluster* cluster) {
+std::unordered_map<std::string, DeviceProperties> GetDevices(Cluster* cluster) {
   if (!ShouldSimulateGpu()) {
     return cluster->GetDevices();
   }
@@ -1011,7 +1017,8 @@ std::unordered_map<string, DeviceProperties> GetDevices(Cluster* cluster) {
     return cluster->GetDevices();
   }
 
-  std::unordered_map<string, DeviceProperties> devices(cluster->GetDevices());
+  std::unordered_map<std::string, DeviceProperties> devices(
+      cluster->GetDevices());
   DeviceProperties gpu_device_properies;
   gpu_device_properies.set_type("GPU");
 #if GOOGLE_CUDA
@@ -1036,10 +1043,10 @@ class AutoMixedPrecisionImpl {
   //   FP32: cast to float32
   //   AUTO: cast to a data type that matches the required data type at fanouts
   enum class CastType { FP16, FP32, AUTO };
-  AutoMixedPrecisionImpl(Cluster* cluster,
-                         const std::unordered_set<string>& nodes_to_preserve,
-                         GraphDef* graph, string id,
-                         AutoMixedPrecisionMode mode)
+  AutoMixedPrecisionImpl(
+      Cluster* cluster,
+      const std::unordered_set<std::string>& nodes_to_preserve, GraphDef* graph,
+      std::string id, AutoMixedPrecisionMode mode)
       : devices_(GetDevices(cluster)),
         virtual_placer_(devices_),
         nodes_to_preserve_(nodes_to_preserve),
@@ -1057,7 +1064,7 @@ class AutoMixedPrecisionImpl {
                           ? DT_HALF
                           : DT_BFLOAT16) {}
 
-  Status Optimize();
+  absl::Status Optimize();
 
  private:
   typedef absl::flat_hash_set<NodeTypeId> NodeTypeIdSet;
@@ -1079,10 +1086,11 @@ class AutoMixedPrecisionImpl {
             0, 0, AutoMixedPrecisionMode::FP16_CPU);
     }
   }
-  Status PrintDebugLogs(bool preop, size_t timestamp);
-  void LogSkippedNode(const NodeDef& node, const string& device_type) const;
+  absl::Status PrintDebugLogs(bool preop, size_t timestamp);
+  void LogSkippedNode(const NodeDef& node,
+                      const std::string& device_type) const;
   bool MustPreserve(const NodeDef& node) const;
-  bool IsOnDevice(const NodeDef& node, const string& device_type) const;
+  bool IsOnDevice(const NodeDef& node, const std::string& device_type) const;
   bool IsOnSuitableGPUArch(const NodeDef& node) const;
   bool ShouldProcess(const NodeDef& node) const;
   bool NodeHasF16KernelForTypeAttr(const NodeDef& node, TypeAttrId taid) const;
@@ -1092,7 +1100,7 @@ class AutoMixedPrecisionImpl {
   bool SupportsF16DataType(const NodeTypeId& node_type) const;
   bool IsQuantized(const NodeTypeId& node_type) const;
   const NodeTypeId* GetTensorListFloat32NodeTypeId(const NodeDef& node) const;
-  bool IsSourceOrSinkOp(const string& op) const;
+  bool IsSourceOrSinkOp(const std::string& op) const;
   void FindFloat32TensorListOpClustersAndDenylistUnsafe(
       std::vector<absl::flat_hash_set<const NodeDef*>>* clusters,
       absl::flat_hash_set<int>* deny_set) const;
@@ -1114,12 +1122,12 @@ class AutoMixedPrecisionImpl {
                                     absl::flat_hash_set<int>* allow_set) const;
   void PropagateAllowThroughClear(const absl::flat_hash_set<int>& deny_set,
                                   absl::flat_hash_set<int>* allow_set) const;
-  Status ForceColorMatchOnRecurrentEdges(
+  absl::Status ForceColorMatchOnRecurrentEdges(
       absl::flat_hash_set<int>* allow_set) const;
   void MakeCastsAllowIfAllOutputsAllow(
       absl::flat_hash_set<int>* allow_set) const;
   NodeDef BuildCastNode(const MutableGraphView::OutputPort& src, bool to_f16,
-                        const string& device) const;
+                        const std::string& device) const;
   absl::StatusOr<NodeDef*> InsertCastNodeAtFanout(
       const absl::flat_hash_set<int>& allow_set, const bool src_is_allow,
       const CastType& cast_type, MutableGraphView::OutputPort& src);
@@ -1128,14 +1136,15 @@ class AutoMixedPrecisionImpl {
   void CollectOutputPorts(
       const TypeAttrId& type_attr, NodeDef* node,
       std::vector<MutableGraphView::OutputPort>& output_ports) const;
-  Status ChangeTypeAttrsAndAddCasts(const absl::flat_hash_set<int>& allow_set);
+  absl::Status ChangeTypeAttrsAndAddCasts(
+      const absl::flat_hash_set<int>& allow_set);
 
-  std::unordered_map<string, DeviceProperties> devices_;
+  std::unordered_map<std::string, DeviceProperties> devices_;
   VirtualPlacer virtual_placer_;
-  std::unordered_set<string> nodes_to_preserve_;
+  std::unordered_set<std::string> nodes_to_preserve_;
   GraphDef* graph_;
   FunctionLibraryDefinition function_library_;
-  string id_;
+  std::string id_;
   MutableGraphView graph_view_;
   int cuda_version_;
   int cudnn_version_;
@@ -1145,17 +1154,17 @@ class AutoMixedPrecisionImpl {
   bool force_all_fp16_;
   bool treat_infer_as_deny_;
   AutoMixedPrecisionMode mode_;
-  gtl::FlatSet<string> f16_allowlist_;
-  gtl::FlatSet<string> f16_denylist_;
-  gtl::FlatSet<string> f16_inferlist_;
-  gtl::FlatSet<string> f16_clearlist_;
+  gtl::FlatSet<std::string> f16_allowlist_;
+  gtl::FlatSet<std::string> f16_denylist_;
+  gtl::FlatSet<std::string> f16_inferlist_;
+  gtl::FlatSet<std::string> f16_clearlist_;
   absl::flat_hash_set<const NodeDef*> should_process_nodes_;
   DataType target_dtype_;  // Either DT_HALF or DT_BFLOAT16
 };
 
 NodeDef AutoMixedPrecisionImpl::BuildCastNode(
     const MutableGraphView::OutputPort& src, bool to_f16,
-    const string& device) const {
+    const std::string& device) const {
   DataType src_type = to_f16 ? DT_FLOAT : target_dtype_;
   DataType dst_type = to_f16 ? target_dtype_ : DT_FLOAT;
   const char* cast_string = !to_f16                    ? kCastToFp32
@@ -1175,7 +1184,7 @@ NodeDef AutoMixedPrecisionImpl::BuildCastNode(
   node.set_name(name);
   node.set_op("Cast");
   node.set_device(device);
-  node.add_input(strings::StrCat(src.node->name(), ":", src.port_id));
+  node.add_input(absl::StrCat(src.node->name(), ":", src.port_id));
   (*node.mutable_attr())["SrcT"].set_type(src_type);
   (*node.mutable_attr())["DstT"].set_type(dst_type);
   (*node.mutable_attr())["Truncate"].set_b(false);
@@ -1186,7 +1195,7 @@ bool AutoMixedPrecisionImpl::NodeHasF16KernelForTypeAttr(
     const NodeDef& node, TypeAttrId taid) const {
   NodeDef node_copy(node);
   if (node.device().empty()) {
-    string device_name = virtual_placer_.get_canonical_device_name(node);
+    std::string device_name = virtual_placer_.get_canonical_device_name(node);
     node_copy.set_device(device_name);
   }
   if (!SetDataType(&node_copy, taid, target_dtype_)) {
@@ -1195,17 +1204,18 @@ bool AutoMixedPrecisionImpl::NodeHasF16KernelForTypeAttr(
   return IsKernelRegisteredForNode(node_copy).ok();
 }
 
-Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop, size_t timestamp) {
-  string prepend_path;
+absl::Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop,
+                                                    size_t timestamp) {
+  std::string prepend_path;
   TF_RETURN_IF_ERROR(ReadStringFromEnvVar(
       "TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_LOG_PATH", "", &prepend_path));
   if (prepend_path.empty()) return absl::OkStatus();
 
-  string suffix =
+  std::string suffix =
       strings::StrCat("_", preop ? "preop" : kSuffix, "_", id_, "_", timestamp);
 
-  string fname =
-      io::JoinPath(prepend_path, strings::StrCat("graphdef", suffix, ".pb"));
+  std::string fname =
+      io::JoinPath(prepend_path, absl::StrCat("graphdef", suffix, ".pb"));
   std::fstream f;
   f.open(fname.c_str(), std::fstream::out | std::fstream::binary);
   f << graph_->SerializeAsString();
@@ -1213,8 +1223,8 @@ Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop, size_t timestamp) {
   LOG(INFO) << "Saved " << (preop ? "pre-optimization" : "post-optimization")
             << " graph as binary to " << fname;
 
-  fname = io::JoinPath(prepend_path,
-                       strings::StrCat("graphdef", suffix, ".pb.txt"));
+  fname =
+      io::JoinPath(prepend_path, absl::StrCat("graphdef", suffix, ".pb.txt"));
   f.open(fname.c_str(), std::fstream::out);
   f << graph_->DebugString();
   f.close();
@@ -1223,7 +1233,7 @@ Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop, size_t timestamp) {
 
   if (!preop) {
     fname = io::JoinPath(prepend_path,
-                         strings::StrCat("paintbuckets", suffix, ".txt"));
+                         absl::StrCat("paintbuckets", suffix, ".txt"));
     f.open(fname.c_str(), std::fstream::out);
     std::unique_ptr<AutoMixedPrecisionLists> mp_lists =
         get_mixed_precision_lists();
@@ -1249,8 +1259,8 @@ Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop, size_t timestamp) {
   return absl::OkStatus();
 }
 
-void AutoMixedPrecisionImpl::LogSkippedNode(const NodeDef& node,
-                                            const string& device_type) const {
+void AutoMixedPrecisionImpl::LogSkippedNode(
+    const NodeDef& node, const std::string& device_type) const {
   VLOG(2) << "Skipping " << node.op() << " node " << node.name()
           << " because it "
           << (MustPreserve(node)
@@ -1265,15 +1275,15 @@ bool AutoMixedPrecisionImpl::MustPreserve(const NodeDef& node) const {
 }
 
 bool AutoMixedPrecisionImpl::IsOnDevice(const NodeDef& node,
-                                        const string& device_type) const {
-  string device_name;
+                                        const std::string& device_type) const {
+  std::string device_name;
   if (node.device().empty()) {
     device_name = virtual_placer_.get_canonical_device_name(node);
   } else {
     device_name = node.device();
   }
-  string device;
-  string not_used;
+  std::string device;
+  std::string not_used;
   if (DeviceNameUtils::SplitDeviceName(device_name, &not_used, &device) &&
       absl::StrContains(absl::AsciiStrToLower(device),
                         absl::AsciiStrToLower(device_type))) {
@@ -1295,19 +1305,19 @@ bool IsFloat32(const NodeTypeId& node_type) {
          DataType::DT_FLOAT;
 }
 
-bool IsTensorListOp(const string& op) {
+bool IsTensorListOp(const std::string& op) {
   return absl::StrContains(op, "TensorList");
 }
 
-bool IsTensorListReaderOp(const string& op) {
-  static const gtl::FlatSet<string> tensor_list_reader_ops = {
+bool IsTensorListReaderOp(const std::string& op) {
+  static const gtl::FlatSet<std::string> tensor_list_reader_ops = {
       "TensorListConcat",  "TensorListConcatV2", "TensorListGather",
       "TensorListGetItem", "TensorListPopBack",  "TensorListStack"};
   return tensor_list_reader_ops.count(op);
 }
 
-bool IsTensorListWriterOp(const string& op) {
-  static const gtl::FlatSet<string> tensor_list_writer_ops = {
+bool IsTensorListWriterOp(const std::string& op) {
+  static const gtl::FlatSet<std::string> tensor_list_writer_ops = {
       "TensorListFromTensor",    "TensorListPushBack",
       "TensorListPushBackBatch", "TensorListScatter",
       "TensorListScatterV2",     "TensorListScatterIntoExistingList",
@@ -1317,7 +1327,7 @@ bool IsTensorListWriterOp(const string& op) {
 
 bool AutoMixedPrecisionImpl::SupportsF16(const NodeTypeId& node_type) const {
   const OpDef* op_def;
-  Status status =
+  absl::Status status =
       OpRegistry::Global()->LookUpOpDef(node_type.node->op(), &op_def);
   if (!status.ok()) return false;
   return AllowedDataTypes(*op_def, node_type.type_attr)
@@ -1328,7 +1338,7 @@ bool AutoMixedPrecisionImpl::SupportsF16(const NodeTypeId& node_type) const {
 bool AutoMixedPrecisionImpl::SupportsF16DataType(
     const NodeTypeId& node_type) const {
   const OpDef* op_def;
-  Status status =
+  absl::Status status =
       OpRegistry::Global()->LookUpOpDef(node_type.node->op(), &op_def);
   if (!status.ok()) return false;
   return AllowedDataTypes(*op_def, node_type.type_attr).Contains(target_dtype_);
@@ -1382,8 +1392,8 @@ bool ShouldIgnorePerformance() {
   return is_enabled;
 }
 
-Status AutoMixedPrecisionImpl::Optimize() {
-  string optimization_level;
+absl::Status AutoMixedPrecisionImpl::Optimize() {
+  std::string optimization_level;
   TF_RETURN_IF_ERROR(ReadStringFromEnvVar(
       "TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_LEVEL", "", &optimization_level));
   optimization_level = absl::AsciiStrToUpper(optimization_level);
@@ -1392,7 +1402,7 @@ Status AutoMixedPrecisionImpl::Optimize() {
                           mode_ == AutoMixedPrecisionMode::FP16_CPU)) {
     // Many ops do not support bfloat16/fp16 on the CPU. So, disallowing
     // forcing to bfloat16/fp16.
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_LEVEL cannot be set to "
         "UNSAFE_FORCE_ALL when oneDNN is used");
   }
@@ -1423,7 +1433,7 @@ Status AutoMixedPrecisionImpl::Optimize() {
   VLOG(2) << "Identifying nodes that should be processed";
   for (const NodeDef& node : graph_->node()) {
     bool should_process;
-    string device_type;
+    std::string device_type;
     switch (mode_) {
       case AutoMixedPrecisionMode::CUDA:
         device_type = DEVICE_GPU;
@@ -1584,8 +1594,8 @@ const NodeTypeId* AutoMixedPrecisionImpl::GetTensorListFloat32NodeTypeId(
   return nullptr;
 }
 
-bool AutoMixedPrecisionImpl::IsSourceOrSinkOp(const string& op) const {
-  const gtl::FlatSet<string> source_and_sink_ops = {
+bool AutoMixedPrecisionImpl::IsSourceOrSinkOp(const std::string& op) const {
+  const gtl::FlatSet<std::string> source_and_sink_ops = {
       "_Arg",
       "_Retval",
       "OptionalFromValue",
@@ -1862,10 +1872,6 @@ void AutoMixedPrecisionImpl::PropagateAllowThroughClear(
 void AutoMixedPrecisionImpl::AddInferToAllowIfFollowAllow(
     const absl::flat_hash_set<int>& deny_set,
     absl::flat_hash_set<int>* allow_set) const {
-  // Currently only target for oneDNN
-  if (mode_ != AutoMixedPrecisionMode::BF16) {
-    return;
-  }
   for (int item_idx = 0; item_idx < graph_type_view_.num_nodes(); ++item_idx) {
     const NodeTypeId& item = *graph_type_view_.GetNode(item_idx);
     if (!ShouldProcess(*item.node) || deny_set.count(item_idx) ||
@@ -1918,7 +1924,7 @@ void AutoMixedPrecisionImpl::RemoveAllowsetWithFp32(
 // color. Specifically, it removes them all from allow_set if any of the Merge
 // nodes is not in allow_set, otherwise it adds the NextIteration node to
 // allow_set.
-Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
+absl::Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
     absl::flat_hash_set<int>* allow_set) const {
   for (const NodeDef& node : graph_->node()) {
     if (node.op() == "NextIteration") {
@@ -1930,15 +1936,16 @@ Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
       for (const auto& output : fanout) {
         const NodeDef& merge_node = *output.node;
         if (merge_node.op() != "Merge") {
-          return errors::FailedPrecondition(
-              "Expected Merge node after NextIteration, got ", merge_node.op());
+          return absl::FailedPreconditionError(
+              absl::StrCat("Expected Merge node after NextIteration, got ",
+                           merge_node.op()));
         }
         const absl::optional<int> maybe_merge_idx =
             graph_type_view_.GetNodeIndex(merge_node.name(), TypeAttrId("T"));
         if (!maybe_merge_idx.has_value()) {
-          return errors::Internal("Type attribute T of Merge node ",
-                                  merge_node.name(),
-                                  " not found in graph view");
+          return absl::InternalError(
+              absl::StrCat("Type attribute T of Merge node ", merge_node.name(),
+                           " not found in graph view"));
         }
         int merge_idx = maybe_merge_idx.value();
         merge_idxs.push_back(merge_idx);
@@ -1948,8 +1955,9 @@ Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
       const absl::optional<int> maybe_nextiter_idx =
           graph_type_view_.GetNodeIndex(node.name(), TypeAttrId("T"));
       if (!maybe_nextiter_idx.has_value()) {
-        return errors::Internal("Type attribute T of NextIteration node ",
-                                node.name(), " not found in graph view");
+        return absl::InternalError(
+            absl::StrCat("Type attribute T of NextIteration node ", node.name(),
+                         " not found in graph view"));
       }
       int nextiter_idx = maybe_nextiter_idx.value();
       if (any_merge_is_not_allow) {
@@ -2096,9 +2104,10 @@ absl::StatusOr<NodeDef*> AutoMixedPrecisionImpl::InsertCastNodeAtFanout(
     const absl::optional<int> maybe_dst_type_idx =
         graph_type_view_.GetNodeIndex(dst.node->name(), dst_type_attr);
     if (!maybe_dst_type_idx.has_value()) {
-      return errors::Internal("Type attribute ", dst_type_attr.DebugString(),
-                              " of ", dst.node->op(), " node ",
-                              dst.node->name(), " not found in graph view");
+      return absl::InternalError(
+          absl::StrCat("Type attribute ", dst_type_attr.DebugString(), " of ",
+                       dst.node->op(), " node ", dst.node->name(),
+                       " not found in graph view"));
     }
     int dst_type_idx = maybe_dst_type_idx.value();
     bool dst_is_allow = allow_set.count(dst_type_idx);
@@ -2120,8 +2129,8 @@ absl::StatusOr<NodeDef*> AutoMixedPrecisionImpl::InsertCastNodeAtFanout(
         should_cast = true;
         break;
       default:
-        return errors::Internal("Invalid Cast Type: ",
-                                static_cast<int>(cast_type));
+        return absl::InternalError(
+            absl::StrCat("Invalid Cast Type: ", static_cast<int>(cast_type)));
     }
 
     if (!should_cast) continue;
@@ -2168,7 +2177,7 @@ void AutoMixedPrecisionImpl::CollectOutputPorts(
 // Changes all allow-painted type attributes to DT_HALF or DT_BFLOAT16, and
 // inserts Cast nodes at node outputs for all edges that connect
 // allow-painted <-> non-allow-painted type attributes.
-Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
+absl::Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
     const absl::flat_hash_set<int>& allow_set) {
   int num_nodes_changed = 0;
   const int num_nodes_preop = graph_->node_size();
@@ -2188,9 +2197,9 @@ Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
       const absl::optional<int> maybe_node_type_idx =
           graph_type_view_.GetNodeIndex(node->name(), type_attr);
       if (!maybe_node_type_idx.has_value()) {
-        return errors::Internal("Type attribute ", type_attr.DebugString(),
-                                " of ", node->op(), " node ", node->name(),
-                                " not found in graph view");
+        return absl::InternalError(absl::StrCat(
+            "Type attribute ", type_attr.DebugString(), " of ", node->op(),
+            " node ", node->name(), " not found in graph view"));
       }
       int node_type_idx = maybe_node_type_idx.value();
       if (!IsFloat32(*graph_type_view_.GetNode(node_type_idx))) continue;
@@ -2233,7 +2242,7 @@ Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
                   << node->op() << " node " << node->name() << " to "
                   << DataTypeString(target_dtype_);
           if (!SetDataType(node, type_attr, target_dtype_)) {
-            return errors::Internal("Failed to set type attribute");
+            return absl::InternalError("Failed to set type attribute");
           }
           ++num_nodes_changed;
           CollectOutputPorts(type_attr, node, output_ports);
@@ -2282,15 +2291,16 @@ int GetNumGPUs(const Cluster& cluster) {
 
 }  // end namespace
 
-Status AutoMixedPrecision::Optimize(Cluster* cluster, const GrapplerItem& item,
-                                    GraphDef* output) {
+absl::Status AutoMixedPrecision::Optimize(Cluster* cluster,
+                                          const GrapplerItem& item,
+                                          GraphDef* output) {
   if (cluster == nullptr) {
-    return errors::InvalidArgument("cluster == nullptr");
+    return absl::InvalidArgumentError("cluster == nullptr");
   }
 
 #if !defined(INTEL_MKL)
   if (mode_ == AutoMixedPrecisionMode::BF16) {
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         "The auto_mixed_precision_onednn_bfloat16 optimizer cannot be used "
         "since this build of TensorFlow is not compiled with oneDNN support "
         "for bfloat16. "
@@ -2310,9 +2320,11 @@ Status AutoMixedPrecision::Optimize(Cluster* cluster, const GrapplerItem& item,
             << " graph optimizer";
     return absl::OkStatus();
   }
-  // Check if CPU supports FP16
+  // Check if CPU supports FP16, oneDNN supports FP16 on
+  // some platforms by converting to and from FP32
   if (mode_ == AutoMixedPrecisionMode::FP16_CPU &&
-      !IsAMXDataTypeSupportedByOneDNNOnThisCPU(DT_HALF)) {
+      !IsAMXDataTypeSupportedByOneDNNOnThisCPU(DT_HALF) &&
+      !IsAVXConvertSupportedByOneDNNOnThisCPU()) {
     VLOG(1) << "No support for " << name() << " graph optimizer on CPU";
     return absl::OkStatus();
   }
@@ -2330,7 +2342,7 @@ Status AutoMixedPrecision::Optimize(Cluster* cluster, const GrapplerItem& item,
   } else {
     VLOG(1) << "Running " << name() << " graph optimizer on " << item.id;
   }
-  Status status = optimizer.Optimize();
+  absl::Status status = optimizer.Optimize();
   if (!status.ok()) {
     // Restore the original graph.
     *output = item.graph;

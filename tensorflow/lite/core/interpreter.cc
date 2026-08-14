@@ -27,14 +27,15 @@ limitations under the License.
 #include <vector>
 
 #include "ruy/denormal.h"  // from @ruy
-#include "tensorflow/lite/allocation.h"
+#include "tensorflow/compiler/mlir/lite/allocation.h"
+#include "tensorflow/compiler/mlir/lite/experimental/remat/metadata_util.h"
 #include "tensorflow/lite/core/api/error_reporter.h"
 #include "tensorflow/lite/core/api/profiler.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/signature_runner.h"
 #include "tensorflow/lite/core/subgraph.h"
-#include "tensorflow/lite/experimental/remat/metadata_util.h"
 #include "tensorflow/lite/external_cpu_backend_context.h"
+#include "tensorflow/lite/internal/signature_def.h"
 #include "tensorflow/lite/interpreter_options.h"
 #include "tensorflow/lite/logger.h"
 #include "tensorflow/lite/minimal_logging.h"
@@ -64,6 +65,9 @@ static_assert(sizeof(TfLiteFloat16) == sizeof(uint16_t),
               "Float 16 type must be 16 bits.");
 
 namespace tflite {
+
+const int& Interpreter::kTensorsReservedCapacity = 128;
+const int& Interpreter::kTensorsCapacityHeadroom = 16;
 
 namespace {
 
@@ -200,10 +204,13 @@ void Interpreter::AddSubgraphs(int subgraphs_to_add,
 
   subgraphs_.reserve(base_index + subgraphs_to_add);
   for (int i = 0; i < subgraphs_to_add; ++i) {
-    Subgraph* subgraph = new Subgraph(
+    auto subgraph = std::make_unique<Subgraph>(
         error_reporter_, external_contexts_, &subgraphs_, &resources_,
         &resource_ids_, &initialization_status_map_, subgraphs_.size());
-    subgraphs_.emplace_back(subgraph);
+    if (allocator_ != nullptr) {
+      subgraph->SetAllocator(allocator_);
+    }
+    subgraphs_.emplace_back(std::move(subgraph));
   }
 }
 
@@ -333,7 +340,7 @@ TfLiteStatus Interpreter::ApplyLazyDelegateProviders() {
   TFLITE_LOG(TFLITE_LOG_INFO,
              "Applying %zu TensorFlow Lite delegate(s) lazily.",
              delegate_providers.size());
-  // At the momement, XNNPACK delegate is the only one that might be applied
+  // At the moment, XNNPACK delegate is the only one that might be applied
   // by default, in which case, the execution will fall back to default
   // implementation if the XNNPACK delegate fails to be applied.
   for (size_t i = 0; i < delegate_providers.size(); ++i) {
@@ -397,8 +404,39 @@ TfLiteStatus Interpreter::ApplyLazyDelegateProviders() {
 
 TfLiteStatus Interpreter::ModifyGraphWithDelegateImpl(
     TfLiteDelegate* delegate) {
+  std::vector<int> all_subgraph_indices(subgraphs_.size());
+  for (int i = 0; i < subgraphs_.size(); ++i) {
+    all_subgraph_indices[i] = i;
+  }
+  return ModifyGraphWithDelegateImpl(delegate, all_subgraph_indices);
+}
+
+TfLiteStatus Interpreter::ModifyGraphWithDelegateImpl(
+    TfLiteDelegate* delegate, const std::vector<int>& active_subgraph_indices) {
+  if (active_subgraph_indices.empty()) {
+    TF_LITE_REPORT_ERROR(error_reporter_,
+                         "Active subgraph indices must not be empty.");
+    return kTfLiteApplicationError;
+  }
+
+  std::vector<bool> active_subgraphs(subgraphs_.size(), false);
+  for (int subgraph_index : active_subgraph_indices) {
+    if (subgraph_index < 0 || subgraph_index >= subgraphs_.size()) {
+      TF_LITE_REPORT_ERROR(error_reporter_,
+                           "Active subgraph index %d is out of range.",
+                           subgraph_index);
+      return kTfLiteApplicationError;
+    }
+    active_subgraphs[subgraph_index] = true;
+  }
+
   TfLiteStatus status = kTfLiteOk;
-  for (auto& subgraph : subgraphs_) {
+  for (int subgraph_index = 0; subgraph_index < subgraphs_.size();
+       ++subgraph_index) {
+    if (!active_subgraphs[subgraph_index]) {
+      continue;
+    }
+    auto& subgraph = subgraphs_[subgraph_index];
     if (IsValidationSubgraph(subgraph->GetName().c_str()) ||
         subgraph->IsDelegationSkippable()) {
       TFLITE_LOG(TFLITE_LOG_INFO,
@@ -435,7 +473,8 @@ TfLiteStatus Interpreter::SetMetadata(
       !ParseModelControlDependencies(
           maybe_model_control_dependencies->second.data(),
           maybe_model_control_dependencies->second.size(),
-          &model_control_dependencies_)) {
+          &model_control_dependencies_) ||
+      model_control_dependencies_.size() != subgraphs_.size()) {
     model_control_dependencies_.clear();
   }
   for (int subgraph_index = 0; subgraph_index < subgraphs_.size();
@@ -520,7 +559,13 @@ void Interpreter::AddProfiler(std::unique_ptr<Profiler> profiler) {
 }
 
 impl::SignatureRunner* Interpreter::GetSignatureRunner(
-    const char* signature_key) {
+    const char* signature_key_) {
+  auto [signature_key, empty_signature_fallback] =
+      ReplaceWithPlaceholderSignatureKeyIfNeeded(signature_key_);
+  if (!signature_key) {
+    return nullptr;
+  }
+
   auto iter = signature_runner_map_.find(signature_key);
   if (iter != signature_runner_map_.end()) {
     return &(iter->second);
@@ -533,6 +578,14 @@ impl::SignatureRunner* Interpreter::GetSignatureRunner(
     return nullptr;
   }
 
+  if (empty_signature_fallback) {
+    placeholder_signature_def_ = CreatePlaceholderSignatureDef();
+    auto status = signature_runner_map_.insert(
+        {signature_key, SignatureRunner(placeholder_signature_def_.get(),
+                                        &primary_subgraph())});
+    return &(status.first->second);
+  }
+
   for (const auto& signature : signature_defs_) {
     if (signature.signature_key == signature_key) {
       auto status = signature_runner_map_.insert(
@@ -541,7 +594,64 @@ impl::SignatureRunner* Interpreter::GetSignatureRunner(
       return &(status.first->second);
     }
   }
+
   return nullptr;
+}
+
+std::unique_ptr<internal::SignatureDef>
+Interpreter::CreatePlaceholderSignatureDef() {
+  auto placeholder_signature_def = std::make_unique<internal::SignatureDef>();
+  for (auto i = 0; i < inputs().size(); ++i) {
+    auto* name = GetInputName(i);
+    if (*name == 0) {
+      placeholder_input_names_.push_back("input" + std::to_string(i));
+      name = placeholder_input_names_.back().c_str();
+    }
+    placeholder_signature_def->inputs[name] = inputs()[i];
+  }
+  for (auto i = 0; i < outputs().size(); ++i) {
+    auto* name = GetOutputName(i);
+    if (*name == 0) {
+      placeholder_output_names_.push_back("output" + std::to_string(i));
+      name = placeholder_output_names_.back().c_str();
+    }
+    placeholder_signature_def->outputs[name] = outputs()[i];
+  }
+  placeholder_signature_def->signature_key = kPlaceholderSignatureDefKey;
+  placeholder_signature_def->subgraph_index = 0;
+  return placeholder_signature_def;
+}
+
+std::pair<const char*, bool>
+Interpreter::ReplaceWithPlaceholderSignatureKeyIfNeeded(
+    const char* signature_key) {
+  // Handles nullptr signature key.
+  // If the model does not have signature def, use default name as placeholder.
+  // Otherwise use the first signature key that points to primary subgraph.
+  bool empty_signature_fallback = false;
+  if (signature_key == nullptr) {
+    if (signature_defs_.empty()) {
+      signature_key = kPlaceholderSignatureDefKey;
+      empty_signature_fallback = true;
+    } else {
+      for (const auto& signature : signature_defs_) {
+        if (signature.subgraph_index == 0) {
+          signature_key = signature.signature_key.c_str();
+          break;
+        }
+      }
+    }
+  }
+
+  if (signature_key == nullptr) {
+    // The model has signature def but none of those points to primary subgraph.
+    TF_LITE_REPORT_ERROR(error_reporter_,
+                         "The model has signature def but none of those points "
+                         "to primary subgraph.");
+    return {nullptr, empty_signature_fallback};
+  } else {
+    return {signature_key, empty_signature_fallback};
+  }
 }
 
 }  // namespace tflite

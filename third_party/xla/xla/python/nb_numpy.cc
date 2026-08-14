@@ -22,7 +22,7 @@ limitations under the License.
 #include <stdexcept>
 
 #include "absl/types/span.h"
-#include "third_party/nanobind/include/nanobind/nanobind.h"
+#include "nanobind/nanobind.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 
 namespace nb = nanobind;
@@ -71,8 +71,10 @@ nb_numpy_ndarray::nb_numpy_ndarray(
   }
   if (ptr) {
     if (base) {
-      PyArray_SetBaseObject(reinterpret_cast<PyArrayObject*>(array.ptr()),
-                            base.inc_ref().ptr());
+      if (PyArray_SetBaseObject(reinterpret_cast<PyArrayObject*>(array.ptr()),
+                                base.inc_ref().ptr()) < 0) {
+        throw nb::python_error();
+      }
     } else {
       array = nb::steal<nb::object>(PyArray_NewCopy(
           reinterpret_cast<PyArrayObject*>(array.ptr()), NPY_ANYORDER));

@@ -15,12 +15,21 @@ limitations under the License.
 
 #include "tensorflow/core/util/sparse/sparse_tensor.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_join.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
+#include "xla/tsl/protobuf/error_codes.pb.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
 #include "tensorflow/core/lib/strings/str_util.h"
@@ -190,7 +199,7 @@ TEST(SparseTensorTest, SparseTensorConstruction) {
   std::vector<int64_t> order{0, 1, 2};
   SparseTensor st;
   TF_ASSERT_OK(SparseTensor::Create(ix, vals, shape, order, &st));
-  Status st_indices_valid = st.IndicesValid();
+  absl::Status st_indices_valid = st.IndicesValid();
   EXPECT_FALSE(st_indices_valid.ok());
   EXPECT_EQ(
       "indices[2] = [2,0,0] is out of order. "
@@ -296,7 +305,7 @@ TEST(SparseTensorTest, ValidateIndicesFindsInvalid) {
   TF_ASSERT_OK(SparseTensor::Create(ix, vals, shape, order, &st));
 
   st.Reorder<tstring>(order);
-  Status st_indices_valid = st.IndicesValid();
+  absl::Status st_indices_valid = st.IndicesValid();
   EXPECT_FALSE(st_indices_valid.ok());
   EXPECT_EQ("indices[1] = [0,0,0] is repeated", st_indices_valid.message());
 
@@ -337,7 +346,7 @@ TEST(SparseTensorTest, SparseTensorCheckBoundaries) {
   ix_t(0, 0) = 11;
   ix.matrix<int64_t>() = ix_t;
   st.Reorder<tstring>(order);
-  Status st_indices_valid = st.IndicesValid();
+  absl::Status st_indices_valid = st.IndicesValid();
   EXPECT_FALSE(st_indices_valid.ok());
   // Error message references index 4 because of the call to Reorder.
   EXPECT_EQ("[11,0,0] is out of bounds: need 0 <= index < [10,10,10]",
@@ -448,7 +457,7 @@ TEST(SparseTensorTest, SparseTensorGroup) {
   Tensor vals(DT_INT32, TensorShape({N}));
 
   auto ix_t = ix.matrix<int64_t>();
-  auto vals_t = vals.vec<int32>();
+  auto vals_t = vals.vec<int32_t>();
 
   ix_t = GetSimpleIndexTensor(N, NDIM);
 
@@ -463,11 +472,11 @@ TEST(SparseTensorTest, SparseTensorGroup) {
 
   SparseTensor st;
   TF_ASSERT_OK(SparseTensor::Create(ix, vals, shape, order, &st));
-  st.Reorder<int32>(order);
+  st.Reorder<int32_t>(order);
 
   std::vector<std::vector<int64_t> > groups;
   std::vector<TTypes<int64_t>::UnalignedConstMatrix> grouped_indices;
-  std::vector<TTypes<int32>::UnalignedVec> grouped_values;
+  std::vector<TTypes<int32_t>::UnalignedVec> grouped_values;
 
   // Group by index 0
   auto gi = st.group({0});
@@ -477,10 +486,10 @@ TEST(SparseTensorTest, SparseTensorGroup) {
     groups.push_back(g.group());
     VLOG(1) << "Group: " << absl::StrJoin(g.group(), ",");
     VLOG(1) << "Indices: " << g.indices();
-    VLOG(1) << "Values: " << g.values<int32>();
+    VLOG(1) << "Values: " << g.values<int32_t>();
 
     grouped_indices.push_back(g.indices());
-    grouped_values.push_back(g.values<int32>());
+    grouped_values.push_back(g.values<int32_t>());
   }
 
   // Group by dimension 0, we have groups: 0--, 2--, 3--
@@ -490,7 +499,7 @@ TEST(SparseTensorTest, SparseTensorGroup) {
   EXPECT_EQ(groups[2], std::vector<int64_t>({3}));
 
   std::vector<Eigen::Tensor<int64_t, 2, Eigen::RowMajor> > expected_indices;
-  std::vector<Eigen::Tensor<int32, 1, Eigen::RowMajor> > expected_vals;
+  std::vector<Eigen::Tensor<int32_t, 1, Eigen::RowMajor> > expected_vals;
 
   // First group: 000, 002, 010
   expected_indices.emplace_back(3, NDIM);  // 3 x 3 tensor
@@ -733,16 +742,16 @@ TEST(SparseTensorTest, SliceReducesOutputDimension) {
 TEST(SparseTensorTest, Dim0SparseTensorToDenseTensor) {
   Tensor ix(DT_INT64, TensorShape({1, 0}));
   Tensor vals(DT_INT32, TensorShape({1}));
-  vals.scalar<int32>()() = 5;
+  vals.scalar<int32_t>()() = 5;
 
   TensorShape shape({});
   SparseTensor st;
   TF_ASSERT_OK(SparseTensor::Create(ix, vals, shape, &st));
 
   Tensor dense(DT_INT32, TensorShape({}));
-  st.ToDense<int32>(&dense);
+  st.ToDense<int32_t>(&dense);
 
-  EXPECT_EQ(dense.scalar<int32>()(), 5);
+  EXPECT_EQ(dense.scalar<int32_t>()(), 5);
 }
 
 static void BM_SparseReorderFloat(::testing::benchmark::State& state) {

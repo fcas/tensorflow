@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
@@ -28,19 +29,20 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
-#include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/target_constants.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/path.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/statusor.h"
-#include "tsl/platform/cuda_libdevice_path.h"
 
 #if GOOGLE_CUDA
+#include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
 #elif TENSORFLOW_USE_ROCM
+#include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
 #include "tensorflow/core/platform/rocm_rocdl_path.h"
 #endif
@@ -84,16 +86,14 @@ class GpuKernelToBlobPass
   absl::StatusOr<std::vector<uint8_t>> GetGpuBinaryBlob(
       gpu::GPUModuleOp gpu_module) {
     if (architectures_.empty()) {
-      return tensorflow::errors::Internal(
-          "Expected at least one GPU architecture.");
+      return absl::InternalError("Expected at least one GPU architecture.");
     }
 
     // Lower to LLVM module.
     llvm::LLVMContext llvmContext;
     auto llvmModule = translateModuleToLLVMIR(gpu_module, llvmContext);
     if (!llvmModule) {
-      return tensorflow::errors::Internal(
-          "Could not translate MLIR module to LLVM IR");
+      return absl::InternalError("Could not translate MLIR module to LLVM IR");
     }
     llvmModule->setModuleIdentifier(gpu_module.getName());
 
@@ -141,7 +141,7 @@ class GpuKernelToBlobPass
         "false";
 
     llvmModule->setDataLayout(xla::gpu::nvptx::DataLayout());
-    llvmModule->setTargetTriple(xla::gpu::nvptx::TargetTriple());
+    llvmModule->setTargetTriple(llvm::Triple(xla::gpu::nvptx::TargetTriple()));
 
     // Compile and collect requested cubin and PTX images.
     std::vector<tensorflow::se::CubinOrPTXImage> images;
@@ -152,6 +152,7 @@ class GpuKernelToBlobPass
       int arch = arch_pair.second;
       int cc_major = arch / 10;
       int cc_minor = arch % 10;
+      tensorflow::se::CudaComputeCapability cc{cc_major, cc_minor};
 
       // Generate PTX code.
       // Module may be changed by CompileToPtx.
@@ -163,8 +164,7 @@ class GpuKernelToBlobPass
       TF_ASSIGN_OR_RETURN(
           std::string ptx,
           xla::gpu::nvptx::CompileToPtx(
-              llvm_module_copy.get(),
-              tensorflow::se::CudaComputeCapability{cc_major, cc_minor},
+              llvm_module_copy.get(), stream_executor::GpuComputeCapability(cc),
               options, enable_fusion));
       if (print_ptx_) {
         llvm::dbgs() << "Generated PTX code for module '"
@@ -176,11 +176,9 @@ class GpuKernelToBlobPass
       // Compile PTX code with ptxas if requested and possible and fall back to
       // a compute image, otherwise.
       if (!is_compute_profile) {
-        auto gpu_asm = tensorflow::se::CompileGpuAsmUsingPtxAs(
-            cc_major, cc_minor, ptx.c_str(), gpu_asm_opts);
+        auto gpu_asm = tensorflow::se::CompileGpuAsm(cc, ptx, gpu_asm_opts);
         if (gpu_asm.ok()) {
-          images.push_back(
-              {absl::StrCat("sm_", arch), std::move(gpu_asm.value())});
+          images.push_back({/*is_ptx=*/false, cc, std::move(gpu_asm.value())});
         } else {
 #ifdef PLATFORM_GOOGLE
           // Require compilation with ptxas.
@@ -198,8 +196,7 @@ class GpuKernelToBlobPass
         ptx_bytes.reserve(ptx.size() + 1);
         std::copy(ptx.begin(), ptx.end(), std::back_inserter(ptx_bytes));
         ptx_bytes.push_back('\0');
-        images.push_back(
-            {absl::StrCat("compute_", arch), std::move(ptx_bytes)});
+        images.push_back({/*is_ptx=*/true, cc, std::move(ptx_bytes)});
       }
     }
 
@@ -225,14 +222,13 @@ class GpuKernelToBlobPass
     } else if (absl::ConsumePrefix(&consumable_arch, "sm_")) {
       is_compute_profile = false;
     } else {
-      return tensorflow::errors::Internal(
+      return absl::InternalError(
           "Could not parse cuda architecture prefix (expected sm_ or "
           "compute_)");
     }
     int arch;
     if (!absl::SimpleAtoi(consumable_arch, &arch)) {
-      return tensorflow::errors::Internal(
-          "Could not parse cuda architecture number");
+      return absl::InternalError("Could not parse cuda architecture number");
     }
     return std::pair<bool, int>(is_compute_profile, arch);
   }

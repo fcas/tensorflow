@@ -15,15 +15,29 @@ limitations under the License.
 #include "tensorflow/core/kernels/data/prefetch_dataset_op.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "tensorflow/core/data/dataset_utils.h"
 #include "tensorflow/core/data/name_utils.h"
 #include "tensorflow/core/data/stats_utils.h"
+#include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/metrics.h"
 #include "tensorflow/core/framework/model.h"
 #include "tensorflow/core/framework/partial_tensor_shape.h"
@@ -87,7 +101,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
   ~Dataset() override { input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
@@ -100,7 +114,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     return input_->output_shapes();
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
@@ -108,17 +122,18 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     return input_->Cardinality(options);
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     inputs->push_back(input_);
     return absl::OkStatus();
   }
 
-  Status CheckExternalState() const override {
+  absl::Status CheckExternalState() const override {
     return input_->CheckExternalState();
   }
 
-  Status Get(OpKernelContext* ctx, int64 index,
-             std::vector<Tensor>* out_tensors) const override {
+  absl::Status Get(OpKernelContext* ctx, int64_t index,
+                   std::vector<Tensor>* out_tensors) const override {
     return input_->Get(ctx, index, out_tensors);
   }
 
@@ -127,9 +142,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
   }
 
  protected:
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     Node* input_graph_node = nullptr;
     TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
     Node* buffer_size = nullptr;
@@ -175,7 +190,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     bool SymbolicCheckpointCompatible() const override { return true; }
 
-    Status Initialize(IteratorContext* ctx) override {
+    absl::Status Initialize(IteratorContext* ctx) override {
       mutex_lock l(*mu_);
       auto_tuner_ = std::make_unique<PrefetchAutotuner>(
           dataset()->buffer_size_, dataset()->buffer_size_min_,
@@ -201,9 +216,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       return absl::OkStatus();
     }
 
-    Status GetNextInternal(IteratorContext* ctx,
-                           std::vector<Tensor>* out_tensors,
-                           bool* end_of_sequence) override {
+    absl::Status GetNextInternal(IteratorContext* ctx,
+                                 std::vector<Tensor>* out_tensors,
+                                 bool* end_of_sequence) override {
       const auto& stats_aggregator = ctx->stats_aggregator();
       {
         mutex_lock l(*mu_);
@@ -266,8 +281,8 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
           /*is_legacy_prefetch_autotuned=*/legacy_autotune_);
     }
 
-    Status SaveInternal(SerializationContext* ctx,
-                        IteratorStateWriter* writer) override {
+    absl::Status SaveInternal(SerializationContext* ctx,
+                              IteratorStateWriter* writer) override {
       if (ctx->symbolic_checkpoint()) {
         return absl::OkStatus();
       }
@@ -295,13 +310,8 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       return absl::OkStatus();
     }
 
-    Status RestoreInternal(IteratorContext* ctx,
-                           IteratorStateReader* reader) override {
-      if (ctx->restored_element_count().has_value()) {
-        tsl::mutex_lock l(input_mu_);
-        return RestoreInput(ctx, reader, input_impl_);
-      }
-
+    absl::Status RestoreInternal(IteratorContext* ctx,
+                                 IteratorStateReader* reader) override {
       mutex_lock input_l(input_mu_);
       mutex_lock l(*mu_);
       DCHECK(!prefetch_thread_);
@@ -341,7 +351,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
           "buffer_limit",
           limit == -1
               ? kTraceInfoUnavailable
-              : strings::Printf("%lld", static_cast<long long>(limit))));
+              : absl::StrFormat("%lld", static_cast<long long>(limit))));
       result.push_back(std::make_pair(
           "autotune",
           dataset()->buffer_size_ == model::kAutotune ? "true" : "false"));
@@ -350,11 +360,11 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       if (dataset()->slack_period_ > 0) {
         result.push_back(std::make_pair(
             "slack",
-            strings::Printf("%lld", static_cast<long long>(slack_us_.load()))));
+            absl::StrFormat("%lld", static_cast<long long>(slack_us_.load()))));
       }
       result.push_back(std::make_pair(
           "interleave_depth",
-          strings::Printf("%lld", static_cast<long long>(interleave_depth_))));
+          absl::StrFormat("%lld", static_cast<long long>(interleave_depth_))));
       return result;
     }
 
@@ -363,20 +373,21 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     // OK) a vector of tensors, representing an element of the input dataset.
     struct BufferElement {
       explicit BufferElement(IteratorContext* ctx)
-          : uid(tensorflow::EnvTime::NowNanos()),
+          : created_us(0),
+            uid(tensorflow::EnvTime::NowNanos()),
             checkpoint(MemoryCheckpoint{ctx->id_registry()}) {}
 
       // The producer sets `status` if getting the input element fails.
-      Status status;
+      absl::Status status;
       // The buffered data element.
       std::vector<Tensor> value;
       int64_t created_us;
-      const uint64 uid;
+      const uint64_t uid;
       MemoryCheckpoint checkpoint;
     };
 
-    Status RestoreBuffer(IteratorContext* const ctx,
-                         IteratorStateReader* const reader)
+    absl::Status RestoreBuffer(IteratorContext* const ctx,
+                               IteratorStateReader* const reader)
         TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
       size_t buffer_size;
       {
@@ -387,6 +398,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       for (size_t i = 0; i < buffer_size; i++) {
         buffer_.emplace_back(ctx);
         auto& buffer_element = buffer_.back();
+        buffer_element.created_us = EnvTime::NowMicros();
         TF_RETURN_IF_ERROR(ReadStatus(reader, i, &buffer_element.status));
         if (buffer_element.status.ok()) {
           size_t value_size;
@@ -419,14 +431,17 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     }
 
     void CancelThreads() TF_LOCKS_EXCLUDED(mu_) {
-      cancellation_manager_->StartCancel();
+      if (cancellation_manager_ != nullptr) {
+        cancellation_manager_->StartCancel();
+      }
       mutex_lock l(*mu_);
       cancelled_ = true;
       cond_var_->notify_all();
     }
 
-    Status Consume(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
-                   bool* end_of_sequence) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    absl::Status Consume(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
+                         bool* end_of_sequence)
+        TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
       const auto& stats_aggregator = ctx->stats_aggregator();
       if (stats_aggregator) {
         double buffer_limit_ = buffer_limit();
@@ -444,9 +459,27 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       }
       // A new element is available. Forward the status from computing it, and
       // (if we successfully got an element) the output values.
-      Status s = buffer_.front().status;
+      absl::Status s = buffer_.front().status;
       if (s.ok()) {
-        int64_t buffer_element_id = buffer_.front().uid;
+        uint64_t buffer_element_id = buffer_.front().uid;
+
+        // 1. Calculate the exact time this element sat in the buffer
+        int64_t residence_time_us =
+            EnvTime::NowMicros() - buffer_.front().created_us;
+
+        // 2. Record it to our Histogram
+        metrics::RecordTFDataPrefetchResidenceTime(dataset()->node_name(),
+                                                   residence_time_us);
+
+        // 3. Log extreme severity outliers (e.g., > 10 seconds)
+        if (residence_time_us > 10000000) {
+          LOG_EVERY_N_SEC(WARNING, 10)
+              << "SEVERE STARVATION: Element UID " << buffer_element_id
+              << " in buffer '" << dataset()->node_name()
+              << "' sat unconsumed for " << (residence_time_us / 1000000.0)
+              << " seconds!";
+        }
+
         tsl::profiler::TraceMe traceme(
             [&] {
               return tsl::profiler::TraceMeEncode(
@@ -488,6 +521,10 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
         buffer_size_->value = auto_tuner_->buffer_limit();
       }
       buffer_.pop_front();
+
+      metrics::RecordTFDataPrefetchDequeue(dataset()->node_name());
+      metrics::RecordTFDataPrefetchBufferSize(dataset()->node_name(),
+                                              buffer_.size());
       *end_of_sequence = false;
 
       // Wake the prefetch thread, in case it has been waiting for space
@@ -499,7 +536,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       return s;
     }
 
-    Status EnsureThreadsStarted(IteratorContext* ctx)
+    absl::Status EnsureThreadsStarted(IteratorContext* ctx)
         TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
       if (!prefetch_thread_) {
         std::shared_ptr<IteratorContext> new_ctx =
@@ -575,14 +612,20 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
           RecordBufferEnqueue(ctx.get(), buffer_element.value);
           buffer_element.created_us = EnvTime::NowMicros();
           buffer_.push_back(std::move(buffer_element));
+
+          metrics::RecordTFDataPrefetchEnqueue(dataset()->node_name());
+          metrics::RecordTFDataPrefetchBufferSize(dataset()->node_name(),
+                                                  buffer_.size());
+
           cond_var_->notify_all();
         }
         ++num_produced;
       }
     }
 
-    Status WriteStatus(IteratorStateWriter* writer, size_t index,
-                       const Status& status) TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
+    absl::Status WriteStatus(IteratorStateWriter* writer, size_t index,
+                             const absl::Status& status)
+        TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
       TF_RETURN_IF_ERROR(
           writer->WriteScalar(absl::StrCat(prefix(), "::", index), CodeKey(),
                               static_cast<int64_t>(status.code())));
@@ -594,7 +637,8 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       return absl::OkStatus();
     }
 
-    Status ReadStatus(IteratorStateReader* reader, size_t index, Status* status)
+    absl::Status ReadStatus(IteratorStateReader* reader, size_t index,
+                            absl::Status* status)
         TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
       int64_t code_int;
       TF_RETURN_IF_ERROR(reader->ReadScalar(absl::StrCat(prefix(), "::", index),
@@ -606,16 +650,16 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
         TF_RETURN_IF_ERROR(
             reader->ReadScalar(absl::StrCat(prefix(), "::", index),
                                ErrorMessageKey(), &error_message));
-        *status = Status(code, error_message);
+        *status = absl::Status(code, error_message);
       } else {
         *status = absl::OkStatus();
       }
       return absl::OkStatus();
     }
 
-    string CodeKey() { return absl::StrCat(kStatus, kCodeSuffix); }
+    std::string CodeKey() { return absl::StrCat(kStatus, kCodeSuffix); }
 
-    string ErrorMessageKey() {
+    std::string ErrorMessageKey() {
       return absl::StrCat(kStatus, kErrorMessageSuffix);
     }
 
@@ -652,7 +696,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     // root node to this node (not including this node) in the input pipeline
     // tree. We record the interleave depth so that it can be included in the
     // trace metadata.
-    int64 interleave_depth_ = -1;
+    int64_t interleave_depth_ = -1;
     std::unique_ptr<Thread> prefetch_thread_ TF_GUARDED_BY(*mu_);
   };
 
@@ -697,9 +741,10 @@ void PrefetchDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
   OP_REQUIRES_OK(ctx,
                  ParseScalarArgument<int64_t>(ctx, kBufferSize, &buffer_size));
   OP_REQUIRES(ctx, buffer_size >= 0 || buffer_size == model::kAutotune,
-              errors::InvalidArgument("buffer_size must be >= 0 or set "
-                                      "buffer_size to be ",
-                                      model::kAutotune, " for auto-tuning"));
+              absl::InvalidArgumentError(
+                  absl::StrCat("buffer_size must be >= 0 or set "
+                               "buffer_size to be ",
+                               model::kAutotune, " for auto-tuning")));
 
   if (buffer_size == model::kAutotune) {
     metrics::RecordTFDataAutotune(kDatasetType);

@@ -1,9 +1,23 @@
-// RUN: tf-opt -tfl-raise-custom-ops -canonicalize %s --split-input-file | FileCheck %s
-// RUN: tf-opt -tfl-raise-custom-ops="test-raise-tf-targets=tf.FakeQuantWithMinMaxVarsPerChannel" -canonicalize %s --split-input-file | FileCheck --check-prefix=WRAPPED %s
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+// RUN: litert-opt -tfl-raise-custom-ops -canonicalize %s --split-input-file | FileCheck %s
+// RUN: litert-opt -tfl-raise-custom-ops="test-raise-tf-targets=tf.FakeQuantWithMinMaxVarsPerChannel" -canonicalize %s --split-input-file | FileCheck --check-prefix=WRAPPED %s
 
 // CHECK-LABEL: custom_op
 func.func @custom_op(%arg0: tensor<4xf32>) -> tensor<4xf32> {
-  %0 = "arith.constant" () {value = dense<1.0> : tensor<4xf32>} : () -> tensor<4xf32>
+  %0 = "arith.constant" () {value = dense<2.0> : tensor<4xf32>} : () -> tensor<4xf32>
   %1 = "tfl.mul"(%arg0, %0) {fused_activation_function = "NONE"} : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
   // will be preserved since it has uses.
   %2 = "tf.MyCustomOp"(%1, %0) {fused_activation_function = "RELU", int_attr = 2 : i32}  : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
@@ -11,7 +25,7 @@ func.func @custom_op(%arg0: tensor<4xf32>) -> tensor<4xf32> {
   "tf.MyCustomOp"(%1, %0) {fused_activation_function = "RELU", int_attr = 2 : i32}  : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
   func.return %2 : tensor<4xf32>
 
-// CHECK-NEXT: %[[CST:.*]] = arith.constant dense<1.000000e+00> : tensor<4xf32>
+// CHECK-NEXT: %[[CST:.*]] = arith.constant dense<2.000000e+00> : tensor<4xf32>
 // CHECK-NEXT: %[[MUL:.*]] = tfl.mul %arg0, %[[CST]] {fused_activation_function = "NONE"} : tensor<4xf32>
 // CHECK-NEXT: %[[CUSTOM_1:.*]] = "tfl.custom_tf"(%[[MUL]], %[[CST]]) ({
 // CHECK-NEXT: ^bb0(%arg1: tensor<4xf32>, %arg2: tensor<4xf32>):

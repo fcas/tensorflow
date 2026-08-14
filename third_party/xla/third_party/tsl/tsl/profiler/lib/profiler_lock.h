@@ -17,8 +17,9 @@ limitations under the License.
 
 #include <utility>
 
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace tsl {
 namespace profiler {
@@ -45,9 +46,9 @@ class ProfilerLock {
   ProfilerLock& operator=(const ProfilerLock&) = delete;
 
   // Movable.
-  ProfilerLock(ProfilerLock&& other)
+  ProfilerLock(ProfilerLock&& other) noexcept
       : active_(std::exchange(other.active_, false)) {}
-  ProfilerLock& operator=(ProfilerLock&& other) {
+  ProfilerLock& operator=(ProfilerLock&& other) noexcept {
     active_ = std::exchange(other.active_, false);
     return *this;
   }

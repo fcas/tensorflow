@@ -15,9 +15,11 @@ limitations under the License.
 #include "tensorflow/lite/core/acceleration/configuration/delegate_registry.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 
 #include "absl/synchronization/mutex.h"
+#include "tensorflow/lite/acceleration/configuration/configuration_generated.h"
 
 namespace tflite {
 namespace delegates {
@@ -27,13 +29,13 @@ void DelegatePluginRegistry::RegisterImpl(
     std::function<
         std::unique_ptr<DelegatePluginInterface>(const TFLiteSettings&)>
         creator_function) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   factories_[name] = creator_function;
 }
 
 std::unique_ptr<DelegatePluginInterface> DelegatePluginRegistry::CreateImpl(
     const std::string& name, const TFLiteSettings& settings) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = factories_.find(name);
   return (it != factories_.end()) ? it->second(settings) : nullptr;
 }

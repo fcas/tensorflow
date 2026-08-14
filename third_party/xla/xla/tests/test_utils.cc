@@ -18,330 +18,37 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
+#include <limits>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <random>
 #include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
+#include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/primitive_util.h"
-#include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_verifier.h"
-#include "xla/service/transfer_manager.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/tests/constraint_propagator.h"
+#include "xla/tests/constraint_state.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 
 namespace {
-
-template <typename FloatT, typename GeneratorT>
-void PopulateWithRandomFloatingPointData(Literal* literal,
-                                         std::minstd_rand0* engine) {
-  std::uniform_real_distribution<GeneratorT> generator(-0.1f, 0.2f);
-  for (FloatT& value : literal->data<FloatT>()) {
-    value = static_cast<FloatT>(generator(*engine));
-  }
-}
-
-// Populates a floating point literal with random floating points sampled from a
-// uniform-log distribution spanning approximately the entire range of the
-// representable floating point.
-template <typename FloatT>
-void PopulateWithRandomFullRangeFloatingPointData(Literal* literal,
-                                                  std::minstd_rand0* engine) {
-  constexpr float kSpecialValueProbability = 1e-6;
-  constexpr float kSpecialValues[] = {+0.F,
-                                      -0.F,
-                                      1.F,
-                                      -1.F,
-                                      std::numeric_limits<float>::infinity(),
-                                      -std::numeric_limits<float>::infinity()};
-  constexpr int kNumSpecialValues = sizeof(kSpecialValues) / sizeof(float);
-  std::uniform_real_distribution<float> special_value_gen(0, 1);
-
-  // Generates floating points with a log-uniform distribution. This causes the
-  // exponent of the floating point to have a uniform distribution.
-  const int min_exp = std::numeric_limits<FloatT>::min_exponent;
-  const int max_exp = std::numeric_limits<FloatT>::max_exponent;
-  std::uniform_real_distribution<double> generator(min_exp - 1, max_exp - 1);
-
-  for (FloatT& value : literal->data<FloatT>()) {
-    // Each special value has a kSpecialValueProbability chance to be generated
-    // instead of sampling using the normal distributions.
-    if (special_value_gen(*engine) <
-        kSpecialValueProbability * kNumSpecialValues) {
-      value =
-          static_cast<FloatT>(kSpecialValues[(*engine)() % kNumSpecialValues]);
-    } else {
-      float sign = ((*engine)() % 2 == 0) ? 1 : -1;
-      value = static_cast<FloatT>(pow(2, generator(*engine)) * sign);
-    }
-  }
-}
-
-template <typename FloatT>
-void PopulateWithIntNext(Literal* literal) {
-  using BitRepT = UnsignedIntegerTypeForSizeType<sizeof(FloatT)>;
-  // Duplicates may be generated if we don't have enough bits.
-  // Skip bfloat16 and float32 subnormals.
-  const FloatT kFirstValue =
-      std::is_same_v<FloatT, bfloat16> || sizeof(FloatT) >= sizeof(float)
-          ? std::numeric_limits<FloatT>::min()
-          : std::numeric_limits<FloatT>::denorm_min();
-  // `current` keeps track of the next value we need to populate.
-  auto current = literal->data<FloatT>().begin();
-  auto end = literal->data<FloatT>().end();
-  // `sign` keeps track of the sign of the next value.
-  bool sign = false;
-  while (current != end) {
-    // We start populating values at zero and increase magnitude from there.
-    *current = sign ? static_cast<FloatT>(-0.0f) : static_cast<FloatT>(0.0f);
-    current++;
-    // The next value is either the smallest denormal or normal.
-    auto value = sign ? -kFirstValue : kFirstValue;
-    // Fill the array with values of increasing magnitude until we hit a
-    // non-finite value.
-    while (current != end && Eigen::numext::isfinite(value)) {
-      // Populate the value.
-      *current = value;
-      // Generate the next value by lexicographically increasing the bit
-      // representation.
-      const BitRepT next_value = Eigen::numext::bit_cast<BitRepT>(value) + 1;
-      value = Eigen::numext::bit_cast<FloatT>(next_value);
-      current++;
-    }
-    // We ran out of finite values, flip the sign and begin again.
-    sign = !sign;
-  }
-}
-
-template <typename FloatT>
-void PopulateWithNoDuplicateData(Literal* literal, std::minstd_rand0* engine) {
-  PopulateWithIntNext<FloatT>(literal);
-  std::shuffle(literal->data<FloatT>().begin(), literal->data<FloatT>().end(),
-               *engine);
-}
-
-template <typename FloatT>
-void PopulateWithFloatingPointData(
-    Literal* literal, std::minstd_rand0* engine, bool no_duplicates,
-    bool use_large_range, std::optional<int64_t> max_bits_of_precision) {
-  using ComputeT =
-      std::conditional_t<sizeof(FloatT) < sizeof(float), float, FloatT>;
-  CHECK(engine != nullptr);
-  CHECK_EQ(literal->shape().element_type(),
-           primitive_util::NativeToPrimitiveType<FloatT>());
-  if (max_bits_of_precision.has_value()) {
-    CHECK(!use_large_range) << "Cannot set both use_large_range and "
-                               "max_bits_of_precision for floating points.";
-    CHECK(!no_duplicates) << "Cannot set both no_duplicates and "
-                             "max_bits_of_precision for floating points.";
-    std::uniform_int_distribution<int64_t> generator(
-        -(1 << *max_bits_of_precision), 1 << *max_bits_of_precision);
-    for (FloatT& value : literal->data<FloatT>()) {
-      int64_t temp = generator(*engine);
-      // We want to generate floating point numbers to a fixed precision, while
-      // keeping them between -1 and 1. This preserves their bits of precision
-      // while keeping the numbers small.
-      value = static_cast<FloatT>(temp * pow(2, -ceil(log2(abs(temp)))));
-    }
-  } else if (no_duplicates) {
-    PopulateWithNoDuplicateData<FloatT>(literal, engine);
-  } else if (use_large_range) {
-    PopulateWithRandomFullRangeFloatingPointData<FloatT>(literal, engine);
-  } else {
-    PopulateWithRandomFloatingPointData<FloatT, ComputeT>(literal, engine);
-  }
-}
-
-template <typename ComplexT>
-void PopulateWithComplexData(Literal* result, std::minstd_rand0* engine,
-                             bool no_duplicates, bool use_large_range) {
-  using InnerFloatT = typename ComplexT::value_type;
-  CHECK(engine != nullptr);
-  CHECK_EQ(result->shape().element_type(),
-           primitive_util::NativeToPrimitiveType<ComplexT>());
-  Shape floating_point_shape = ShapeUtil::ChangeElementType(
-      result->shape(), primitive_util::NativeToPrimitiveType<InnerFloatT>());
-  Literal real_lit(floating_point_shape);
-  Literal imaginary_lit(floating_point_shape);
-
-  PopulateWithFloatingPointData<InnerFloatT>(
-      &real_lit, engine, no_duplicates, use_large_range,
-      /*max_bits_of_precision=*/std::nullopt);
-  PopulateWithFloatingPointData<InnerFloatT>(
-      &imaginary_lit, engine, no_duplicates, use_large_range,
-      /*max_bits_of_precision=*/std::nullopt);
-
-  absl::Span<const InnerFloatT> real_data = real_lit.data<InnerFloatT>();
-  absl::Span<const InnerFloatT> imaginary_data =
-      imaginary_lit.data<InnerFloatT>();
-  absl::Span<ComplexT> result_data = result->data<ComplexT>();
-  for (int i = 0; i < real_lit.data<InnerFloatT>().size(); i++) {
-    result_data[i] = ComplexT(real_data[i], imaginary_data[i]);
-  }
-}
-
-// uniform_int_distribution is not defined for 8-bit integers.
-// Use 'short' for those types.
-template <typename IntT>
-using RngT = std::conditional_t<
-    sizeof(IntT) < sizeof(uint16_t),
-    std::conditional_t<std::numeric_limits<IntT>::is_signed, int16_t, uint16_t>,
-    IntT>;
-
-template <typename IntT>
-void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
-                                              std::minstd_rand0* engine,
-                                              bool no_duplicates, IntT min,
-                                              IntT max) {
-  CHECK(engine != nullptr);
-  CHECK_EQ(literal->shape().element_type(),
-           primitive_util::NativeToPrimitiveType<IntT>());
-  if (no_duplicates &&
-      ShapeUtil::ElementsIn(literal->shape()) < static_cast<int64_t>(max)) {
-    std::iota(literal->data<IntT>().begin(), literal->data<IntT>().end(),
-              static_cast<IntT>(0));
-    std::shuffle(literal->data<IntT>().begin(), literal->data<IntT>().end(),
-                 *engine);
-  } else {
-    std::uniform_int_distribution<RngT<IntT>> generator(
-        static_cast<RngT<IntT>>(min), static_cast<RngT<IntT>>(max));
-    for (IntT& value : literal->data<IntT>()) {
-      value = static_cast<IntT>(generator(*engine));
-    }
-  }
-}
-
-// Similar to MakeFakeLiteral but takes a random number generator engine to
-// enable reusing the engine across randomly generated literals.
-// 'limit' is a optional pair that contains the min and the max values to be
-// sample for integers (integer format only).
-// 'is_sorted' sorts the sample data for integers (integer format only).
-// 'no_duplicates' indicates that there should be no duplicate values in each
-// generated array. This is uniqueness is best-effort only. Some types
-// (half and bfloat16) are not supported and uniqueness cannot be guaranteed if
-// the number of elements exceeds the number of different values supported by
-// the type. (floating point format only)
-// 'use_large_range' indicates the sampled data is from the full range of the
-// floating point format. (floating point format only)
-// 'max_bits_of_precision' sets the data to have the given number of bits or
-// less (integer or floating point formats only).
-absl::StatusOr<Literal> MakeFakeLiteralInternal(
-    const Shape& shape, std::minstd_rand0* engine,
-    std::optional<std::pair<int64_t, int64_t>> limit, bool is_sorted,
-    bool no_duplicates, bool use_large_range,
-    std::optional<int64_t> max_bits_of_precision) {
-  if (shape.IsTuple()) {
-    std::vector<Literal> elements;
-    const auto& shape_tuple_shapes = shape.tuple_shapes();
-    elements.reserve(shape_tuple_shapes.size());
-    for (const Shape& element_shape : shape_tuple_shapes) {
-      TF_ASSIGN_OR_RETURN(
-          Literal element,
-          MakeFakeLiteralInternal(element_shape, engine, limit, is_sorted,
-                                  no_duplicates, use_large_range,
-                                  max_bits_of_precision));
-      elements.push_back(std::move(element));
-    }
-    return LiteralUtil::MakeTupleOwned(std::move(elements));
-  }
-  if (engine == nullptr) {
-    return Literal::CreateFromShape(shape);
-  }
-  // Clear tiles/element size in shape's layout before using it for creating
-  // literal.
-  Shape new_shape = shape;
-  new_shape.mutable_layout()->clear_tiles();
-  new_shape.mutable_layout()->set_tail_padding_alignment_in_elements(1);
-  new_shape.mutable_layout()->set_element_size_in_bits(0);
-  Literal literal(new_shape);
-
-  TF_RETURN_IF_ERROR(primitive_util::PrimitiveTypeSwitch<Status>(
-      [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
-          using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
-          if constexpr (primitive_util::IsFloatingPointType(
-                            primitive_type_constant)) {
-            PopulateWithFloatingPointData<NativeT>(
-                &literal, engine, no_duplicates, use_large_range,
-                max_bits_of_precision);
-            return OkStatus();
-          }
-          if constexpr (primitive_type_constant == PRED) {
-            std::uniform_int_distribution<int> generator(0, 1);
-            TF_CHECK_OK(literal.Populate<bool>(
-                [&](absl::Span<const int64_t> /*indices*/) {
-                  return generator(*engine);
-                }));
-            return OkStatus();
-          }
-          if constexpr (primitive_util::IsIntegralType(
-                            primitive_type_constant)) {
-            NativeT max = std::numeric_limits<NativeT>::max();
-            NativeT min = std::numeric_limits<NativeT>::lowest();
-            if (limit.has_value()) {
-              max = static_cast<NativeT>(limit->second);
-              min = static_cast<NativeT>(limit->first);
-            }
-            if (max_bits_of_precision.has_value()) {
-              max = std::min(max,
-                             static_cast<NativeT>(1 << *max_bits_of_precision));
-              if (primitive_util::IsSignedIntegralType(
-                      primitive_type_constant)) {
-                min = std::max(
-                    min, static_cast<NativeT>(-(1 << *max_bits_of_precision)));
-              }
-            }
-            PopulateWithRandomIntegralDataWithBounds<NativeT>(
-                &literal, engine, /*no_duplicate*/ no_duplicates, min, max);
-            if (is_sorted) {
-              std::sort(literal.data<NativeT>().begin(),
-                        literal.data<NativeT>().end());
-            }
-            return OkStatus();
-          }
-          if constexpr (primitive_util::IsComplexType(
-                            primitive_type_constant)) {
-            PopulateWithComplexData<NativeT>(&literal, engine, no_duplicates,
-                                             use_large_range);
-            return OkStatus();
-          }
-        }
-        return Unimplemented(
-            "Unsupported type for fake random literal generation with bounds: "
-            "%s",
-            ShapeUtil::HumanString(shape));
-      },
-      shape.element_type()));
-  return std::move(literal);
-}
-
-enum class ConstantType { kUnknown, kZero, kOne };
-
-// Return the constant type required by this computation, if known.
-ConstantType GetInitValue(const HloComputation& computation) {
-  // TODO(b/77635120): Add init values, for min, max, and their arg variants.
-  const HloInstruction* const root = computation.root_instruction();
-  if (computation.num_parameters() != 2 || root->operand_count() != 2 ||
-      root->operand(0)->opcode() != HloOpcode::kParameter ||
-      root->operand(1)->opcode() != HloOpcode::kParameter ||
-      root->operand(0) == root->operand(1)) {
-    return ConstantType::kUnknown;
-  }
-
-  switch (root->opcode()) {
-    case HloOpcode::kAdd:
-      return ConstantType::kZero;
-    case HloOpcode::kMultiply:
-      return ConstantType::kOne;
-    default:
-      return ConstantType::kUnknown;
-  }
-}
 
 // Reduce, ReduceWindow, and SelectAndScatter ops may need a non-random
 // initialization value.
@@ -405,10 +112,10 @@ bool ReachableViaDataFormatting(const HloInstruction* src,
 // instructions that correspond to their uses.
 //
 // Should be paired with the CreateLiteralForConstrainedUses() function below.
-std::vector<HloInstruction*> FindConstrainedUses(
-    const HloDataflowAnalysis& dataflow, const HloInstruction& param,
-    bool treat_gte_as_data_formatting) {
-  std::vector<HloInstruction*> constrained_uses;
+std::vector<HloUse> FindConstrainedUses(const HloDataflowAnalysis& dataflow,
+                                        const HloInstruction& param,
+                                        bool treat_gte_as_data_formatting) {
+  std::vector<HloUse> constrained_uses;
   for (const auto& pair : dataflow.GetInstructionValueSet(&param)) {
     const HloValue& value = dataflow.GetUniqueValueAt(&param, pair.first);
     for (const HloUse& use : value.GetUses()) {
@@ -417,11 +124,11 @@ std::vector<HloInstruction*> FindConstrainedUses(
       const int64_t op_num = use.operand_number;
       if ((opcode == HloOpcode::kDynamicSlice && op_num >= 1) ||
           (opcode == HloOpcode::kDynamicUpdateSlice && op_num >= 2)) {
-        constrained_uses.push_back(instruction);
+        constrained_uses.push_back(use);
       } else if ((opcode == HloOpcode::kGather ||
                   opcode == HloOpcode::kScatter) &&
                  op_num == 1) {
-        constrained_uses.push_back(instruction);
+        constrained_uses.push_back(use);
       } else if (opcode == HloOpcode::kFusion) {
         const HloInstruction* const to_analyze =
             instruction->fused_parameter(op_num);
@@ -430,7 +137,7 @@ std::vector<HloInstruction*> FindConstrainedUses(
         constrained_uses.insert(constrained_uses.end(), fused_uses.begin(),
                                 fused_uses.end());
       } else if (NeedsInitValue(use)) {
-        constrained_uses.push_back(instruction);
+        constrained_uses.push_back(use);
       } else if (opcode == HloOpcode::kConvert ||
                  opcode == HloOpcode::kReducePrecision) {
         auto converted_uses = FindConstrainedUses(dataflow, *instruction,
@@ -438,13 +145,15 @@ std::vector<HloInstruction*> FindConstrainedUses(
         constrained_uses.insert(constrained_uses.end(), converted_uses.begin(),
                                 converted_uses.end());
       } else if (opcode == HloOpcode::kSort &&
-                 instruction->operand_count() >= 2 && op_num == 0) {
+                 (instruction->operand_count() >= 2 ||
+                  Cast<const HloSortInstruction>(instruction)->is_stable()) &&
+                 op_num == 0) {
         // Operand 0 of sort is the array of keys used for key/value
         // (two-operand) kSort instructions. Since sort stability is not
         // guaranteed, constrain keys of key-value sort not to have
         // duplicates, since otherwise the value order may legitimately
         // differ.
-        constrained_uses.push_back(instruction);
+        constrained_uses.push_back(use);
       }
     }
   }
@@ -458,7 +167,8 @@ std::vector<HloInstruction*> FindConstrainedUses(
       }
       if (ReachableViaDataFormatting(&param, instruction->operand(1),
                                      treat_gte_as_data_formatting)) {
-        constrained_uses.push_back(instruction);
+        constrained_uses.push_back(
+            HloUse{instruction, /*operand_number=*/1, ShapeIndex{}});
       }
     }
   }
@@ -470,16 +180,23 @@ std::vector<HloInstruction*> FindConstrainedUses(
 // generate a constrained literal (either bounded in the case of indices, or
 // zero in the case of init_values for reductions).
 absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
-    const absl::Span<HloInstruction* const> constrained_uses,
+    const absl::Span<const HloUse> constrained_uses,
     const HloInstruction& param, const Shape& param_shape,
     std::minstd_rand0* engine, bool use_large_range,
-    std::optional<int64_t> max_bits_of_precision) {
+    std::optional<int64_t> max_bits_of_precision,
+    bool generate_aligned_ds_indices,
+    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr) {
   int64_t index_bound = INT64_MAX;
+  // Used for operations like DUS / DS which need to be aligned when they appear
+  // in a fusion.
+  std::optional<int64_t> index_alignment = std::nullopt;
   bool no_duplicates = false;
   bool needs_constant = false;
   bool needs_sorted_indices = false;
-  ConstantType constant_type = ConstantType::kUnknown;
-  for (HloInstruction* use : constrained_uses) {
+  std::optional<uint64_t> index_known_zeroes = std::nullopt;
+  IdentityElementType identity_type = IdentityElementType::kUnknown;
+  for (const HloUse& hlo_use : constrained_uses) {
+    HloInstruction* use = hlo_use.instruction;
     switch (use->opcode()) {
       case HloOpcode::kDynamicSlice:
       case HloOpcode::kDynamicUpdateSlice: {
@@ -489,14 +206,40 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
                                        : use->operand(1)->shape();
         const int64_t first_index =
             Cast<HloDynamicIndexInstruction>(use)->first_index_operand_number();
-        for (int64_t operand = first_index; operand < use->operand_count();
-             ++operand) {
-          if (use->operand(operand) == &param) {
-            index_bound = std::min(
-                index_bound,
-                ShapeUtil::GetDimension(indexed_shape, operand - first_index) -
-                    ShapeUtil::GetDimension(slice_shape,
-                                            operand - first_index));
+        const int64_t sliced_dim = hlo_use.operand_number - first_index;
+        if (hlo_use.operand_number >= first_index) {
+          index_bound =
+              std::min(index_bound,
+                       ShapeUtil::GetDimension(indexed_shape, sliced_dim) -
+                           ShapeUtil::GetDimension(slice_shape, sliced_dim));
+          const int64_t physical_sliced_dim = PositionInContainer(
+              use->shape().layout().minor_to_major(), sliced_dim);
+          switch (physical_sliced_dim) {
+            // Lanes
+            case 0:
+              index_alignment = std::max(index_alignment.value_or(1),
+                                         static_cast<int64_t>(128));
+              break;
+            // Sublanes
+            case 1:
+              index_alignment = std::max(index_alignment.value_or(1),
+                                         static_cast<int64_t>(8));
+              break;
+            default:
+              break;
+          }
+          if (get_index_known_zeroes != nullptr) {
+            if (std::optional<uint64_t> current_known_zeroes =
+                    get_index_known_zeroes(use, sliced_dim)) {
+              if (index_known_zeroes.has_value()) {
+                // If we have multiple uses with different masks, we take the
+                // union of known zeroes.
+                index_known_zeroes =
+                    *index_known_zeroes | *current_known_zeroes;
+              } else {
+                index_known_zeroes = current_known_zeroes;
+              }
+            }
           }
         }
         break;
@@ -524,16 +267,20 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
       case HloOpcode::kReduce:
       case HloOpcode::kReduceWindow:
         needs_constant = true;
-        constant_type = GetInitValue(*use->to_apply());
+        identity_type = GetReductionIdentityElementType(*use->to_apply());
         break;
 
       case HloOpcode::kSelectAndScatter:
         needs_constant = true;
-        constant_type = GetInitValue(*use->scatter());
+        identity_type = GetReductionIdentityElementType(*use->scatter());
         break;
 
       case HloOpcode::kSort:
-        no_duplicates = true;
+        if (ShapeUtil::ElementIsIntegral(use->operand(0)->shape())) {
+          // Turn on no_duplicates for integer keys. It's basically shuffled
+          // iota from [0, N) for unsigned, or [-N/2, N/2) for signed.
+          no_duplicates = true;
+        }
         break;
 
       default:
@@ -541,6 +288,9 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
             "Constrained operand generation not implemented for %s.",
             use->ToString());
     }
+  }
+  if (!generate_aligned_ds_indices) {
+    index_alignment = std::nullopt;
   }
   int constraint_count = 0;
   constraint_count += no_duplicates ? 1 : 0;
@@ -550,30 +300,36 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
     return Unimplemented("Conflicting operand generation constraints.");
   }
   if (index_bound != INT64_MAX) {
-    return MakeFakeLiteralInternal(param_shape, engine,
-                                   std::pair<int64_t, int64_t>(0, index_bound),
-                                   needs_sorted_indices, no_duplicates,
-                                   use_large_range, max_bits_of_precision);
+    return MakeFakeLiteral(
+        param_shape, engine, std::pair<int64_t, int64_t>(0, index_bound),
+        needs_sorted_indices, no_duplicates, use_large_range,
+        max_bits_of_precision, index_alignment, index_known_zeroes,
+        /*float_generator=*/nullptr);
   } else if (needs_constant) {
-    switch (constant_type) {
-      case ConstantType::kZero:
+    switch (identity_type) {
+      case IdentityElementType::kZero:
         return LiteralUtil::Zero(param_shape.element_type());
-      case ConstantType::kOne:
+      case IdentityElementType::kOne:
         return LiteralUtil::One(param_shape.element_type());
-      case ConstantType::kUnknown:
+      case IdentityElementType::kUnknown:
         // We want the identity element for the computation, but we don't
         // really know what it is - so any value we generate will be just as
         // wrong.
-        return MakeFakeLiteralInternal(
-            param_shape, engine, /*limit=*/std::nullopt,
-            /*is_sorted=*/needs_sorted_indices,
-            /*no_duplicates=*/false, use_large_range, max_bits_of_precision);
+        return MakeFakeLiteral(param_shape, engine, /*limit=*/std::nullopt,
+                               /*is_sorted=*/needs_sorted_indices,
+                               /*no_duplicates=*/false, use_large_range,
+                               max_bits_of_precision,
+                               /*index_alignment=*/std::nullopt,
+                               /*index_known_zeroes=*/std::nullopt,
+                               /*float_generator=*/nullptr);
     }
   } else {
-    return MakeFakeLiteralInternal(param_shape, engine, /*limit=*/std::nullopt,
-                                   /*is_sorted=*/needs_sorted_indices,
-                                   no_duplicates, use_large_range,
-                                   max_bits_of_precision);
+    return MakeFakeLiteral(param_shape, engine, /*limit=*/std::nullopt,
+                           /*is_sorted=*/needs_sorted_indices, no_duplicates,
+                           use_large_range, max_bits_of_precision,
+                           /*index_alignment=*/std::nullopt,
+                           /*index_known_zeroes=*/std::nullopt,
+                           /*float_generator=*/nullptr);
   }
 }
 
@@ -583,39 +339,51 @@ absl::StatusOr<Literal> MakeConstrainedArgument(
     const HloDataflowAnalysis& dataflow, const HloInstruction& param,
     const Shape& param_shape, std::minstd_rand0* engine, bool use_large_range,
     bool treat_gte_as_data_formatting,
-    std::optional<int64_t> max_bits_of_precision) {
+    std::optional<int64_t> max_bits_of_precision,
+    bool generate_aligned_ds_indices,
+    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr) {
   const auto constrained_uses =
       FindConstrainedUses(dataflow, param, treat_gte_as_data_formatting);
-  return CreateLiteralForConstrainedUses(constrained_uses, param, param_shape,
-                                         engine, use_large_range,
-                                         max_bits_of_precision);
+  return CreateLiteralForConstrainedUses(
+      constrained_uses, param, param_shape, engine, use_large_range,
+      max_bits_of_precision, generate_aligned_ds_indices,
+      get_index_known_zeroes);
 }
 
 }  // namespace
 
-absl::StatusOr<Literal> MakeFakeLiteral(const Shape& shape, bool pseudo_random,
-                                        bool use_large_range) {
-  auto engine = pseudo_random ? std::make_unique<std::minstd_rand0>() : nullptr;
-  return MakeFakeLiteralInternal(shape, engine.get(), /*limit=*/std::nullopt,
-                                 /*is_sorted=*/false,
-                                 /*no_duplicates=*/false, use_large_range,
-                                 /*max_bits_of_precision=*/std::nullopt);
-}
-
 absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
     const HloModule* module, bool pseudo_random, bool use_large_range,
     bool treat_gte_as_data_formatting,
-    std::optional<int64_t> max_bits_of_precision) {
-  auto engine = pseudo_random ? std::make_unique<std::minstd_rand0>() : nullptr;
-  return MakeFakeArguments(module, engine.get(), use_large_range,
-                           treat_gte_as_data_formatting, max_bits_of_precision);
+    std::optional<int64_t> max_bits_of_precision, std::minstd_rand0* engine,
+    bool generate_aligned_ds_indices,
+    GetIndexKnownZeroesFn get_index_known_zeroes) {
+  if (!pseudo_random) {
+    return MakeFakeArguments(module, nullptr, use_large_range,
+                             treat_gte_as_data_formatting,
+                             max_bits_of_precision, generate_aligned_ds_indices,
+                             get_index_known_zeroes);
+  }
+  if (engine == nullptr) {
+    auto new_engine =
+        pseudo_random ? std::make_unique<std::minstd_rand0>() : nullptr;
+    return MakeFakeArguments(module, new_engine.get(), use_large_range,
+                             treat_gte_as_data_formatting,
+                             max_bits_of_precision, generate_aligned_ds_indices,
+                             get_index_known_zeroes);
+  }
+  return MakeFakeArguments(module, engine, use_large_range,
+                           treat_gte_as_data_formatting, max_bits_of_precision,
+                           generate_aligned_ds_indices, get_index_known_zeroes);
 }
 
 absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
     const HloModule* module, std::minstd_rand0* engine, bool use_large_range,
     bool treat_gte_as_data_formatting,
-    std::optional<int64_t> max_bits_of_precision) {
-  TF_ASSIGN_OR_RETURN(auto dataflow, HloDataflowAnalysis::Run(*module));
+    std::optional<int64_t> max_bits_of_precision,
+    bool generate_aligned_ds_indices,
+    GetIndexKnownZeroesFn get_index_known_zeroes) {
+  ABSL_ASSIGN_OR_RETURN(auto dataflow, HloDataflowAnalysis::Run(*module));
   const auto params = module->entry_computation()->parameter_instructions();
   std::vector<Literal> arguments(params.size());
   for (int i = 0; i < params.size(); ++i) {
@@ -630,11 +398,98 @@ absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
                                          .shape()
                                    : params[i]->shape();
 
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         arguments[i],
-        MakeConstrainedArgument(*dataflow, *params[i], param_shape, engine,
-                                use_large_range, treat_gte_as_data_formatting,
-                                max_bits_of_precision));
+        MakeConstrainedArgument(
+            *dataflow, *params[i], param_shape, engine, use_large_range,
+            treat_gte_as_data_formatting, max_bits_of_precision,
+            generate_aligned_ds_indices, get_index_known_zeroes));
+  }
+  return std::move(arguments);
+}
+
+absl::StatusOr<std::vector<Literal>> MakeDataflowConstrainedArguments(
+    const HloModule* module, std::minstd_rand0* engine, bool use_large_range,
+    std::optional<int64_t> max_bits_of_precision,
+    bool generate_aligned_ds_indices,
+    GetIndexKnownZeroesFn get_index_known_zeroes) {
+  std::unique_ptr<std::minstd_rand0> default_engine;
+  if (engine == nullptr) {
+    default_engine = std::make_unique<std::minstd_rand0>();
+    engine = default_engine.get();
+  }
+
+  ABSL_ASSIGN_OR_RETURN(auto constraint_states,
+                   ConstraintPropagator::Run(*module, get_index_known_zeroes));
+
+  const auto params = module->entry_computation()->parameter_instructions();
+  std::vector<Literal> arguments(params.size());
+  for (int i = 0; i < params.size(); ++i) {
+    const HloModuleConfig& module_config = module->config();
+    const Shape& param_shape = (module_config.has_entry_computation_layout() &&
+                                module_config.entry_computation_layout()
+                                    .parameter_layout(i)
+                                    .shape()
+                                    .is_static())
+                                   ? module_config.entry_computation_layout()
+                                         .parameter_layout(i)
+                                         .shape()
+                                   : params[i]->shape();
+
+    const ConstraintState& state = constraint_states[params[i]];
+    ConstraintInterval interval = state.GetConstraintInterval();
+    StructuralConstraints structure = state.GetStructuralConstraints();
+
+    if (!generate_aligned_ds_indices) {
+      structure.alignment = std::nullopt;
+    }
+
+    std::optional<std::pair<int64_t, int64_t>> limit = std::nullopt;
+    if (ShapeUtil::ElementIsIntegral(param_shape) &&
+        !interval.IsUnconstrained() && !interval.IsEmpty()) {
+      // Use exact hexadecimal floating-point literals 0x1.0p63 (2^63) and
+      // -0x1.0p63 (-2^63) for boundary comparisons. INT64_MAX (2^63 - 1)
+      // cannot be exactly represented in a 53-bit mantissa double and rounds
+      // up to 2^63 when cast. Because powers of 2 are exact in IEEE 754,
+      // comparing against 0x1.0p63 guarantees that any double strictly less
+      // than 0x1.0p63 is at most 2^63 - 2048 < INT64_MAX, safely fitting in
+      // int64_t without overflow UB.
+      constexpr double kMaxInt64AsDouble = 0x1.0p63;   // 2^63
+      constexpr double kMinInt64AsDouble = -0x1.0p63;  // -2^63
+
+      int64_t min_val = interval.min <= kMinInt64AsDouble
+                            ? std::numeric_limits<int64_t>::min()
+                            : static_cast<int64_t>(std::ceil(interval.min));
+      int64_t max_val = interval.max >= kMaxInt64AsDouble
+                            ? std::numeric_limits<int64_t>::max()
+                            : static_cast<int64_t>(std::floor(interval.max));
+
+      if (interval.exclude_zero && min_val == 0) {
+        min_val = 1;
+      }
+      if (interval.exclude_zero && max_val == 0) {
+        max_val = -1;
+      }
+
+      if (min_val > max_val) {
+        return InvalidArgument(
+            "Unsatisfiable integer constraint interval [%f, %f]%s for "
+            "parameter %s: collapsed to empty discrete range [%d, %d].",
+            interval.min, interval.max,
+            interval.exclude_zero ? " (excl 0)" : "", params[i]->name(),
+            min_val, max_val);
+      }
+
+      limit = {min_val, max_val};
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        arguments[i],
+        MakeFakeLiteral(param_shape, engine, limit,
+                        structure.needs_sorted_indices, structure.no_duplicates,
+                        use_large_range, max_bits_of_precision,
+                        structure.alignment, structure.known_zeroes_mask,
+                        /*float_generator=*/nullptr, interval));
   }
   return std::move(arguments);
 }
@@ -650,19 +505,17 @@ absl::Status VerifyHloModule(HloModule* const module, bool layout_sensitive,
 std::unique_ptr<HloDotInstruction> CreateCanonicalDot(const Shape& shape,
                                                       HloInstruction* lhs,
                                                       HloInstruction* rhs) {
-  CHECK_LE(lhs->shape().rank(), 2);
-  CHECK_LE(rhs->shape().rank(), 2);
+  CHECK_LE(lhs->shape().dimensions().size(), 2);
+  CHECK_LE(rhs->shape().dimensions().size(), 2);
   PrecisionConfig precision_config;
   precision_config.mutable_operand_precision()->Resize(
       2, PrecisionConfig::DEFAULT);
   DotDimensionNumbers dot_dimension_numbers;
   dot_dimension_numbers.add_lhs_contracting_dimensions(
-      lhs->shape().rank() > 1 ? 1 : 0);
+      lhs->shape().dimensions().size() > 1 ? 1 : 0);
   dot_dimension_numbers.add_rhs_contracting_dimensions(0);
   return std::make_unique<HloDotInstruction>(
       shape, lhs, rhs, dot_dimension_numbers, precision_config);
 }
-
-bool IsMlirLoweringEnabled() { return false; }
 
 }  // namespace xla

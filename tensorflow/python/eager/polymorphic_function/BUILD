@@ -1,5 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
-load("//tensorflow:strict.default.bzl", "py_strict_library")
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
 load("//tensorflow/compiler/tests:build_defs.bzl", "tf_xla_py_strict_test")
 
@@ -8,10 +23,10 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "attributes",
     srcs = ["attributes.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow/python:__subpackages__"],
     deps = [
         "//tensorflow/core:protos_all_py",
@@ -19,10 +34,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "autograph_util",
     srcs = ["autograph_util.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/impl:api",
@@ -30,10 +45,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "transform",
     srcs = ["transform.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow/python:__subpackages__"],
     deps = [],
 )
@@ -41,7 +56,6 @@ py_strict_library(
 pytype_strict_library(
     name = "atomic_function",
     srcs = ["atomic_function.py"],
-    srcs_version = "PY3",
     visibility = ["//tensorflow/python:__subpackages__"],
     deps = [
         ":attributes",
@@ -70,7 +84,6 @@ cuda_py_strict_test(
     name = "atomic_function_test",
     size = "medium",
     srcs = ["atomic_function_test.py"],
-    python_version = "PY3",
     deps = [
         ":atomic_function",
         ":polymorphic_function",
@@ -82,10 +95,10 @@ cuda_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "concrete_function",
     srcs = ["concrete_function.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow/python:__subpackages__"],
     deps = [
         ":atomic_function",
@@ -128,7 +141,6 @@ cuda_py_strict_test(
     name = "concrete_function_test",
     size = "small",
     srcs = ["concrete_function_test.py"],
-    python_version = "PY3",
     deps = [
         ":atomic_function",
         ":concrete_function",
@@ -145,10 +157,10 @@ cuda_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "tracing_compilation",
     srcs = ["tracing_compilation.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow/python:__subpackages__"],
     deps = [
         ":attributes",
@@ -171,10 +183,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "tf_method_target",
     srcs = ["tf_method_target.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = [
         "//tensorflow/python/autograph/impl:__pkg__",
         "//tensorflow/python/eager:__pkg__",
@@ -184,10 +196,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "polymorphic_function",
     srcs = ["polymorphic_function.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow:internal"],
     deps = [
         ":attributes",
@@ -233,12 +245,10 @@ cuda_py_strict_test(
     name = "polymorphic_function_test",
     size = "medium",
     srcs = ["polymorphic_function_test.py"],
-    python_version = "PY3",
     shard_count = 15,
     tags = [
         "nomac",  # b/157056289
     ],
-    # TODO(b/169371527): insert transfer op in eager lowering for TFRT.
     deps = [
         ":attributes",
         ":polymorphic_function",
@@ -309,7 +319,6 @@ cuda_py_strict_test(
 tf_py_strict_test(
     name = "polymorphic_function_test_cpu_only",
     srcs = ["polymorphic_function_test_cpu_only.py"],
-    python_version = "PY3",
     # --config=cuda implicitly links in XLA.
     tags = [
         "no_cuda_on_cpu_tap",
@@ -330,20 +339,13 @@ tf_py_strict_test(
 tf_xla_py_strict_test(
     name = "polymorphic_function_xla_jit_test",
     srcs = ["polymorphic_function_xla_jit_test.py"],
-    # copybara:uncomment_begin
-    # #TODO(b/185944215) # Remove once the bug is fixed.
-    # disable_tpu_tfrt = True,
-    # copybara:uncomment_end
-    disabled_backends = [
-        "cpu_ondemand",
+    enabled_backends = [
+        "cpu",
     ],
-    enable_mlir_bridge = True,
-    python_version = "PY3",
     tags = [
         "no_mac",
         "no_oss",  # TODO(b/295654746)
         "no_pip",
-        "no_tfrt",  # TODO(b/185944215)
         "no_windows",
     ],
     use_xla_device = False,
@@ -379,12 +381,6 @@ tf_xla_py_strict_test(
 tf_xla_py_strict_test(
     name = "polymorphic_function_xla_test",
     srcs = ["polymorphic_function_xla_test.py"],
-    # copybara:uncomment_begin
-    # #TODO(b/185944215) # Remove once the bug is fixed.
-    # disable_tpu_tfrt = True,
-    # copybara:uncomment_end
-    enable_mlir_bridge = False,
-    python_version = "PY3",
     tags = [
         "no_pip",
         "no_windows",
@@ -404,7 +400,6 @@ cuda_py_strict_test(
     name = "gradients_test",
     size = "medium",
     srcs = ["gradients_test.py"],
-    python_version = "PY3",
     shard_count = 5,
     deps = [
         ":polymorphic_function",
@@ -432,10 +427,10 @@ cuda_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "composite_tensor_utils",
     srcs = ["composite_tensor_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow:internal"],
     deps = [
         "//tensorflow/python/framework:composite_tensor",
@@ -448,7 +443,6 @@ tf_py_strict_test(
     name = "tracing_compilation_test",
     size = "medium",
     srcs = ["tracing_compilation_test.py"],
-    python_version = "PY3",
     deps = [
         ":function_type_utils",
         ":tracing_compilation",
@@ -492,8 +486,6 @@ cuda_py_strict_test(
     name = "argument_naming_test",
     size = "medium",
     srcs = ["argument_naming_test.py"],
-    python_version = "PY3",
-    # TODO(b/169371527): insert transfer op in eager lowering for TFRT.
     deps = [
         ":polymorphic_function",
         "//tensorflow/core:protos_all_py",
@@ -513,7 +505,6 @@ cuda_py_strict_test(
     name = "collection_test",
     size = "medium",
     srcs = ["collection_test.py"],
-    python_version = "PY3",
     deps = [
         ":polymorphic_function",
         "//tensorflow/core:protos_all_py",
@@ -526,9 +517,10 @@ cuda_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "eager_function_run",
     srcs = ["eager_function_run.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:internal"],
     deps = [
         "//tensorflow/python/util:deprecation",
@@ -536,10 +528,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "function_context",
     srcs = ["function_context.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:private"],
     deps = [
         "//tensorflow/core/function/polymorphism:function_cache",
@@ -552,10 +544,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "saved_model_utils",
     srcs = ["saved_model_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow:internal"],
     deps = [
         "//tensorflow/python/framework:constant_op",
@@ -568,10 +560,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "saved_model_exported_concrete",
     srcs = ["saved_model_exported_concrete.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow:internal"],
     deps = [
         ":function_type_utils",
@@ -579,10 +571,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "function_type_utils",
     srcs = ["function_type_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//tensorflow:internal"],
     deps = [
         ":composite_tensor_utils",
@@ -602,7 +594,6 @@ tf_py_strict_test(
     name = "function_spec_test",
     size = "medium",
     srcs = ["function_spec_test.py"],
-    python_version = "PY3",
     deps = [
         ":function_type_utils",
         "//tensorflow/core/function/polymorphism:function_type",
@@ -614,10 +605,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "compiler_ir",
     srcs = ["compiler_ir.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:private"],
     deps = [
         "//tensorflow/core/function/trace_type",
@@ -637,12 +628,9 @@ tf_xla_py_strict_test(
         "gpu_a100",
         "gpu_h100",
     ],
-    enable_mlir_bridge = True,
-    python_version = "PY3",
     tags = [
         "no_mac",
         "no_pip",
-        "no_tfrt",  # TODO(b/185944215)
         "no_windows",
     ],
     use_xla_device = False,

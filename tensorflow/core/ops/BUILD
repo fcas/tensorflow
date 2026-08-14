@@ -1,8 +1,23 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 # Tensorflow default op definitions.
 
 load(
-    "@local_xla//xla/tsl/mkl:build_defs.bzl",
+    "@xla//xla/tsl/mkl:build_defs.bzl",
     "if_mkl",
 )
 load(
@@ -98,6 +113,7 @@ tf_gen_op_libs(
     deps = [
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -207,6 +223,7 @@ tf_gen_op_libs(
         "//tensorflow/core/protobuf/tpu:tpu_embedding_configuration_proto_cc",
         "//tensorflow/core/tpu:tpu_embedding_optimization_parameters_utils",
         "//tensorflow/core/tpu:tpu_embedding_output_layout_utils",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -417,16 +434,37 @@ cc_library(
 
 filegroup(
     name = "portable_op_registrations_and_gradients",
+    srcs = [
+        ":mobile_hdrs",
+        ":mobile_srcs",
+    ],
+)
+
+filegroup(
+    name = "mobile_srcs",
     srcs = ["//tensorflow/c/kernels:portable_all_ops"] + glob(
         [
             "**/*.cc",
-            "**/*.h",
         ],
         exclude = [
             "**/*test.cc",
             "**/*testutil*",
             "**/*testlib*",
             "**/*main.cc",
+            "**/tpu_*",
+        ],
+    ),
+)
+
+filegroup(
+    name = "mobile_hdrs",
+    srcs = glob(
+        [
+            "**/*.h",
+        ],
+        exclude = [
+            "**/*testutil*",
+            "**/*testlib*",
             "**/tpu_*",
         ],
     ),
@@ -549,5 +587,6 @@ tf_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/common_runtime:type_inference",
+        "@com_google_googletest//:gtest",
     ],
 )

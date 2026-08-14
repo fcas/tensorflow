@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load(
     "//tensorflow:tensorflow.bzl",
     "if_cuda_or_rocm",
@@ -34,7 +49,7 @@ cc_library(
     deps = [
         "//tensorflow/core:lib",
         "//tensorflow/core/platform:types",
-        "@local_tsl//tsl/framework:device_id",
+        "@xla//xla/tsl/framework:device_id",
     ] + if_static([
         ":device_id_impl",
     ]),
@@ -50,7 +65,7 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
-        "@local_tsl//tsl/framework:device_id_impl",
+        "@xla//xla/tsl/framework:device_id_impl",
     ],
 )
 
@@ -60,7 +75,6 @@ tf_cuda_library(
         "device_id.h",
     ],
     hdrs = [
-        "device_host_allocator.h",
         "device_mem_allocator.h",
     ],
     visibility = ["//visibility:public"],
@@ -70,8 +84,8 @@ tf_cuda_library(
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/framework:allocator",
         "//tensorflow/core/platform:stream_executor",
-        "@local_tsl//tsl/framework:device_id",
-        "@local_xla//xla/stream_executor/integrations:device_mem_allocator",
+        "@xla//xla/stream_executor/integrations:device_mem_allocator",
+        "@xla//xla/tsl/framework:device_id",
     ],
 )
 
@@ -79,11 +93,10 @@ filegroup(
     name = "device_runtime_headers",
     srcs = [
         "device_event_mgr.h",
-        "device_host_allocator.h",
         "device_id.h",
         "device_id_manager.h",
         "device_mem_allocator.h",
-        "@local_tsl//tsl/framework:device_runtime_headers",
+        "@xla//xla/tsl/framework:device_runtime_headers",
     ],
 )
 
@@ -104,6 +117,7 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/platform:stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -112,6 +126,7 @@ cc_library(
     textual_hdrs = [
         "device_event_mgr.h",
     ],
+    deps = ["@com_google_absl//absl/synchronization"],
 )
 
 cc_library(
@@ -170,9 +185,10 @@ tf_cuda_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/kernels:cwise_op",
-        "@local_tsl//tsl/framework:device_id",
+        "@com_google_absl//absl/synchronization",
+        "@xla//xla/tsl/framework:device_id",
     ] + if_cuda_or_rocm([
-        "@local_xla//xla/stream_executor/gpu:gpu_init",
+        "@xla//xla/stream_executor/gpu:gpu_init",
         "//tensorflow/core/common_runtime:dma_helper",
         "//tensorflow/core/common_runtime/gpu:gpu_runtime",
         "//tensorflow/core/platform:stream_executor",

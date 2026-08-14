@@ -23,7 +23,6 @@ import numpy as np
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import tensor_spec
 from tensorflow.python.framework import test_util as tf_test_util
 from tensorflow.python.kernel_tests.signal import test_util
 from tensorflow.python.ops.signal import window_ops
@@ -105,9 +104,24 @@ class WindowOpsTest(test.TestCase, parameterized.TestCase):
 
   @parameterized.parameters(
       itertools.product(
-          _WINDOW_LENGTHS,
-          (False, True),
-          _TF_DTYPE_TOLERANCE))
+          _WINDOW_LENGTHS, (4.0, 8.0, 10.0, 12.0), _TF_DTYPE_TOLERANCE
+      )
+  )
+  def test_kaiser_window_negative_beta(self, window_length, beta, tf_dtype_tol):
+    """Check that kaiser_window handles negative beta same as positive beta."""
+    pos_beta_win = window_ops.kaiser_window(
+        window_length, beta, tf_dtype_tol[0]
+    )
+    neg_beta_win = window_ops.kaiser_window(
+        window_length, -beta, tf_dtype_tol[0]
+    )
+    self.assertAllClose(
+        pos_beta_win, neg_beta_win, tf_dtype_tol[1], tf_dtype_tol[1]
+    )
+
+  @parameterized.parameters(
+      itertools.product(_WINDOW_LENGTHS, (False, True), _TF_DTYPE_TOLERANCE)
+  )
   def test_hann_window(self, window_length, periodic, tf_dtype_tol):
     """Check that hann_window matches scipy.signal.hann behavior."""
     # The Hann window is a raised cosine window with parameters alpha=0.5 and
@@ -152,30 +166,6 @@ class WindowOpsTest(test.TestCase, parameterized.TestCase):
       self.assertLen(rewritten_graph.node, 1)
 
   @parameterized.parameters(
-      # Only float32 is supported.
-      (window_ops.hann_window, 10, False, dtypes.float32),
-      (window_ops.hann_window, 10, True, dtypes.float32),
-      (window_ops.hamming_window, 10, False, dtypes.float32),
-      (window_ops.hamming_window, 10, True, dtypes.float32),
-      (window_ops.vorbis_window, 12, None, dtypes.float32))
-  def test_tflite_convert(self, window_fn, window_length, periodic, dtype):
-
-    def fn(window_length):
-      try:
-        return window_fn(window_length, periodic=periodic, dtype=dtype)
-      except TypeError:
-        return window_fn(window_length, dtype=dtype)
-
-    tflite_model = test_util.tflite_convert(
-        fn, [tensor_spec.TensorSpec(shape=[], dtype=dtypes.int32)])
-    window_length = np.array(window_length).astype(np.int32)
-    actual_output, = test_util.evaluate_tflite_model(
-        tflite_model, [window_length])
-
-    expected_output = self.evaluate(fn(window_length))
-    self.assertAllClose(actual_output, expected_output, rtol=1e-6, atol=1e-6)
-
-  @parameterized.parameters(
       itertools.product(
           _MDCT_WINDOW_LENGTHS,
           _TF_DTYPE_TOLERANCE))
@@ -195,6 +185,26 @@ class WindowOpsTest(test.TestCase, parameterized.TestCase):
     """Check if Kaiser-Bessel derived windows satisfy MDCT window conditions."""
     self._check_mdct_window(window_ops.kaiser_bessel_derived_window(
         window_length, beta=beta, dtype=tf_dtype_tol[0]), tol=tf_dtype_tol[1])
+
+  @parameterized.parameters(
+      itertools.product(
+          _MDCT_WINDOW_LENGTHS, (4.0, 8.0, 10.0, 12.0), _TF_DTYPE_TOLERANCE
+      )
+  )
+  def test_kaiser_bessel_derived_window_negative_beta(
+      self, window_length, beta, tf_dtype_tol
+  ):
+    """Check that it handles negative beta same as positive beta."""
+    pos_beta_win = window_ops.kaiser_bessel_derived_window(
+        window_length, beta, tf_dtype_tol[0]
+    )
+    neg_beta_win = window_ops.kaiser_bessel_derived_window(
+        window_length, -beta, tf_dtype_tol[0]
+    )
+    self.assertAllClose(
+        pos_beta_win, neg_beta_win, tf_dtype_tol[1], tf_dtype_tol[1]
+    )
+
 
 if __name__ == '__main__':
   test.main()

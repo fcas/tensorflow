@@ -35,6 +35,7 @@ limitations under the License.
 #include "riegeli/base/maker.h"  // from @riegeli
 #include "riegeli/base/types.h"  // from @riegeli
 #include "riegeli/bytes/fd_reader.h"  // from @riegeli
+#include "riegeli/bytes/string_reader.h"  // from @riegeli
 #include "riegeli/records/record_reader.h"  // from @riegeli
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/file_system_helper.h"
@@ -288,8 +289,7 @@ absl::StatusOr<const std::vector<Field>> GetFieldTypes(
 absl::Status SetRepeatedFieldElement(
     tsl::protobuf::Message* message,
     const tsl::protobuf::FieldDescriptor* field_desc, uint64_t field_index,
-    const std::string& chunk,
-    std::function<absl::Status(void)> message_callback) {
+    std::string chunk, std::function<absl::Status(void)> message_callback) {
   if (field_desc->is_map())
     return absl::FailedPreconditionError("Field is a map.");
   const tsl::protobuf::Reflection* reflection = message->GetReflection();
@@ -333,7 +333,8 @@ absl::Status SetRepeatedFieldElement(
           field_desc->enum_type()->FindValueByName(chunk));
       break;
     case tsl::protobuf::FieldDescriptor::CPPTYPE_STRING:
-      reflection->SetRepeatedString(message, field_desc, field_index, chunk);
+      reflection->SetRepeatedString(message, field_desc, field_index,
+                                    std::move(chunk));
       break;
     case tsl::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
       return message_callback();
@@ -348,7 +349,7 @@ absl::Status SetRepeatedFieldElement(
 
 absl::Status SetFieldElement(
     tsl::protobuf::Message* message,
-    const tsl::protobuf::FieldDescriptor* field_desc, const std::string& chunk,
+    const tsl::protobuf::FieldDescriptor* field_desc, std::string chunk,
     std::function<absl::Status(void)> message_callback) {
   const tsl::protobuf::Reflection* reflection = message->GetReflection();
 
@@ -381,7 +382,7 @@ absl::Status SetFieldElement(
                           field_desc->enum_type()->FindValueByName(chunk));
       break;
     case tsl::protobuf::FieldDescriptor::CPPTYPE_STRING:
-      reflection->SetString(message, field_desc, chunk);
+      reflection->SetString(message, field_desc, std::move(chunk));
       break;
     case tsl::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
       return message_callback();
@@ -741,6 +742,16 @@ std::string HumanReadableDuration(int64_t microseconds) {
 absl::StatusOr<riegeli::RecordReader<riegeli::FdReader<>>> GetRiegeliReader(
     absl::string_view cpb_file) {
   riegeli::RecordReader reader(riegeli::Maker<riegeli::FdReader>(cpb_file));
+  if (!reader.ok()) {
+    return reader.status();
+  }
+  return reader;
+}
+
+absl::StatusOr<riegeli::RecordReader<riegeli::StringReader<>>>
+GetRiegeliStringReader(absl::string_view cpb_data) {
+  riegeli::RecordReader reader(
+      riegeli::Maker<riegeli::StringReader<>>(cpb_data));
   if (!reader.ok()) {
     return reader.status();
   }

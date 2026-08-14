@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -28,15 +29,16 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "fp16.h"  // from @FP16
 #include "flatbuffers/buffer.h"  // from @flatbuffers
 #include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
 #include "flatbuffers/string.h"  // from @flatbuffers
+#include "tensorflow/compiler/mlir/lite/schema/schema_conversion_utils.h"
 #include "tensorflow/lite/c/c_api_types.h"
 #include "tensorflow/lite/core/interpreter_builder.h"
 #include "tensorflow/lite/core/kernels/register.h"
 #include "tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h"
 #include "tensorflow/lite/interpreter.h"
-#include "tensorflow/lite/schema/schema_conversion_utils.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
@@ -98,10 +100,8 @@ void DynamicallyQuantizedFullyConnectedTester::Test(
   }
 }
 
-void DynamicallyQuantizedFullyConnectedTester::Test(
-    TfLiteDelegate* delegate) const {
-  std::vector<char> buffer = CreateTfLiteModel();
-  const Model* model = GetModel(buffer.data());
+void DynamicallyQuantizedFullyConnectedTester::Test(TfLiteDelegate* delegate) {
+  const Model* model = GetModel();
 
   std::unique_ptr<Interpreter> delegate_interpreter;
   ASSERT_EQ(
@@ -110,6 +110,43 @@ void DynamicallyQuantizedFullyConnectedTester::Test(
           ::tflite::ops::builtin::BuiltinOpResolverWithoutDefaultDelegates())(
           &delegate_interpreter),
       kTfLiteOk);
+  ASSERT_TRUE(delegate_interpreter);
+  ASSERT_EQ(delegate_interpreter->inputs().size(), 1);
+  ASSERT_EQ(delegate_interpreter->outputs().size(), 1);
+
+  if (Float16()) {
+    ASSERT_EQ(delegate_interpreter->ModifyGraphWithDelegate(delegate),
+              kTfLiteOk);
+    ASSERT_EQ(delegate_interpreter->AllocateTensors(), kTfLiteOk);
+
+    if (weights_cache_ != nullptr) {
+      TfLiteXNNPackDelegateWeightsCacheFinalizeSoft(weights_cache_);
+    }
+
+    auto rng = std::mt19937(0);
+    auto input_rng = std::bind(
+        std::uniform_real_distribution<float>(-1.0f, 1.0f), std::ref(rng));
+
+    TfLiteFloat16* delegate_input_data =
+        delegate_interpreter->typed_input_tensor<TfLiteFloat16>(0);
+    for (size_t i = 0; i < InputSize(); ++i) {
+      delegate_input_data[i] =
+          TfLiteFloat16{fp16_ieee_from_fp32_value(input_rng())};
+    }
+
+    ASSERT_EQ(delegate_interpreter->Invoke(), kTfLiteOk);
+
+    TfLiteFloat16* delegate_output_data =
+        delegate_interpreter->typed_output_tensor<TfLiteFloat16>(0);
+    const int num_output_values = ComputeSize(OutputShape());
+    for (size_t i = 0; i < num_output_values; ++i) {
+      float out_val = fp16_ieee_to_fp32_value(delegate_output_data[i].data);
+      EXPECT_FALSE(std::isnan(out_val));
+      EXPECT_FALSE(std::isinf(out_val));
+    }
+    return;
+  }
+
   std::unique_ptr<Interpreter> default_interpreter;
   ASSERT_EQ(
       InterpreterBuilder(
@@ -118,13 +155,8 @@ void DynamicallyQuantizedFullyConnectedTester::Test(
           &default_interpreter),
       kTfLiteOk);
 
-  ASSERT_TRUE(delegate_interpreter);
   ASSERT_TRUE(default_interpreter);
-
-  ASSERT_EQ(delegate_interpreter->inputs().size(), 1);
   ASSERT_EQ(default_interpreter->inputs().size(), 1);
-
-  ASSERT_EQ(delegate_interpreter->outputs().size(), 1);
   ASSERT_EQ(default_interpreter->outputs().size(), 1);
 
   ASSERT_EQ(delegate_interpreter->AllocateTensors(), kTfLiteOk);
@@ -133,7 +165,7 @@ void DynamicallyQuantizedFullyConnectedTester::Test(
   ASSERT_EQ(delegate_interpreter->ModifyGraphWithDelegate(delegate), kTfLiteOk);
 
   if (weights_cache_ != nullptr) {
-    TfLiteXNNPackDelegateWeightsCacheFinalizeHard(weights_cache_);
+    TfLiteXNNPackDelegateWeightsCacheFinalizeSoft(weights_cache_);
   }
 
   Test(delegate_interpreter.get(), default_interpreter.get());
@@ -197,7 +229,7 @@ std::vector<char> DynamicallyQuantizedFullyConnectedTester::CreateTfLiteModel()
   tensors.emplace_back(CreateTensor(
       builder,
       builder.CreateVector<int32_t>(InputShape().data(), InputShape().size()),
-      TensorType_FLOAT32, /*buffer=*/0));
+      Float16() ? TensorType_FLOAT16 : TensorType_FLOAT32, /*buffer=*/0));
   tflite::TensorType filter_tensor_type;
   std::vector<float> filter_scale;
   std::vector<int64_t> filter_zero_point;
@@ -236,7 +268,7 @@ std::vector<char> DynamicallyQuantizedFullyConnectedTester::CreateTfLiteModel()
   tensors.emplace_back(CreateTensor(
       builder,
       builder.CreateVector<int32_t>(output_shape.data(), output_shape.size()),
-      TensorType_FLOAT32));
+      Float16() ? TensorType_FLOAT16 : TensorType_FLOAT32));
 
   /***************************** Define operators *****************************/
   flatbuffers::Offset<FullyConnectedOptions> fully_connected_options =

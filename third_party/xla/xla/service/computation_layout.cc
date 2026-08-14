@@ -20,6 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "xla/layout.h"
 #include "xla/printer.h"
@@ -63,12 +64,12 @@ absl::StatusOr<std::vector<Layout>>
 ComputationLayout::FlattenedParameterLayouts() const {
   std::vector<Layout> result;
   for (int i = 0; i < parameter_count(); ++i) {
-    TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+    ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
         parameter_shape(i),
         [this, &result](const Shape& subshape,
                         const ShapeIndex& index) -> absl::Status {
           if (subshape.IsTuple()) {
-            return OkStatus();
+            return absl::OkStatus();
           }
           if (!subshape.IsArray()) {
             return Unimplemented(
@@ -83,7 +84,7 @@ ComputationLayout::FlattenedParameterLayouts() const {
                 ToString());
           }
           result.push_back(subshape.layout());
-          return OkStatus();
+          return absl::OkStatus();
         }));
   }
   return result;
@@ -92,12 +93,12 @@ ComputationLayout::FlattenedParameterLayouts() const {
 absl::StatusOr<std::vector<Layout>> ComputationLayout::FlattenedResultLayouts()
     const {
   std::vector<Layout> result;
-  TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       result_shape(),
       [this, &result](const Shape& subshape,
                       const ShapeIndex& index) -> absl::Status {
         if (subshape.IsTuple()) {
-          return OkStatus();
+          return absl::OkStatus();
         }
         if (!subshape.IsArray()) {
           return Unimplemented(
@@ -112,7 +113,7 @@ absl::StatusOr<std::vector<Layout>> ComputationLayout::FlattenedResultLayouts()
               ToString());
         }
         result.push_back(subshape.layout());
-        return OkStatus();
+        return absl::OkStatus();
       }));
   return result;
 }
@@ -143,8 +144,8 @@ std::string ComputationLayout::ToString() const {
 ProgramShape ComputationLayout::ComputeProgramShape() const {
   ProgramShape program_shape;
   for (int64_t i = 0; i < parameter_layouts_.size(); ++i) {
-    *program_shape.add_parameters() = parameter_layouts_[i].shape();
-    *program_shape.add_parameter_names() = absl::StrCat("p", i);
+    program_shape.AddParameter(parameter_layouts_[i].shape(),
+                               absl::StrCat("p", i));
   }
   *program_shape.mutable_result() = result_layout_.shape();
   return program_shape;

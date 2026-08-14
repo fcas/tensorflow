@@ -1,3 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
@@ -42,6 +59,11 @@ cc_library(
 )
 
 cc_library(
+    name = "mlrt_device_constants",
+    hdrs = ["mlrt_device_constants.h"],
+)
+
+cc_library(
     name = "util",
     srcs = ["util.cc"],
     hdrs = ["util.h"],
@@ -61,11 +83,12 @@ cc_library(
     hdrs = ["tf_to_mlrt.h"],
     deps = [
         ":execute_op_registry",
+        ":mlrt_device_constants",
         ":tpu_conversion_patterns",
         ":util",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:convert_tensor",
-        "//tensorflow/compiler/mlir/tensorflow:export_tf_dialect_op",
+        "//tensorflow/compiler/mlir/tensorflow:translate_utils",
         "//tensorflow/compiler/mlir/tensorflow/ir/host_runtime:tensorflow_tfrt_ops_inc_gen",
         "//tensorflow/compiler/mlir/tfrt:constants",
         "//tensorflow/compiler/mlir/tfrt:tfrt_pipeline_options",
@@ -77,6 +100,7 @@ cc_library(
         "//tensorflow/core/platform:status",
         "//tensorflow/core/tfrt/fallback:fallback_state",
         "//tensorflow/core/tfrt/fallback:op_kernel_runner_cache",
+        "@com_google_absl//absl/log",
         "@com_google_protobuf//:protobuf_headers",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
@@ -85,7 +109,7 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
-        "@local_tsl//tsl/platform:status",
+        "@xla//xla/tsl/platform:status",
     ],
 )
 
@@ -97,6 +121,7 @@ cc_library(
         ":assign_op_key",
         ":async_while",
         ":fuse_mlrt_ops",
+        ":ifrt_set_tpu_host_allocator",
         ":parallelization",
         ":rewrite_ifrt_load_variable",
         ":tf_to_mlrt",
@@ -127,13 +152,18 @@ cc_library(
     hdrs = ["tpu_conversion_patterns.h"],
     deps = [
         ":execute_op_registry",
+        ":mlrt_device_constants",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tfrt:tfrt_pipeline_options",
         "//tensorflow/compiler/mlir/tfrt:transform_utils",
         "//tensorflow/compiler/mlir/tfrt/ir/mlrt:mlrt_ops",
         "//tensorflow/compiler/mlir/tfrt/ir/mlrt:tf_mlrt_ops",
         "//tensorflow/compiler/mlir/tfrt/ir/mlrt:tf_mlrt_tpu_ops",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
     ],
 )
@@ -159,6 +189,7 @@ cc_library(
         ":assign_op_key",
         ":passes",
         ":while_to_map_fn",
+        "//tensorflow/compiler/mlir/tensorflow:bridge_logger",
         "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//tensorflow/compiler/mlir/tfrt:export",
@@ -167,6 +198,7 @@ cc_library(
         "//tensorflow/compiler/mlir/tfrt:tfrt_compile_options",
         "//tensorflow/compiler/mlir/tfrt:tfrt_pipeline_options",
         "//tensorflow/compiler/mlir/tfrt/translate/mlrt:mlir_to_bytecode",
+        "//tensorflow/core:framework",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:statusor",
@@ -178,12 +210,13 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
-        "@local_tsl//tsl/platform:errors",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -193,6 +226,7 @@ cc_library(
     hdrs = ["while_to_map_fn.h"],
     deps = [
         "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow/ir/host_runtime:tensorflow_tfrt_ops",
         "//tensorflow/compiler/mlir/tfrt/ir/mlrt:mlrt_ops",
         "//tensorflow/compiler/mlir/tfrt/ir/mlrt:tf_mlrt_ops",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -241,6 +275,25 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
+    ],
+)
+
+cc_library(
+    name = "ifrt_set_tpu_host_allocator",
+    srcs = ["ifrt_set_tpu_host_allocator.cc"],
+    hdrs = ["ifrt_set_tpu_host_allocator.h"],
+    deps = [
+        ":mlrt_device_constants",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow/ir/host_runtime:tensorflow_tfrt_ops",
+        "//tensorflow/compiler/mlir/tfrt/ir/mlrt:mlrt_ops",
+        "//tensorflow/compiler/mlir/tfrt/ir/mlrt:tf_mlrt_ops",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",

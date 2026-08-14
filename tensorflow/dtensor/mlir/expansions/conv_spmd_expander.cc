@@ -15,20 +15,33 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/conv_spmd_expander.h"
 
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
+#include "absl/status/status.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/ValueRange.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_attributes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
+#include "tensorflow/dtensor/mlir/dtensor_dialect/ir/dtensor_attributes.h"
+#include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
@@ -41,10 +54,10 @@ namespace dtensor {
 namespace {
 
 template <typename ConvOp>
-Status VerifyConvLayout(const Layout& input_layout, const Layout& filter_layout,
-                        ConvOp conv_op) {
+absl::Status VerifyConvLayout(const Layout& input_layout,
+                              const Layout& filter_layout, ConvOp conv_op) {
   if (!filter_layout.IsFullyReplicated())
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Filter for convolution must have fully replicated layout.");
 
   // Data format "NCHW" or "NCDHW".
@@ -55,7 +68,7 @@ Status VerifyConvLayout(const Layout& input_layout, const Layout& filter_layout,
     channel_dim = 4;
 
   if (input_layout.sharding_spec(channel_dim) != Layout::kUnshardedDim)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Conv input's channel dimension must be replicated.");
 
   if (input_layout.IsBatchParallel() || input_layout.IsFullyReplicated())
@@ -63,7 +76,7 @@ Status VerifyConvLayout(const Layout& input_layout, const Layout& filter_layout,
     return absl::OkStatus();
 
   if (conv_op.getPadding() == "EXPLICIT")
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Explicit padding not supported for convolution with spatial "
         "partitions.");
 
@@ -72,7 +85,7 @@ Status VerifyConvLayout(const Layout& input_layout, const Layout& filter_layout,
         return mlir::cast<mlir::IntegerAttr>(dilation).getInt() != 1;
       });
   if (num_non_default_dilations > 0)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Only dilation rate 1 is supported for convolution with spatial "
         "partitions.");
 
@@ -82,27 +95,27 @@ Status VerifyConvLayout(const Layout& input_layout, const Layout& filter_layout,
         return mlir::cast<mlir::IntegerAttr>(stride).getInt() != 1;
       });
   if (num_non_default_strides > 0)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Only stride 1 is supported for convolution with spatial partitions.");
 
   mlir::Value input = conv_op.getInput();
   auto input_type = mlir::dyn_cast<mlir::RankedTensorType>(input.getType());
   if (!input_type || !input_type.hasStaticShape())
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Input must have static shapes for convolution with spatial "
         "partitions.");
 
   mlir::Value filter = conv_op.getFilter();
   auto filter_type = mlir::dyn_cast<mlir::RankedTensorType>(filter.getType());
   if (!filter_type || !filter_type.hasStaticShape())
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Filter must have static shapes for convolution with spatial "
         "partitions.");
 
   llvm::ArrayRef<int64_t> filter_shape = filter_type.getShape();
   for (auto it = filter_shape.begin(); it != filter_shape.end() - 2; ++it) {
     if (*it % 2 != 1)
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Filter dimensions must be odd numbers for convolution with "
           "spatial partitions.");
   }
@@ -131,11 +144,11 @@ mlir::Value PadInputOnUnshardedDim(mlir::OpBuilder& builder,
   mlir::Value paddings_flat = Int64Const(builder, location, paddings_flat_vec);
   mlir::RankedTensorType paddings_type = mlir::RankedTensorType::get(
       paddings_shape, input_tensor_type.getElementType());
-  mlir::Value paddings = builder.create<mlir::TF::ReshapeOp>(
-      location, paddings_flat,
+  mlir::Value paddings = mlir::TF::ReshapeOp::create(
+      builder, location, paddings_flat,
       Int64Const(builder, location, {input_tensor_type.getRank(), 2}));
-  return builder.create<mlir::TF::PadOp>(location, paddings_type, input_tensor,
-                                         paddings);
+  return mlir::TF::PadOp::create(builder, location, paddings_type, input_tensor,
+                                 paddings);
 }
 
 template <typename ConvOp>
@@ -229,9 +242,9 @@ StatusOr<mlir::Operation*> HandleConv(ConvOp conv_op) {
       halo_size = output_local_size + (filter_shape[curr_filter_dim] - 1) -
                   input_local_size;
     } else {
-      return errors::Unimplemented(
-          "Spatially partitioned convolution with padding \"", padding.str(),
-          "\" is not supported.");
+      return absl::UnimplementedError(
+          absl::StrCat("Spatially partitioned convolution with padding \"",
+                       padding.str(), "\" is not supported."));
     }
 
     if (halo_size == 0)
@@ -262,27 +275,27 @@ StatusOr<mlir::Operation*> HandleConv(ConvOp conv_op) {
       mlir::Value halo_increments_const =
           IntConst(builder, location, halo_increments);
 
-      mlir::Value offset = builder.create<mlir::TF::MulOp>(
-          location, halo_increments_const.getType(), scalar_mesh_coordinate,
-          halo_increments_const);
+      mlir::Value offset = mlir::TF::MulOp::create(
+          builder, location, halo_increments_const.getType(),
+          scalar_mesh_coordinate, halo_increments_const);
       mlir::Value slice_begin =
-          builder.create<mlir::TF::SubOp>(location, halo_sizes_const, offset);
+          mlir::TF::SubOp::create(builder, location, halo_sizes_const, offset);
 
       llvm::SmallVector<int64_t, 4> slice_size(input_shape.begin(),
                                                input_shape.end());
       slice_size[curr_input_dim] += halo_size;
       mlir::Value slice_size_const = Int64Const(builder, location, slice_size);
       // slice_size_const and slize_begin_int64 has to be same type.
-      mlir::Value slice_begin_int64 = builder.create<mlir::TF::CastOp>(
-          location,
+      mlir::Value slice_begin_int64 = mlir::TF::CastOp::create(
+          builder, location,
           mlir::RankedTensorType::get({input_layout.rank()},
                                       builder.getI64Type()),
           slice_begin);
 
       mlir::RankedTensorType sliced_input_type =
           mlir::RankedTensorType::get(slice_size, input_type.getElementType());
-      mlir::Value sliced_input = builder.create<mlir::TF::SliceOp>(
-          location, sliced_input_type, /*input=*/halo_exchanged_input,
+      mlir::Value sliced_input = mlir::TF::SliceOp::create(
+          builder, location, sliced_input_type, /*input=*/halo_exchanged_input,
           /*begin=*/slice_begin_int64, /*size=*/slice_size_const);
       conv_op->setOperand(0, sliced_input);
     }
@@ -323,7 +336,7 @@ StatusOr<mlir::Operation*> HandleConvBackpropInput(
   }
 
   llvm::SmallVector<int64_t, 4> global_shape;
-  Status extract_status =
+  absl::Status extract_status =
       ExtractConstVectorFromValue(conv_op.getInputSizes(), &global_shape);
 
   // If the input is dynamic size, we expect the output is all so dynamic size
@@ -339,7 +352,7 @@ StatusOr<mlir::Operation*> HandleConvBackpropInput(
   // Compute the 'true' input/output layout of the operation. E.g. batch sharded
   // vs non-batch sharded. If at least one of the the input gradient or output
   // gradient is batch sharded, use that dimension.
-  string batch_sharding_dimension = grad_layout.sharding_spec(0);
+  std::string batch_sharding_dimension = grad_layout.sharding_spec(0);
   if (batch_sharding_dimension == Layout::kUnshardedDim) {
     batch_sharding_dimension = output_layout.sharding_spec(0);
   } else if ((output_layout.sharding_spec(0) != Layout::kUnshardedDim) &&
@@ -412,15 +425,15 @@ StatusOr<mlir::Operation*> HandleConvBackpropInputTensor(
       builder.getContext(),
       mlir::cast<mlir::TensorType>(global_input_shape.getType()));
   mlir::TF::DTensorLayout global_input_shape_with_layout =
-      builder.create<mlir::TF::DTensorLayout>(
-          conv_op->getLoc(), global_input_shape,
+      mlir::TF::DTensorLayout::create(
+          builder, conv_op->getLoc(), global_input_shape,
           mlir::dtensor::LayoutAttr::get(
               builder.getContext(),
               Layout::ReplicatedOnMesh(input_layout.mesh(), 1)),
           global_input_shape_shape);
 
-  To new_conv = builder.create<To>(
-      conv_op->getLoc(), conv_op->getResultTypes(),
+  To new_conv = To::create(
+      builder, conv_op->getLoc(), conv_op->getResultTypes(),
       mlir::ValueRange({global_input_shape_with_layout, conv_op.getFilter(),
                         conv_op.getOutBackprop()}),
       conv_op->getAttrs());
@@ -466,7 +479,7 @@ StatusOr<mlir::Operation*> HandleConvBackpropFilter(
   // TODO(b/262417847): if batch_sharding_dimension is Layout::kUnsharded, then
   // we should consider sharding the input here. It may be faster to spread
   // the convolution out and then all reduce after vs running it all locally.
-  string batch_sharding_dimension = input_layout.sharding_spec(0);
+  std::string batch_sharding_dimension = input_layout.sharding_spec(0);
   if (batch_sharding_dimension == Layout::kUnshardedDim) {
     batch_sharding_dimension = grad_layout.sharding_spec(0);
   } else if ((grad_layout.sharding_spec(0) != Layout::kUnshardedDim) &&
@@ -519,7 +532,7 @@ StatusOr<mlir::Operation*> HandleConvBackpropFilterTensor(
                       ExtractRequiredLayoutFromOperand(conv_op.getFilter()));
 
   if (!filter_layout.IsFullyReplicated()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Convolution backpropation ops only support replicated filters.");
   }
 
@@ -538,15 +551,15 @@ StatusOr<mlir::Operation*> HandleConvBackpropFilterTensor(
       builder.getContext(),
       mlir::cast<mlir::TensorType>(global_filter_shape_const.getType()));
   mlir::TF::DTensorLayout global_filter_shape_with_layout =
-      builder.create<mlir::TF::DTensorLayout>(
-          conv_op->getLoc(), global_filter_shape_const,
+      mlir::TF::DTensorLayout::create(
+          builder, conv_op->getLoc(), global_filter_shape_const,
           mlir::dtensor::LayoutAttr::get(
               builder.getContext(),
               Layout::ReplicatedOnMesh(filter_layout.mesh(), 1)),
           global_filter_shape_shape);
 
-  To new_conv = builder.create<To>(
-      conv_op->getLoc(), conv_op->getResultTypes(),
+  To new_conv = To::create(
+      builder, conv_op->getLoc(), conv_op->getResultTypes(),
       mlir::ValueRange({conv_op.getInput(), global_filter_shape_with_layout,
                         conv_op.getOutBackprop()}),
       conv_op->getAttrs());
@@ -630,7 +643,7 @@ StatusOr<mlir::Operation*> ConvSPMDExpander::ExpandOp(mlir::Operation* op) {
   // For all other ops, only batch sharded or fully replicated sharding is
   // supported for now.
   if (!output_layout->IsFullyReplicated() && !output_layout->IsBatchParallel())
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         llvm::formatv(
             "Only replicated or batch parallel layout is supported in "
             "expansion of {0}, but got output layout: {1}",
@@ -700,7 +713,7 @@ StatusOr<llvm::DenseMap<int, Layout>> ConvSPMDExpander::ComputeLayoutForward(
       output_layouts[0] = input_layouts.lookup(1);
     }
   } else {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         llvm::formatv(
             "Layout propagation for unrecognized convolution op {0} not "
             "supported.",
@@ -787,7 +800,7 @@ StatusOr<llvm::DenseMap<int, Layout>> ConvSPMDExpander::ComputeLayoutBackward(
       input_layouts[1] = output_layouts.lookup(0);
     }
   } else {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         llvm::formatv(
             "Layout propagation for unrecognized convolution op {0} not "
             "supported.",

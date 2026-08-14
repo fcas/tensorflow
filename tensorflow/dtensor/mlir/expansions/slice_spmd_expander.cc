@@ -15,23 +15,27 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/slice_spmd_expander.h"
 
-#include <algorithm>
+#include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
-#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/mlir/value_utils.h"
 #include "tensorflow/dtensor/proto/layout.pb.h"
 
@@ -39,11 +43,11 @@ namespace tensorflow {
 namespace dtensor {
 namespace {
 
-Status GetSliceOpArguments(mlir::TF::SliceOp slice_op,
-                           llvm::SmallVector<int64_t, 4>& begins,
-                           bool& dynamic_begins,
-                           llvm::SmallVector<int64_t, 4>& sizes) {
-  Status begins_result =
+absl::Status GetSliceOpArguments(mlir::TF::SliceOp slice_op,
+                                 llvm::SmallVector<int64_t, 4>& begins,
+                                 bool& dynamic_begins,
+                                 llvm::SmallVector<int64_t, 4>& sizes) {
+  absl::Status begins_result =
       ExtractConstVectorFromValue(slice_op.getBegin(), &begins);
   dynamic_begins = !begins_result.ok();
 
@@ -111,7 +115,7 @@ StatusOr<mlir::Operation*> SliceSPMDExpander::ExpandOp(mlir::Operation* op) {
   TF_ASSIGN_OR_RETURN(auto output_layout, ExtractSingleLayoutFromOp(op));
 
   if (!output_layout || !input_layout)
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         "layout of Slice op must be known before SPMD expansion.");
 
   // The dyn_cast will never be nullptr as it is checked in
@@ -119,7 +123,7 @@ StatusOr<mlir::Operation*> SliceSPMDExpander::ExpandOp(mlir::Operation* op) {
   auto input_type =
       mlir::dyn_cast<mlir::RankedTensorType>(slice_op.getInput().getType());
   if (!input_type)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "rank of input tensor must be statically known for slice op.");
 
   TF_ASSIGN_OR_RETURN(auto global_shape,
@@ -162,7 +166,7 @@ StatusOr<mlir::Operation*> SliceSPMDExpander::ExpandOp(mlir::Operation* op) {
         continue;
       }
 
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Non-full-slicing on the sharded dimension is not allowed. "
           "internal bug.");
     }
@@ -174,20 +178,20 @@ StatusOr<mlir::Operation*> SliceSPMDExpander::ExpandOp(mlir::Operation* op) {
   // Both begin and size need to be the same type, so we must match the new
   // size input with the type of begin.
   if (!mlir::isa<mlir::ShapedType>(slice_op.getBegin().getType()))
-    return errors::Internal("type of begin is not a ShapedType");
+    return absl::InternalError("type of begin is not a ShapedType");
   mlir::ShapedType type =
       mlir::cast<mlir::ShapedType>(slice_op.getBegin().getType());
   if (type.getElementType().isInteger(32))
-    new_size = IntConst(
-        builder, loc, llvm::SmallVector<int32, 4>(sizes.begin(), sizes.end()));
+    new_size =
+        IntConst(builder, loc,
+                 llvm::SmallVector<int32_t, 4>(sizes.begin(), sizes.end()));
   else
     new_size = Int64Const(builder, loc, sizes);
 
-  auto new_op = builder
-                    .create<mlir::TF::SliceOp>(
-                        loc, slice_op.getOutput().getType(), relayout_input,
-                        slice_op.getBegin(), new_size)
-                    .getOperation();
+  auto new_op =
+      mlir::TF::SliceOp::create(builder, loc, slice_op.getOutput().getType(),
+                                relayout_input, slice_op.getBegin(), new_size)
+          .getOperation();
   new_op = InferSPMDExpandedLocalShape(new_op);
 
   TF_ASSIGN_OR_RETURN(auto relayout_output,

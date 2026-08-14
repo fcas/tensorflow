@@ -213,7 +213,15 @@ def numpy_text(tensor, is_repr=False) -> str:
   """Human readable representation of a tensor's numpy value."""
   if tensor.dtype.is_numpy_compatible:
     # pylint: disable=protected-access
-    text = repr(tensor._numpy()) if is_repr else str(tensor._numpy())
+    tensor_numpy = tensor._numpy()
+    if is_repr:
+      if np.isscalar(tensor_numpy) and not isinstance(tensor_numpy, bytes):
+        # .item() converts the numpy scalars to python items.
+        text = repr(tensor_numpy.item())
+      else:
+        text = repr(tensor_numpy)
+    else:
+      text = str(tensor_numpy)
     # pylint: enable=protected-access
   else:
     text = "<unprintable>"
@@ -265,6 +273,62 @@ class SymbolicTensor(pywrap_tf_session.PyTensor, tensor_lib.Tensor):
     result.__dict__.update(self.__dict__)
     return result
 
+  def __index__(self) -> int:
+    constant_value = tensor_util.constant_value(self)
+    if constant_value is not None:
+      try:
+        return constant_value.__index__()
+      except (AttributeError, TypeError):
+        if (
+            isinstance(constant_value, np.ndarray)
+            and constant_value.shape == ()
+        ):
+          try:
+            return constant_value.item().__index__()
+          except (AttributeError, TypeError, ValueError):
+            pass
+
+    if self.op.type == "StridedSlice":
+      try:
+        begin = tensor_util.constant_value(self.op.inputs[1])
+        end = tensor_util.constant_value(self.op.inputs[2])
+        strides = tensor_util.constant_value(self.op.inputs[3])
+        if begin is not None and end is not None and strides is not None:
+          begin = begin[0]
+          end = end[0]
+          strides = strides[0]
+          input_shape = tensor_util.constant_value_as_shape(self.op.inputs[0])
+          begin_mask = self.op.get_attr("begin_mask")
+          end_mask = self.op.get_attr("end_mask")
+          ellipsis_mask = self.op.get_attr("ellipsis_mask")
+          new_axis_mask = self.op.get_attr("new_axis_mask")
+          shrink_axis_mask = self.op.get_attr("shrink_axis_mask")
+          valid_attributes = (
+              not ellipsis_mask
+              and not new_axis_mask
+              and shrink_axis_mask == 1
+              and not begin_mask
+              and not end_mask
+          )
+          if valid_attributes and strides == 1 and end == begin + 1:
+            if begin >= 0:
+              axis = int(begin)
+            else:
+              rank = input_shape.rank
+              if rank is None or begin + rank < 0:
+                raise IndexError
+              axis = (int(begin) + rank) % rank
+            dimension = input_shape[axis]
+            dimension_value = getattr(dimension, "value", dimension)
+            if dimension_value is not None:
+              return dimension_value.__index__()
+      except (AttributeError, TypeError, ValueError, IndexError):
+        pass
+
+    raise TypeError(
+        f"'{type(self).__name__}' object cannot be interpreted as an integer"
+    )
+
 
 def _create_graph_constant(
     value, dtype, shape, name, verify_shape, allow_broadcast
@@ -310,7 +374,11 @@ class _EagerTensorBase(
     return cast(np.ndarray, self._numpy()).__index__()
 
   def __bool__(self) -> bool:
-    return bool(self._numpy())
+    x = self._numpy()
+    if isinstance(x, np.ndarray):
+      return bool(x.size > 0 and x)
+    else:
+      return bool(x)
 
   __nonzero__ = __bool__
 
@@ -359,6 +427,27 @@ class _EagerTensorBase(
       return cast(np.ndarray, a)
 
     return np.array(a, dtype=dtype)
+
+  def __dlpack__(
+      self, *, stream=None, max_version=None, dl_device=None, copy=None  # pylint: disable=redefined-outer-name
+  ):
+    del max_version  # Unused
+    if stream is not None:
+      raise RuntimeError(
+          "tf.Tensor does not support DLPack export with a non-None stream"
+      )
+    if dl_device is not None:
+      raise RuntimeError(
+          "tf.Tensor does not support DLPack export with a non-None dl_device"
+      )
+    if copy:
+      raise RuntimeError(
+          "tf.Tensor does not support DLPack export with a copy=True"
+      )
+    return pywrap_tfe.TFE_ToDlpackCapsule(self)
+
+  def __dlpack_device__(self):
+    return pywrap_tfe.TFE_DlpackDevice(self)
 
   def __hash__(self) -> int:
     # EagerTensors are never hashable.
@@ -547,9 +636,20 @@ class _EagerTensorBase(
     return self._copy(context.context(), "GPU:" + str(gpu_index))
 
   def set_shape(self, shape) -> None:
-    if not self.shape.is_compatible_with(shape):
+    # pylint: disable=protected-access
+    shape = tensor_shape.as_shape(shape)
+    shape_dims = shape._dims
+    if shape_dims is None:
+      return
+    self_dims = self.shape._dims
+    if len(shape_dims) != len(self_dims):
       raise ValueError(f"Tensor's shape {self.shape} is not compatible "
                        f"with supplied shape {shape}.")
+    for shape_dim, self_dim in zip(shape_dims, self_dims):
+      if shape_dim is not None and self_dim != shape_dim:
+        raise ValueError(f"Tensor's shape {self.shape} is not compatible "
+                         f"with supplied shape {shape}.")
+    # pylint: enable=protected-access
 
   # Methods not supported / implemented for Eager Tensors.
   @property

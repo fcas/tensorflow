@@ -17,18 +17,19 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "tensorflow/lite/delegates/gpu/common/precision.h"
 #include "tensorflow/lite/delegates/gpu/common/task/arguments.h"
 #include "tensorflow/lite/delegates/gpu/common/task/buffer_desc.h"
 #include "tensorflow/lite/delegates/gpu/common/task/gpu_object_desc.h"
 #include "tensorflow/lite/delegates/gpu/common/task/gpu_operation.h"
-#include "tensorflow/lite/delegates/gpu/common/task/serialization_base_generated.h"
 #include "tensorflow/lite/delegates/gpu/common/task/tensor_desc.h"
+#include "tensorflow/lite/delegates/gpu/common/task/tflite_serialization_base_generated.h"
 
 namespace tflite {
 namespace gpu {
@@ -258,6 +259,8 @@ data::CompilerOptions ToFB(CompilerOptions type) {
       return data::CompilerOptions::CL_2_0;
     case CompilerOptions::kCl30:
       return data::CompilerOptions::CL_3_0;
+    case CompilerOptions::kClRegisterAllocation64:
+      return data::CompilerOptions::CL_REGISTER_ALLOCATION_64;
   }
 }
 
@@ -301,6 +304,8 @@ CompilerOptions ToEnum(data::CompilerOptions type) {
       return CompilerOptions::kCl20;
     case data::CompilerOptions::CL_3_0:
       return CompilerOptions::kCl30;
+    case data::CompilerOptions::CL_REGISTER_ALLOCATION_64:
+      return CompilerOptions::kClRegisterAllocation64;
   }
 }
 

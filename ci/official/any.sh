@@ -36,7 +36,7 @@
 #       export TF_ANY_EXTRA_ENV=ci/official/envs/local_rbe
 #       ./any.sh
 #       ...
-set -euxo pipefail
+set -exo pipefail
 cd "$(dirname "$0")/../../"  # tensorflow/
 # Any request that includes "nightly_upload" should just use the
 # local multi-cache (public read-only cache + disk cache) instead.
@@ -48,7 +48,14 @@ if [[ -n "${TF_ANY_SCRIPT:-}" ]]; then
   "$TF_ANY_SCRIPT"
 elif [[ -n "${TF_ANY_TARGETS:-}" ]]; then
   source "${BASH_SOURCE%/*}/utilities/setup.sh"
-  tfrun bazel "${TF_ANY_MODE:-test}" $TFCI_BAZEL_COMMON_ARGS $TF_ANY_TARGETS
+
+  # Extract hermetic CUDA UMD flags
+  HERMETIC_CUDA_UMD_FLAGS=""
+  if [[ "$TFCI_BAZEL_HERMETIC_CUDA_UMD_ENABLE" == 1 ]]; then
+    HERMETIC_CUDA_UMD_FLAGS="--@local_config_cuda//cuda:override_include_cuda_libs=true --config=hermetic_cuda_umd"
+  fi
+
+  tfrun bazel "${TF_ANY_MODE:-test}" $TFCI_BAZEL_COMMON_ARGS $HERMETIC_CUDA_UMD_FLAGS $TF_ANY_TARGETS
 else
   echo 'Looks like $TF_ANY_TARGETS are $TF_ANY_SCRIPT are both empty. That is an error.'
   exit 1

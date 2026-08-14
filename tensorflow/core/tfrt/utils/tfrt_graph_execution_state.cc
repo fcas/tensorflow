@@ -23,10 +23,12 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/mlir/tensorflow/translate/upgrade_graph.h"
+#include "tensorflow/compiler/tf2xla/functionalize_control_flow.h"
+#include "xla/tsl/platform/errors.h"
 #include "tensorflow/core/common_runtime/function_body.h"
 #include "tensorflow/core/common_runtime/function_def_utils.h"
 #include "tensorflow/core/common_runtime/graph_constructor.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/tfrt/fallback/fallback_state.h"
+#include "tensorflow/core/tfrt/graph_executor/config.h"
 #include "tensorflow/core/util/dump_graph.h"
 
 namespace tensorflow {
@@ -117,21 +120,42 @@ absl::StatusOr<absl::flat_hash_set<std::string>> PreprocessGraph(
   return absl::flat_hash_set<std::string>();
 }
 
+bool GetTf2xlaMlirBridgeState(
+    const tensorflow::tfrt_stub::RuntimeConfig* runtime_config) {
+  bool enable_tf2xla_mlir_bridge = true;
+  if (runtime_config == nullptr) return enable_tf2xla_mlir_bridge;
+  if (auto mlir_bridge_config =
+          runtime_config->Get<tensorflow::tf2xla::v1::MlirBridgeConfig>();
+      mlir_bridge_config.ok()) {
+    if (mlir_bridge_config->has_enable_tf2xla_mlir_bridge()) {
+      LOG(INFO) << "enable_tf2xla_mlir_bridge in mlir_bridge_config is "
+                << mlir_bridge_config->enable_tf2xla_mlir_bridge();
+      enable_tf2xla_mlir_bridge =
+          mlir_bridge_config->enable_tf2xla_mlir_bridge();
+    }
+  }
+  return enable_tf2xla_mlir_bridge;
+}
+
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<TfrtGraphExecutionState>>
-TfrtGraphExecutionState::Create(const TfrtGraphExecutionState::Options& options,
-                                tensorflow::GraphDef graph_def,
-                                const FallbackState& fallback_state) {
+TfrtGraphExecutionState::Create(
+    const TfrtGraphExecutionState::Options& options,
+    tensorflow::GraphDef graph_def, const FallbackState& fallback_state,
+    tensorflow::tfrt_stub::RuntimeConfig* runtime_config) {
   TF_ASSIGN_OR_RETURN(
       auto functions_to_optimize,
       PreprocessGraph(graph_def, options.run_placer_grappler_on_functions));
+
+  bool enable_tf2xla_mlir_bridge = GetTf2xlaMlirBridgeState(runtime_config);
 
   // `CreateGraphExecutionState()` will preprocess the graph (e.g., apply
   // Placer to the top level graph).
   TF_ASSIGN_OR_RETURN(auto graph_execution_state,
                       fallback_state.CreateGraphExecutionState(
-                          std::move(graph_def), options.run_placer_on_graph));
+                          std::move(graph_def), options.run_placer_on_graph,
+                          enable_tf2xla_mlir_bridge));
 
   return std::make_unique<TfrtGraphExecutionState>(
       options, std::move(graph_execution_state), fallback_state,
@@ -250,9 +274,9 @@ TfrtGraphExecutionState::CreateOptimizedGraph(
     DumpGraphDefToFile("before_pruning", graph_def);
   }
 
-  TF_ASSIGN_OR_RETURN(
-      result.graph,
-      CreatePrunedGraph(graph_def, build_graph_options.callable_options));
+  TF_ASSIGN_OR_RETURN(result.graph,
+                      CreatePrunedGraph(std::move(graph_def),
+                                        build_graph_options.callable_options));
   DCHECK(result.graph);
 
   if (VLOG_IS_ON(1)) {
@@ -264,11 +288,14 @@ TfrtGraphExecutionState::CreateOptimizedGraph(
   // Perform functionalization to convert v1 control flow to v2 control flow. It
   // should be applied to the unoptimized graph, because Grappler may cause
   // unfunctionalizablity.
-  TF_RETURN_IF_ERROR(tensorflow::UpgradeLegacyGraph(
-      result.graph.get(),
-      const_cast<tensorflow::FunctionLibraryDefinition*>(
-          &result.graph->flib_def()),
-      /*restrict_functionalization_to_compiled_nodes=*/false));
+  TF_RETURN_WITH_CONTEXT_IF_ERROR(
+      FunctionalizeControlFlow(
+          result.graph.get(),
+          const_cast<tensorflow::FunctionLibraryDefinition*>(
+              &result.graph->flib_def()),
+          NodeFilter{},
+          /*include_functions=*/true),
+      tensorflow::kFunctionalizeControlFlowFailureMessage);
 
   if (VLOG_IS_ON(1)) {
     DumpGraphToFile("after_functionalization", *result.graph);
@@ -296,9 +323,9 @@ TfrtGraphExecutionState::CreateOptimizedGraph(
   return result;
 }
 
-Status TfrtGraphExecutionState::Extend(const GraphDef& graph) {
+absl::Status TfrtGraphExecutionState::Extend(const GraphDef& graph) {
   std::unique_ptr<GraphExecutionState> new_state;
-  absl::MutexLock lock(&graph_execution_state_mu_);
+  absl::MutexLock lock(graph_execution_state_mu_);
   TF_RETURN_IF_ERROR(graph_execution_state_->Extend(graph, &new_state));
   graph_execution_state_.swap(new_state);
 
@@ -321,8 +348,9 @@ absl::StatusOr<const NodeDef*> FindLoopCondFromExitNode(
   for (const std::string& tensor_name : exit_node.input()) {
     const std::string node_name = grappler::NodeName(tensor_name);
     if (!name_to_node.contains(node_name)) {
-      return errors::InvalidArgument("Graph does not contain input ", node_name,
-                                     " of exit node ", exit_node.name());
+      return absl::InvalidArgumentError(
+          absl::StrCat("Graph does not contain input ", node_name,
+                       " of exit node ", exit_node.name()));
     }
     const NodeDef* node = name_to_node.at(node_name);
     if (node->op() == "Switch") {
@@ -331,15 +359,16 @@ absl::StatusOr<const NodeDef*> FindLoopCondFromExitNode(
     }
   }
   if (switch_node == nullptr) {
-    return errors::InvalidArgument("Exit node ", exit_node.name(),
-                                   " does not have a Switch node as its ",
-                                   "predecessor.");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Exit node ", exit_node.name(),
+                     " does not have a Switch node as its ", "predecessor."));
   }
   for (const std::string& tensor_name : switch_node->input()) {
     const std::string node_name = grappler::NodeName(tensor_name);
     if (!name_to_node.contains(node_name)) {
-      return errors::InvalidArgument("Graph does not contain input ", node_name,
-                                     " of switch node ", switch_node->name());
+      return absl::InvalidArgumentError(
+          absl::StrCat("Graph does not contain input ", node_name,
+                       " of switch node ", switch_node->name()));
     }
 
     const NodeDef* node = name_to_node.at(node_name);
@@ -348,15 +377,15 @@ absl::StatusOr<const NodeDef*> FindLoopCondFromExitNode(
     }
   }
 
-  return errors::InvalidArgument("Switch node ", switch_node->name(),
-                                 " does not have a LoopCond node as its ",
-                                 "predecessor.");
+  return absl::InvalidArgumentError(
+      absl::StrCat("Switch node ", switch_node->name(),
+                   " does not have a LoopCond node as its ", "predecessor."));
 }
 
 }  // namespace
 
-Status PruneGraphDef(GraphDef& graph_def,
-                     const CallableOptions& callable_options) {
+absl::Status PruneGraphDef(GraphDef& graph_def,
+                           const CallableOptions& callable_options) {
   // Gather node names and create a map from names to NodeDefs.
   absl::flat_hash_map<std::string, NodeDef*> name_to_node;
   // All exit nodes in order to track all while loops.
@@ -369,7 +398,7 @@ Status PruneGraphDef(GraphDef& graph_def,
 
     // TODO(tfrt-devs): Add support for _Send and _Recv ops.
     if (node.op() == "_Send" || node.op() == "_Recv") {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "TFRT prune graphdef cannot handle graphs contains _Send and _Recv "
           "ops.");
     }
@@ -394,8 +423,8 @@ Status PruneGraphDef(GraphDef& graph_def,
   for (const std::string& tensor_name : callable_options.fetch()) {
     const NodeDef* node = name_to_node[grappler::NodeName(tensor_name)];
     if (!node) {
-      return errors::InvalidArgument("Graph does not contain fetch node ",
-                                     tensor_name, ".");
+      return absl::InvalidArgumentError(
+          absl::StrCat("Graph does not contain fetch node ", tensor_name, "."));
     }
     queue.push_back(node);
     fetch_node_names.insert(node->name());
@@ -405,8 +434,8 @@ Status PruneGraphDef(GraphDef& graph_def,
   for (const std::string& tensor_name : callable_options.target()) {
     const NodeDef* node = name_to_node[grappler::NodeName(tensor_name)];
     if (!node) {
-      return errors::InvalidArgument("Graph does not contain target node ",
-                                     tensor_name, ".");
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Graph does not contain target node ", tensor_name, "."));
     }
     queue.push_back(node);
     fetch_node_names.insert(node->name());
@@ -419,8 +448,8 @@ Status PruneGraphDef(GraphDef& graph_def,
   for (const std::string& tensor_name : callable_options.feed()) {
     NodeDef* node = name_to_node[grappler::NodeName(tensor_name)];
     if (!node) {
-      return errors::InvalidArgument("Graph does not contain feed node ",
-                                     tensor_name, ".");
+      return absl::InvalidArgumentError(
+          absl::StrCat("Graph does not contain feed node ", tensor_name, "."));
     }
 
     // If a feed node is a Const, we don't need its inputs at all.
@@ -457,9 +486,9 @@ Status PruneGraphDef(GraphDef& graph_def,
     for (const std::string& tensor_name : node->input()) {
       const NodeDef* in = name_to_node[grappler::NodeName(tensor_name)];
       if (!in) {
-        return errors::InvalidArgument("Graph does not contain input ",
-                                       grappler::NodeName(tensor_name),
-                                       " of node ", node->name(), ".");
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Graph does not contain input ", grappler::NodeName(tensor_name),
+            " of node ", node->name(), "."));
       }
       queue.push_back(in);
     }
@@ -487,7 +516,8 @@ Status PruneGraphDef(GraphDef& graph_def,
   return absl::OkStatus();
 }
 
-Status EliminateRefVariablesFromV1ControlFlow(tensorflow::GraphDef& graph_def) {
+absl::Status EliminateRefVariablesFromV1ControlFlow(
+    tensorflow::GraphDef& graph_def) {
   auto* op_factory = OpRegistry::Global();
 
   absl::flat_hash_set<std::string> ref_nodes;
@@ -508,15 +538,15 @@ Status EliminateRefVariablesFromV1ControlFlow(tensorflow::GraphDef& graph_def) {
     if (node.op() == "RefEnter") {
       node.set_op("Enter");
       if (node.input_size() != 1) {
-        return errors::InvalidArgument("RefEnter node ", node.name(),
-                                       " does not have exactly 1 input.");
+        return absl::InvalidArgumentError(absl::StrCat(
+            "RefEnter node ", node.name(), " does not have exactly 1 input."));
       }
       ref_input_name = node.mutable_input(0);
     } else if (node.op() == "RefSwitch") {
       node.set_op("Switch");
       if (node.input_size() != 2) {
-        return errors::InvalidArgument("RefSwitch node", node.name(),
-                                       " does not have exactly 2 inputs.");
+        return absl::InvalidArgumentError(absl::StrCat(
+            "RefSwitch node", node.name(), " does not have exactly 2 inputs."));
       }
       ref_input_name = node.mutable_input(0);
     } else {
@@ -537,10 +567,10 @@ Status EliminateRefVariablesFromV1ControlFlow(tensorflow::GraphDef& graph_def) {
         // TODO(tfrt-devs): How to match input_args to input names in NodeDef?
         for (const auto& input_arg : op_def->input_arg()) {
           if (input_arg.is_ref()) {
-            return errors::Unimplemented(
-                "Cannot in-place update ref node ", ref_input,
-                " to the non-ref counterpart since its user node ", node.name(),
-                " requires its input to be refs.");
+            return absl::UnimplementedError(
+                absl::StrCat("Cannot in-place update ref node ", ref_input,
+                             " to the non-ref counterpart since its user node ",
+                             node.name(), " requires its input to be refs."));
           }
         }
       }
@@ -577,7 +607,7 @@ namespace {
 // `functions_to_optimize`) using `flib` and `fallback_state`. Each
 // function is converted to a graph and optimized with Placer and Grappler, then
 // converted back to a function to replace the old one.
-Status OptimizeFunctions(
+absl::Status OptimizeFunctions(
     FunctionDefLibrary& flib_proto, const FunctionLibraryDefinition& flib,
     const FallbackState& fallback_state,
     const absl::flat_hash_set<std::string>& functions_to_optimize) {
@@ -656,7 +686,7 @@ TfrtGraphExecutionState::OptimizeGraph(
   std::unique_ptr<tensorflow::FunctionLibraryDefinition> optimized_flib;
 
   {
-    absl::MutexLock lock(&graph_execution_state_mu_);
+    absl::MutexLock lock(graph_execution_state_mu_);
     // Invoke Grappler to optimize the graph.
     TF_RETURN_IF_ERROR(graph_execution_state_->OptimizeGraph(
         build_graph_options, graph, &graph.flib_def(), &optimized_graph,

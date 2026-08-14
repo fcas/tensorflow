@@ -15,7 +15,21 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/control_flow_spmd_expander.h"
 
+#include <cassert>
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
+#include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
+#include "tensorflow/dtensor/mlir/layout_parsing.h"
+#include "tensorflow/dtensor/mlir/value_utils.h"
 
 namespace tensorflow {
 namespace dtensor {
@@ -50,7 +64,7 @@ StatusOr<mlir::Operation*> WhileRegionSPMDExpander::ExpandOp(
 StatusOr<llvm::DenseMap<int, Layout>>
 WhileRegionSPMDExpander::ComputeLayoutForward(
     mlir::Operation* op, const llvm::DenseMap<int, Layout>& input_layouts) {
-  return errors::Unimplemented(
+  return absl::UnimplementedError(
       "WhileRegion does not support compute layouts. This should not be "
       "called.");
 }
@@ -58,7 +72,7 @@ WhileRegionSPMDExpander::ComputeLayoutForward(
 StatusOr<llvm::DenseMap<int, Layout>>
 WhileRegionSPMDExpander::ComputeLayoutBackward(
     mlir::Operation* op, const llvm::DenseMap<int, Layout>& output_layouts) {
-  return errors::Unimplemented(
+  return absl::UnimplementedError(
       "WhileRegion does not support compute layouts. This should not be "
       "called.");
 }
@@ -69,14 +83,14 @@ StatusOr<mlir::Operation*> IfRegionSPMDExpander::ExpandOp(mlir::Operation* op) {
     auto result_layout_op = llvm::dyn_cast_or_null<mlir::TF::DTensorLayout>(
         *result.getUsers().begin());
     if (!result_layout_op)
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Missing layout of If op result during SPMD expansion.");
 
     const Layout layout = result_layout_op.getLayout();
     if (!layout.IsFullyReplicated()) {
       const auto global_shape = result_layout_op.getGlobalShape();
       if (!global_shape)
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "Shape of If op must be statically known for SPMD expansion.");
 
       result.setType(mlir::RankedTensorType::get(

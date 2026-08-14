@@ -13,7 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "absl/strings/string_view.h"
+#include <cstdint>
+#include <string>
+
+#include "absl/strings/str_format.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "tensorflow/core/lib/core/status.h"
@@ -34,7 +37,7 @@ PYBIND11_MODULE(_pywrap_debug_events_writer, m) {
           DebugEventsWriter* writer = DebugEventsWriter::GetDebugEventsWriter(
               dump_root, tfdbg_run_id, circular_buffer_size);
           if (!writer->Init().ok()) {
-            throw py::value_error(tensorflow::strings::Printf(
+            throw py::value_error(absl::StrFormat(
                 "Failed to initialize debug events writer at: %s",
                 dump_root.c_str()));
           }

@@ -1,7 +1,24 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable", "pybind_extension")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -21,13 +38,8 @@ cc_library(
         "//tensorflow/lite:framework",
         "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/kernels:kernel_util",
-        "//tensorflow/lite/kernels:padding",
-        "//tensorflow/lite/kernels/internal:common",
-        "//tensorflow/lite/kernels/internal:compatibility",
         "//tensorflow/lite/kernels/internal:tensor",
-        "//tensorflow/lite/kernels/internal:tensor_utils",
         "//tensorflow/lite/kernels/internal:types",
-        "@flatbuffers",
     ],
 )
 
@@ -58,8 +70,8 @@ cc_test(
         "//tensorflow/lite/core:framework_stable",
         "//tensorflow/lite/kernels:test_main",
         "//tensorflow/lite/kernels:test_util",
-        "//tensorflow/lite/testing:util",
-        "@flatbuffers",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -78,7 +90,6 @@ pybind_extension(
     deps = [
         ":gradient_ops",
         "//tensorflow/lite:mutable_op_resolver",
-        "//third_party/python_runtime:headers",
         "@pybind11",
     ],
 )

@@ -78,8 +78,8 @@ std::set<std::string>* GlobalOpPrefixes() {
 }
 
 // Converts a location to the debug information for the node def.
-Status ConvertLocation(mlir::Location inst_loc, llvm::StringRef node_name,
-                       NodeDef::ExperimentalDebugInfo* debug_info) {
+absl::Status ConvertLocation(mlir::Location inst_loc, llvm::StringRef node_name,
+                             NodeDef::ExperimentalDebugInfo* debug_info) {
   mlir::Location unwrapped_inst_loc = GetLocationWithoutOpType(inst_loc);
 
   if (auto call_site = mlir::dyn_cast<mlir::CallSiteLoc>(unwrapped_inst_loc)) {
@@ -100,7 +100,7 @@ Status ConvertLocation(mlir::Location inst_loc, llvm::StringRef node_name,
   } else if (auto fused = mlir::dyn_cast<mlir::FusedLoc>(unwrapped_inst_loc)) {
     auto locations = fused.getLocations();
     if (locations.size() <= 1)
-      return errors::InvalidArgument("expected experimental debuf info.");
+      return absl::InvalidArgumentError("expected experimental debuf info.");
     // skip the first one, which is the name of the node_def.
     for (int i = 0, end = locations.size() - 1; i < end; ++i) {
       TF_RETURN_IF_ERROR(ConvertLocation(locations[i], node_name, debug_info));
@@ -109,43 +109,46 @@ Status ConvertLocation(mlir::Location inst_loc, llvm::StringRef node_name,
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::BoolAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::BoolAttr& attr, AttrValue* value) {
   value->set_b(attr.getValue());
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::IntegerAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::IntegerAttr& attr, AttrValue* value) {
   value->set_i(attr.getInt());
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::FloatAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::FloatAttr& attr, AttrValue* value) {
   value->set_f(attr.getValueAsDouble());
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::ElementsAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::ElementsAttr& attr,
+                              AttrValue* value) {
   return ConvertToTensorProto(attr, value->mutable_tensor());
 }
 
-Status ConvertAttribute(const mlir::TF::PlaceholderAttr& attr,
-                        AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::TF::PlaceholderAttr& attr,
+                              AttrValue* value) {
   value->set_placeholder(attr.getValue().str());
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::TF::ShapeAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::TF::ShapeAttr& attr,
+                              AttrValue* value) {
   SetTensorShapeProto(attr, value->mutable_shape());
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::FlatSymbolRefAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::FlatSymbolRefAttr& attr,
+                              AttrValue* value) {
   value->mutable_func()->set_name(attr.getValue().str());
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::TF::FuncAttr& attr, bool remove_ref_type,
-                        AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::TF::FuncAttr& attr,
+                              bool remove_ref_type, AttrValue* value) {
   TF_RETURN_IF_ERROR(ConvertAttribute(
       mlir::cast<mlir::FlatSymbolRefAttr>(attr.getName()), value));
   TF_RETURN_IF_ERROR(ConvertAttributes(attr.getAttrs().getValue(),
@@ -154,11 +157,11 @@ Status ConvertAttribute(const mlir::TF::FuncAttr& attr, bool remove_ref_type,
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::StringAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::StringAttr& attr, AttrValue* value) {
   absl::string_view attr_value(attr.getValue().data(), attr.getValue().size());
   switch (mangling_util::GetMangledKind(attr_value)) {
     case mangling_util::MangledKind::kUnknown: {
-      value->set_s(std::string(attr_value));
+      value->set_s(attr_value);
       return absl::OkStatus();
     }
     case mangling_util::MangledKind::kDataType: {
@@ -172,13 +175,13 @@ Status ConvertAttribute(const mlir::StringAttr& attr, AttrValue* value) {
           mangling_util::DemangleShape(attr_value, value->mutable_shape()));
       return absl::OkStatus();
     default:
-      return errors::Unimplemented("Mangled string couldn't be handled!");
+      return absl::UnimplementedError("Mangled string couldn't be handled!");
   }
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(mlir::Type type, bool remove_ref_type,
-                        AttrValue* value) {
+absl::Status ConvertAttribute(mlir::Type type, bool remove_ref_type,
+                              AttrValue* value) {
   DataType dtype;
   TF_RETURN_IF_ERROR(ConvertToDataType(type, &dtype));
   if (tensorflow::IsRefType(dtype)) dtype = tensorflow::RemoveRefType(dtype);
@@ -186,18 +189,18 @@ Status ConvertAttribute(mlir::Type type, bool remove_ref_type,
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::TypeAttr& type, bool remove_ref_type,
-                        AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::TypeAttr& type, bool remove_ref_type,
+                              AttrValue* value) {
   return ConvertAttribute(type.getValue(), remove_ref_type, value);
 }
 
-Status ConvertAttribute(const mlir::UnitAttr& attr, AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::UnitAttr& attr, AttrValue* value) {
   value->clear_value();
   return absl::OkStatus();
 }
 
-Status ConvertAttribute(const mlir::ArrayAttr& attr, bool remove_ref_type,
-                        AttrValue* value) {
+absl::Status ConvertAttribute(const mlir::ArrayAttr& attr, bool remove_ref_type,
+                              AttrValue* value) {
   auto* list = value->mutable_list();
   for (mlir::Attribute a : attr.getValue()) {
     if (auto attr = mlir::dyn_cast<mlir::BoolAttr>(a)) {
@@ -220,7 +223,7 @@ Status ConvertAttribute(const mlir::ArrayAttr& attr, bool remove_ref_type,
           *list->add_shape() = nested_value.shape();
           break;
         default:
-          return errors::Unimplemented("Unhandled nested attribute!");
+          return absl::UnimplementedError("Unhandled nested attribute!");
       }
     } else if (auto attr = mlir::dyn_cast<mlir::ElementsAttr>(a)) {
       TensorProto tensor;
@@ -249,7 +252,7 @@ Status ConvertAttribute(const mlir::ArrayAttr& attr, bool remove_ref_type,
       for (mlir::Attribute a : attr.getValue()) {
         auto i = mlir::dyn_cast<mlir::IntegerAttr>(a);
         if (!i)
-          return errors::Unimplemented(
+          return absl::UnimplementedError(
               "Expected 64-bit integer array attributes!");
         vals.push_back(i.getInt());
       }
@@ -261,7 +264,7 @@ Status ConvertAttribute(const mlir::ArrayAttr& attr, bool remove_ref_type,
           mlir::DenseIntElementsAttr::get(ty, vals), &tensor));
       *list->add_tensor() = tensor;
     } else {
-      return errors::Unimplemented("Unhandled attribute!");
+      return absl::UnimplementedError("Unhandled attribute!");
     }
   }
   return absl::OkStatus();
@@ -282,12 +285,12 @@ static bool IsRefTypeControlOp(mlir::Operation* op) {
   if (!op_name_or_status.ok()) return false;
 
   auto op_name = std::move(op_name_or_status).value();
-  if (op_name.equals("NextIteration"))
+  if (op_name == "NextIteration")
     return mlir::isa<mlir::TF::TensorFlowRefType>(
         mlir::getElementTypeOrSelf(op->getOperand(0).getType()));
 
-  if (op_name.equals("Enter") || op_name.equals("Exit") ||
-      op_name.equals("Switch") || op_name.equals("Merge")) {
+  if (op_name == "Enter" || op_name == "Exit" || op_name == "Switch" ||
+      op_name == "Merge") {
     return mlir::isa<mlir::TF::TensorFlowRefType>(
         getElementTypeOrSelf(op->getResult(0).getType()));
   }
@@ -308,8 +311,8 @@ absl::StatusOr<llvm::StringRef> GetTensorFlowOpName(llvm::StringRef op_name) {
   if (std::none_of(prefixes->begin(), prefixes->end(), [&](std::string prefix) {
         return op_name.consume_front(prefix);
       })) {
-    return errors::FailedPrecondition("op node '", op_name.str(),
-                                      "' was not a TF op!");
+    return absl::FailedPreconditionError(
+        absl::StrCat("op node '", op_name.str(), "' was not a TF op!"));
   }
   // Control dialect NextIteration sink ends with ".sink" and Executor dialect
   // NextIteration sink ends with ".Sink".
@@ -373,7 +376,7 @@ absl::StatusOr<std::unique_ptr<NodeDef>> GetOperationNodeDef(
   return node_def;
 }
 
-Status ConvertAttributes(
+absl::Status ConvertAttributes(
     const llvm::ArrayRef<mlir::NamedAttribute> attrs,
     const absl::flat_hash_set<absl::string_view>& attrs_to_ignore,
     bool remove_ref_type, AttrValueMap* values) {
@@ -397,21 +400,22 @@ Status ConvertAttributes(
     if (auto symbol_ref = mlir::dyn_cast<mlir::SymbolRefAttr>(attr)) {
       TF_RETURN_IF_ERROR(ConvertAttribute(
           mlir::cast<mlir::FlatSymbolRefAttr>(symbol_ref), &value));
-      func_call_attrs[string(name)] = std::move(value);
+      func_call_attrs[std::string(name)] = std::move(value);
       continue;
     }
     if (auto func_attr = mlir::dyn_cast<mlir::TF::FuncAttr>(attr)) {
       TF_RETURN_IF_ERROR(ConvertAttribute(func_attr, remove_ref_type, &value));
-      func_call_attrs[string(name)] = std::move(value);
+      func_call_attrs[std::string(name)] = std::move(value);
       continue;
     }
     if (mlir::isa<mlir::AffineMapAttr>(attr)) {
       // AffineMapAttr is not implemented.
-      return errors::Unimplemented("AffineMap attribute (needed for '",
-                                   name_strref, "') unimplemented");
+      return absl::UnimplementedError(
+          absl::StrCat("AffineMap attribute (needed for '", name_strref,
+                       "') unimplemented"));
     }
     TF_RETURN_IF_ERROR(
-        llvm::TypeSwitch<mlir::Attribute, Status>(attr)
+        llvm::TypeSwitch<mlir::Attribute, absl::Status>(attr)
             .Case<mlir::BoolAttr, mlir::IntegerAttr, mlir::FloatAttr,
                   mlir::StringAttr, mlir::ElementsAttr, mlir::UnitAttr,
                   mlir::TF::ShapeAttr, mlir::TF::PlaceholderAttr>(
@@ -431,12 +435,12 @@ Status ConvertAttributes(
     // input TensorFlow GraphDef shouldn't contain '.'. If it does appear in
     // the attribute from MLIR, it is treated as an attribute from function
     // calls.
-    std::vector<string> name_tokens =
+    std::vector<std::string> name_tokens =
         absl::StrSplit(name, '.', absl::SkipEmpty());
     TF_RET_CHECK(name_tokens.size() <= 2);
     auto it = func_call_attrs.find(name_tokens[0]);
     if (it == func_call_attrs.end()) {
-      (*values)[string(name)] = std::move(value);
+      (*values)[std::string(name)] = std::move(value);
     } else {
       (*it->second.mutable_func()->mutable_attr())[name_tokens[1]] =
           std::move(value);
@@ -448,12 +452,13 @@ Status ConvertAttributes(
   return absl::OkStatus();
 }
 
-Status SetShapeAttribute(absl::string_view name, mlir::ShapedType shaped_type,
-                         AttrValueMap* values) {
+absl::Status SetShapeAttribute(absl::string_view name,
+                               mlir::ShapedType shaped_type,
+                               AttrValueMap* values) {
   AttrValue value;
   SetTensorShapeProto(shaped_type, value.mutable_list()->add_shape());
 
-  auto result = values->insert({string(name), value});
+  auto result = values->insert({std::string(name), value});
   if (!result.second) {
     // This should be extremely rare as it means we are adding the same
     // attribute multiple times/have some redundancy in representing this
@@ -463,9 +468,9 @@ Status SetShapeAttribute(absl::string_view name, mlir::ShapedType shaped_type,
     // should be trivially the same, else fail.
     std::string new_shape_string = value.list().shape(0).ShortDebugString();
     if (actual_shape.ShortDebugString() != new_shape_string) {
-      return errors::InvalidArgument("Expected ", new_shape_string, " '", name,
-                                     "' attribute but found ",
-                                     actual_shape.ShortDebugString());
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Expected ", new_shape_string, " '", name, "' attribute but found ",
+          actual_shape.ShortDebugString()));
     }
   }
   return absl::OkStatus();
@@ -475,7 +480,7 @@ bool IsLegacyCallInstruction(mlir::Operation* inst) {
   return llvm::dyn_cast<mlir::TF::LegacyCallOp>(inst);
 }
 
-Status AddTensorFlowOpPrefix(std::string prefix) {
+absl::Status AddTensorFlowOpPrefix(std::string prefix) {
   GlobalOpPrefixes()->insert(prefix);
   return absl::OkStatus();
 }

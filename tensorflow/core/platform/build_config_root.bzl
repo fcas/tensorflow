@@ -1,14 +1,31 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Provides a redirection point for platform specific implementations of starlark utilities."""
 
 load(
-    "@local_tsl//tsl/platform/default:build_config_root.bzl",
+    "@xla//xla/tsl/platform/default:build_config_root.bzl",
     _if_llvm_aarch32_available = "if_llvm_aarch32_available",
     _if_llvm_aarch64_available = "if_llvm_aarch64_available",
     _if_llvm_arm_available = "if_llvm_arm_available",
     _if_llvm_hexagon_available = "if_llvm_hexagon_available",
     _if_llvm_powerpc_available = "if_llvm_powerpc_available",
+    _if_llvm_riscv_available = "if_llvm_riscv_available",
     _if_llvm_system_z_available = "if_llvm_system_z_available",
     _if_llvm_x86_available = "if_llvm_x86_available",
+    _if_pywrap = "if_pywrap",
     _if_static = "if_static",
     _if_static_and_not_mobile = "if_static_and_not_mobile",
     _tf_additional_grpc_deps_py = "tf_additional_grpc_deps_py",
@@ -31,10 +48,12 @@ if_llvm_aarch64_available = _if_llvm_aarch64_available
 if_llvm_arm_available = _if_llvm_arm_available
 if_llvm_hexagon_available = _if_llvm_hexagon_available
 if_llvm_powerpc_available = _if_llvm_powerpc_available
+if_llvm_riscv_available = _if_llvm_riscv_available
 if_llvm_system_z_available = _if_llvm_system_z_available
 if_llvm_x86_available = _if_llvm_x86_available
 if_dynamic_kernels = _if_dynamic_kernels
 if_static = _if_static
+if_pywrap = _if_pywrap
 if_static_and_not_mobile = _if_static_and_not_mobile
 tf_additional_grpc_deps_py = _tf_additional_grpc_deps_py
 tf_additional_license_deps = _tf_additional_license_deps

@@ -1,16 +1,30 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 #   Wrap NVIDIA TensorRT (http://developer.nvidia.com/tensorrt) with tensorflow
 #   and provide TensorRT operators and converter package.
 #   APIs are meant to change over time.
 
 load("@local_config_tensorrt//:build_defs.bzl", "if_tensorrt")
+load("@rules_python//python:proto.bzl", "py_proto_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load(
-    "@local_tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "@xla//xla/tsl/platform/default:cuda_build_defs.bzl",
     "cuda_rpath_flags",
 )
-load("//tensorflow:strict.default.bzl", "py_strict_library")
-
-# Placeholder: load py_proto_library
 load(
     "//tensorflow:tensorflow.bzl",
     "VERSION",
@@ -76,7 +90,7 @@ cc_library(
     deps = if_tensorrt([
         "@local_config_tensorrt//:tensorrt_headers",
         "//tensorflow/core:lib",
-        "@local_xla//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:dso_loader",
     ]),
 )
 
@@ -114,7 +128,7 @@ tf_cuda_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core/platform:stream_executor",
-        "@local_xla//xla/stream_executor/gpu:gpu_init",
+        "@xla//xla/stream_executor/gpu:gpu_init",
     ] + if_tensorrt([
         ":tensorrt_lib",
     ]) + select({
@@ -463,7 +477,7 @@ tf_gen_op_wrapper_py(
         "//tensorflow/python/util:deprecation",
         "//tensorflow/python/util:tf_export",
     ],
-    py_lib_rule = py_strict_library,
+    py_lib_rule = py_library,
     deps = [
         ":trt_engine_resource_ops_op_lib",
         ":trt_op_libs",
@@ -472,7 +486,6 @@ tf_gen_op_wrapper_py(
 
 tf_custom_op_py_strict_library(
     name = "trt_ops_loader",
-    srcs_version = "PY3",
     deps = [
         ":_pywrap_py_utils",
         ":trt_ops",
@@ -780,6 +793,7 @@ tf_cuda_library(
         "//tensorflow/core/grappler/utils:functions",
         "//tensorflow/core/profiler/lib:annotated_traceme",
         "//tensorflow/core/profiler/lib:traceme",
+        "//tensorflow/core/public:release_version",
         "//tensorflow/tools/graph_transforms:transform_utils",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
@@ -1029,7 +1043,6 @@ cc_library(
 tf_proto_library(
     name = "trt_engine_instance_proto",
     srcs = ["utils/trt_engine_instance.proto"],
-    cc_api_version = 2,
     protodeps = tf_additional_all_protos(),
 )
 
@@ -1045,7 +1058,6 @@ tf_cuda_library(
         ":common_utils",
         ":tensorrt_lib",
         ":op_converter_registry",
-        "@local_xla//xla/stream_executor/platform:dso_loader",
     ]),
 )
 
@@ -1070,7 +1082,6 @@ pybind_extension(
         "@com_google_protobuf//:__subpackages__",
         "@com_googlesource_code_re2//:__subpackages__",
         "@curl//:__subpackages__",
-        "@double_conversion//:__subpackages__",
         "@eigen_archive//:__subpackages__",
         "@farmhash_archive//:__subpackages__",
         "@fft2d//:__subpackages__",
@@ -1087,16 +1098,14 @@ pybind_extension(
         "@local_config_git//:__subpackages__",
         "@local_config_rocm//:__subpackages__",
         "@local_config_tensorrt//:__subpackages__",
-        "@local_execution_config_platform//:__subpackages__",
-        "@ml_dtypes//:__subpackages__",
-        "@nsync//:__subpackages__",
+        "@ml_dtypes_py//ml_dtypes:__subpackages__",
         "@platforms//:__subpackages__",
         "@pybind11//:__subpackages__",
         "@snappy//:__subpackages__",
         "//:__subpackages__",
         "@zlib//:__subpackages__",
-        "@local_tsl//tsl:__subpackages__",
-        "@local_xla//xla:__subpackages__",
+        "@tsl//tsl:__subpackages__",
+        "@xla//xla:__subpackages__",
     ],
     deps = [
         ":common_utils",
@@ -1104,7 +1113,6 @@ pybind_extension(
         "//tensorflow/core/platform:env",
         "//tensorflow/core/platform:logging",
         "//tensorflow/core/platform:status",
-        "@local_xla//xla/stream_executor",
         "@pybind11",
     ],
 )
@@ -1113,7 +1121,6 @@ pybind_extension(
 # py_proto_library(
 #     name = "trt_engine_instance_proto_py_pb2",
 #     has_services = 0,
-#     api_version = 2,
 #     deps = [":trt_engine_instance_proto"],
 # )
 # copybara:uncomment_end

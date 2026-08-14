@@ -25,6 +25,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/memory/memory.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/graph_constructor.h"
@@ -37,6 +41,7 @@ limitations under the License.
 #include "tensorflow/core/data/tf_data_memory_logger.h"
 #include "tensorflow/core/data/tfdataz_metrics.h"
 #include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/dataset_metadata.pb.h"
 #include "tensorflow/core/framework/device.h"
 #include "tensorflow/core/framework/device_factory.h"
 #include "tensorflow/core/framework/function.h"
@@ -52,11 +57,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/public/version.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/refcount.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace data {
@@ -94,7 +95,8 @@ Iterator::~Iterator() {
   }
 }
 
-Status Iterator::GetNext(std::vector<Tensor>* outputs, bool* end_of_input) {
+absl::Status Iterator::GetNext(std::vector<Tensor>* outputs,
+                               bool* end_of_input) {
   return iterator_->GetNext(ctx_.get(), outputs, end_of_input);
 }
 
@@ -115,17 +117,17 @@ absl::StatusOr<std::vector<Tensor>> Iterator::Save() {
   return serialized;
 }
 
-Status Iterator::Restore(const std::vector<Tensor>& saved_iterator) {
+absl::Status Iterator::Restore(const std::vector<Tensor>& saved_iterator) {
   std::vector<const VariantTensorData*> data;
   data.reserve(saved_iterator.size());
   for (int i = 0; i < saved_iterator.size(); ++i) {
     auto saved_vec = saved_iterator[i].vec<Variant>();
     auto* variant = saved_vec(0).get<IteratorStateVariant>();
     if (!variant) {
-      return errors::Internal(
+      return absl::InternalError(absl::StrCat(
           "Cannot initialize an iterator from tensor ",
           saved_vec(0).DebugString(),
-          ". Expected a variant tensor of type IteratorStateVariant.");
+          ". Expected a variant tensor of type IteratorStateVariant."));
     }
     data.push_back(variant->GetData());
   }
@@ -133,10 +135,21 @@ Status Iterator::Restore(const std::vector<Tensor>& saved_iterator) {
   return iterator_->Restore(ctx_.get(), &reader);
 }
 
+void Iterator::Cancel() {
+  if (ctx_) {
+    if (ctx_->cancellation_manager()) {
+      ctx_->cancellation_manager()->StartCancel();
+    }
+    for (auto& split_provider : ctx_->split_providers()) {
+      split_provider->Cancel();
+    }
+  }
+}
+
 std::shared_ptr<model::Model> Iterator::model() const { return ctx_->model(); }
 
-Status Dataset::FromGraph(Params params, const GraphDef& graph_def,
-                          std::unique_ptr<Dataset>* result) {
+absl::Status Dataset::FromGraph(Params params, const GraphDef& graph_def,
+                                std::unique_ptr<Dataset>* result) {
   Graph graph(OpRegistry::Global());
   TF_RETURN_IF_ERROR(ImportGraphDef({}, graph_def, &graph, nullptr));
 
@@ -160,14 +173,15 @@ Status Dataset::FromGraph(Params params, const GraphDef& graph_def,
         return absl::OkStatus();
       }});
 
-  string fetch_node = "";
+  std::string fetch_node = "";
   for (const auto& node : graph_def.node()) {
     if (node.op() == "_Retval") {
       fetch_node = node.input(0);
     }
   }
   if (fetch_node.empty()) {
-    return errors::NotFound("Failed to find a _Retval op in the given dataset");
+    return absl::NotFoundError(
+        "Failed to find a _Retval op in the given dataset");
   }
 
   // Run graph up to `output_node` and extract the `DatasetBase` stored in the
@@ -178,6 +192,10 @@ Status Dataset::FromGraph(Params params, const GraphDef& graph_def,
                                       {fetch_node}, &outputs));
   data::DatasetBase* dataset;
   TF_RETURN_IF_ERROR(GetDatasetFromVariantTensor(outputs[0], &dataset));
+  Metadata metadata;
+  metadata.set_data_service_address(
+      params.metadata_options.data_service_address);
+  dataset->Initialize(metadata);
 
   data::DatasetBase* finalized_dataset;
   std::unique_ptr<thread::ThreadPool> pool(
@@ -195,7 +213,7 @@ Status Dataset::FromGraph(Params params, const GraphDef& graph_def,
   return absl::OkStatus();
 }  // static
 
-Status Dataset::MakeIterator(
+absl::Status Dataset::MakeIterator(
     std::vector<std::unique_ptr<SplitProvider>> split_providers,
     std::unique_ptr<Iterator>* result) {
   // Create an `IteratorContext`, which bundles together the necessary runtime
@@ -220,6 +238,8 @@ Status Dataset::MakeIterator(
     params.model = std::make_shared<model::Model>();
   }
   params.run_mode = RunMode::STANDALONE;
+  params.data_service_address =
+      finalized_dataset_->metadata().data_service_address();
   ctx = std::make_unique<IteratorContext>(std::move(params));
   SerializationContext::Params serialization_params(&op_ctx);
   auto serialization_ctx =
@@ -234,11 +254,11 @@ Status Dataset::MakeIterator(
   return absl::OkStatus();
 }
 
-Status Dataset::MakeIterator(std::unique_ptr<Iterator>* result) {
+absl::Status Dataset::MakeIterator(std::unique_ptr<Iterator>* result) {
   return MakeIterator(/*split_providers=*/{}, result);
 }
 
-Status Dataset::MakeSplitProviders(
+absl::Status Dataset::MakeSplitProviders(
     std::vector<std::unique_ptr<SplitProvider>>* result) {
   return finalized_dataset_->MakeSplitProviders(result);
 }

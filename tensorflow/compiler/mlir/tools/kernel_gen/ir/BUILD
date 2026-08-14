@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
@@ -30,24 +45,12 @@ td_library(
 gentbl_cc_library(
     name = "tf_framework_ops_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "tf_framework_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "tf_framework_ops.cc.inc",
-        ),
-        (
-            ["-gen-dialect-decls"],
-            "tf_framework_dialect.h.inc",
-        ),
-        (
-            ["-gen-dialect-defs"],
-            "tf_framework_dialect.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "tf_framework_ops.h.inc": ["-gen-op-decls"],
+        "tf_framework_ops.cc.inc": ["-gen-op-defs"],
+        "tf_framework_dialect.h.inc": ["-gen-dialect-decls"],
+        "tf_framework_dialect.cc.inc": ["-gen-dialect-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "tf_framework_ops.td",
     deps = [":td_files"],
@@ -56,16 +59,10 @@ gentbl_cc_library(
 gentbl_cc_library(
     name = "tf_status_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            ["-gen-enum-decls"],
-            "tf_status.h.inc",
-        ),
-        (
-            ["-gen-enum-defs"],
-            "tf_status.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "tf_status.h.inc": ["-gen-enum-decls"],
+        "tf_status.cc.inc": ["-gen-enum-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "tf_status.td",
     deps = [":td_files"],
@@ -84,6 +81,7 @@ cc_library(
         ":tf_status_inc_gen",
         "//tensorflow/core/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AllocationOpInterface",
         "@llvm-project//mlir:BufferizationDialect",
         "@llvm-project//mlir:BytecodeOpInterface",
@@ -93,6 +91,6 @@ cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )

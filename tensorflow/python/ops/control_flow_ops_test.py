@@ -42,6 +42,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import array_ops_stack
 from tensorflow.python.ops import check_ops
 from tensorflow.python.ops import cond as tf_cond
+from tensorflow.python.ops import cond_v2
 from tensorflow.python.ops import control_flow_assert
 from tensorflow.python.ops import control_flow_case
 from tensorflow.python.ops import control_flow_ops
@@ -62,6 +63,7 @@ from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
 from tensorflow.python.ops import while_loop
+from tensorflow.python.ops import while_v2
 import tensorflow.python.ops.tensor_array_grad  # pylint: disable=unused-import
 from tensorflow.python.platform import googletest
 from tensorflow.python.training import momentum
@@ -193,6 +195,38 @@ class WithDependenciesTestCase(test_util.TensorFlowTestCase):
     self.assertEqual(0, self.evaluate(counter))
     self.assertEqual(7, self.evaluate(const_with_dep))
     self.assertEqual(1, self.evaluate(counter))
+
+
+class TupleTestCase(test_util.TensorFlowTestCase):
+
+  @test_util.run_in_graph_and_eager_modes
+  def testNestedTupleRaisesTypeError(self):
+    a = constant_op.constant(1.0)
+    b = constant_op.constant(2.0)
+    c = constant_op.constant(3.0)
+    with self.assertRaises(TypeError):
+      control_flow_ops.tuple(((a, b), c))
+
+  @test_util.run_in_graph_and_eager_modes
+  def testNestedListRaisesTypeError(self):
+    a = constant_op.constant(1.0)
+    b = constant_op.constant(2.0)
+    with self.assertRaises(TypeError):
+      control_flow_ops.tuple([[a, b]])
+
+  @test_util.run_in_graph_and_eager_modes
+  def testDictElementRaisesTypeError(self):
+    a = constant_op.constant(1.0)
+    b = constant_op.constant(2.0)
+    with self.assertRaises(TypeError):
+      control_flow_ops.tuple([{"x": a}, b])
+
+  @test_util.run_in_graph_and_eager_modes
+  def testFlatSequenceSucceeds(self):
+    a = constant_op.constant(1.0)
+    b = constant_op.constant(2.0)
+    res = control_flow_ops.tuple([a, b])
+    self.assertLen(res, 2)
 
 
 class SwitchTestCase(test_util.TensorFlowTestCase):
@@ -458,6 +492,40 @@ class CondTest(test_util.TensorFlowTestCase):
     self.assertEqual(None if context.executing_eagerly() else 0.,
                      self.evaluate(grads_false[0]))
 
+  @test_util.run_in_graph_and_eager_modes
+  def testCondEagerConstantValidation(self):
+    if not context.executing_eagerly():
+      return
+
+    x = constant_op.constant(1.0, dtype=dtypes.float32)
+
+    def true_fn():
+      return constant_op.constant(5.0)
+
+    def false_fn():
+      # Type mismatch: adding a float32 tensor and an int32 tensor. Only fails
+      # when false_fn is actually traced/executed.
+      return math_ops.add(x, constant_op.constant(1, dtype=dtypes.int32))
+
+    # By default the inactive branch is not validated, so the bug in false_fn is
+    # not surfaced when the constant predicate selects true_fn.
+    self.assertEqual(
+        5.0,
+        self.evaluate(
+            tf_cond.cond(constant_op.constant(True), true_fn, false_fn)
+        ),
+    )
+
+    # With validation opted in, both branches are traced up front, so the error
+    # in the inactive branch is raised even though true_fn is selected.
+    validation_was_enabled = tf_cond._VALIDATE_INACTIVE_BRANCH
+    tf_cond._VALIDATE_INACTIVE_BRANCH = True
+    try:
+      with self.assertRaises((TypeError, ValueError)):
+        tf_cond.cond(constant_op.constant(True), true_fn, false_fn)
+    finally:
+      tf_cond._VALIDATE_INACTIVE_BRANCH = validation_was_enabled
+
   def testCondWithGroupAndSummaries(self):
     with ops.Graph().as_default():
       writer = summary_ops_v2.create_file_writer(self.get_temp_dir())
@@ -469,6 +537,47 @@ class CondTest(test_util.TensorFlowTestCase):
         self.evaluate(variables.global_variables_initializer())
         self.evaluate(summary_ops_v2.summary_writer_initializer_op())
         self.assertEqual(self.evaluate(op), True)
+
+  def _makeGradient(self, use_case=False):
+    inputs = [variables.Variable(2.0), variables.Variable(5.0)]
+    with backprop.GradientTape() as tape:
+      for x in inputs:
+        tape.watch(x)
+      f1 = lambda: math_ops.multiply(inputs[0], 17)
+      f2 = lambda: math_ops.add(inputs[1], 23)
+      if use_case:
+        z = cond_v2.indexed_case(variables.Variable(1), [f1, f2])
+      else:
+        z = cond_v2.cond_v2(math_ops.less(inputs[0], inputs[1]), f1, f2)
+    return tape.gradient(z, inputs)
+
+  def testCondWithOptionals(self):
+    if context.executing_eagerly():
+      return
+    grads = self._makeGradient()
+    assert all("Optional" in str(g.graph.as_graph_def()) for g in grads)
+
+  def testCondWithoutOptionals(self):
+    if context.executing_eagerly():
+      return
+    with context.temporarily_disable_optionals_in_gradients():
+      grads = self._makeGradient()
+      self.assertEqual(len(grads), 2)
+      assert not any("Optional" in str(g.graph.as_graph_def()) for g in grads)
+
+  def testCaseWithOptionals(self):
+    if context.executing_eagerly():
+      return
+    grads = self._makeGradient(use_case=True)
+    assert all("Optional" in str(g.graph.as_graph_def()) for g in grads)
+
+  def testCaseWithoutOptionals(self):
+    if context.executing_eagerly():
+      return
+    with context.temporarily_disable_optionals_in_gradients():
+      grads = self._makeGradient(use_case=True)
+      self.assertEqual(len(grads), 2)
+      assert not any("Optional" in str(g.graph.as_graph_def()) for g in grads)
 
 
 class ContextTest(test_util.TensorFlowTestCase):
@@ -1732,6 +1841,20 @@ class AssertTest(test_util.TensorFlowTestCase):
       self.evaluate(whiny(False))
 
     self.assertAllEqual(whiny(True), 5)
+
+
+class AsyncNoopTest(test_util.TensorFlowTestCase):
+
+  def testAsyncNoop(self):
+
+    @def_function.function
+    def f():
+      x = constant_op.constant(2)
+      with ops.control_dependencies([while_v2.async_noop()]):
+        y = x + 2
+      return y
+
+    self.assertEqual(self.evaluate(f()), 4)
 
 
 if __name__ == "__main__":

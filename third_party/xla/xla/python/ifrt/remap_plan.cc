@@ -15,24 +15,38 @@ limitations under the License.
 
 #include "xla/python/ifrt/remap_plan.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "absl/base/optimization.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/hash/hash.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/pjrt/pjrt_layout.h"
+#include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
+#include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/remap_plan.pb.h"
+#include "xla/python/ifrt/serdes_version.h"
+#include "xla/python/ifrt/shape.h"
+#include "xla/python/ifrt/sharding.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -70,11 +84,9 @@ absl::StatusOr<RemapPlan::Mapping> MappingFromProto(
 }
 
 // Serializes `RemapPlan::Mapping` into `RemapPlanProto::MappingProto`.
-absl::StatusOr<RemapPlanProto::MappingProto> MappingToProto(
-    const RemapPlan::Mapping& mapping) {
+absl::Status MappingToProto(const RemapPlan::Mapping& mapping,
+                            RemapPlanProto::MappingProto& proto) {
   TF_RET_CHECK(mapping.from.size() == mapping.to.size());
-
-  RemapPlanProto::MappingProto proto;
 
   proto.set_in_array(mapping.in_array);
   proto.set_out_array(mapping.out_array);
@@ -94,7 +106,28 @@ absl::StatusOr<RemapPlanProto::MappingProto> MappingToProto(
     proto.add_to_end(mapping.to[i].end);
     proto.add_to_step(mapping.to[i].step);
   }
-  return proto;
+  return absl::OkStatus();
+}
+
+absl::StatusOr<RemapPlan::InputDeviceRange> InputDeviceRangeFromProto(
+    Client* client, const RemapPlanProto::InputDevices& proto) {
+  RemapPlan::InputDeviceRange range;
+  range.in_array = proto.in_array();
+  ABSL_ASSIGN_OR_RETURN(range.input_devices,
+                   DeviceList::FromProto(client, proto.device_list()));
+  return range;
+}
+
+void InputDeviceToOutputToProto(
+    SerDesVersion version, int out_array,
+    absl::Span<const RemapPlan::InputDeviceRange> input_devices,
+    RemapPlanProto::InputDevicesForOutput& proto) {
+  proto.set_out_array(out_array);
+  for (const RemapPlan::InputDeviceRange& input : input_devices) {
+    RemapPlanProto::InputDevices* input_proto = proto.add_input_devices();
+    input_proto->set_in_array(input.in_array);
+    input.input_devices->ToProto(*input_proto->mutable_device_list(), version);
+  }
 }
 
 // Checks if `interval` is in a valid range for the given number of shards.
@@ -104,12 +137,26 @@ absl::Status CheckRange(int64_t num_shards,
     return InvalidArgument("start must be in [0, %d], but is %d",
                            num_shards - 1, interval.start);
   }
-  if (interval.end < 0 || interval.end > num_shards) {
-    return InvalidArgument("end must be in [0, %d], but is %d", num_shards,
-                           interval.end);
-  }
   if (interval.step <= 0) {
     return InvalidArgument("step must be positive, but is %d", interval.step);
+  }
+  if (interval.end < 0 || interval.end > num_shards + interval.step - 1) {
+    return InvalidArgument("end must be in [0, %d] if step is %d, but is %d",
+                           num_shards + interval.step - 1, interval.step,
+                           interval.end);
+  }
+  // The `end` bound above is necessary but not sufficient: with a large `step`,
+  // the last stepped index can exceed `num_shards` while still satisfying
+  // `index < end`, which would lead to out-of-bounds indexing of the per-shard
+  // buffers. Verify the last stepped index explicitly.
+  if (interval.end > interval.start) {
+    const int64_t last_index =
+        interval.end - 1 - (interval.end - 1 - interval.start) % interval.step;
+    if (last_index >= num_shards) {
+      return InvalidArgument(
+          "interval addresses shard %d, which is out of range [0, %d)",
+          last_index, num_shards);
+    }
   }
   return absl::OkStatus();
 }
@@ -117,6 +164,43 @@ absl::Status CheckRange(int64_t num_shards,
 // Returns the number of steps in `interval`.
 int64_t GetNumberOfSteps(const RemapPlan::Interval& interval) {
   return (interval.end - interval.start + interval.step - 1) / interval.step;
+}
+
+bool CheckOneInputForOneOutput(const xla::ifrt::RemapPlan& plan) {
+  const auto& mappings = plan.mappings();
+  absl::flat_hash_map<int, int> output_to_input;
+
+  for (const auto& mapping : mappings) {
+    int in_array = mapping.in_array;
+    int out_array = mapping.out_array;
+
+    const auto [it, inserted] = output_to_input.insert({out_array, in_array});
+    if (!inserted && it->second != in_array) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+absl::StatusOr<DeviceListRef> ComputeDeviceListFromIntervals(
+    Client* client, const DeviceListRef& device_list, int64_t count,
+    absl::Span<const RemapPlan::Interval> intervals) {
+  TF_RET_CHECK(count >= 0);
+  std::vector<Device*> devices;
+  devices.reserve(count);
+  for (const RemapPlan::Interval& interval : intervals) {
+    if (interval.step <= 0) {
+      return InvalidArgument("step must be positive, but is %d", interval.step);
+    }
+    int64_t index = interval.start;
+    while (index < interval.end) {
+      TF_RET_CHECK(index >= 0 && index < device_list->size());
+      devices.push_back(device_list->devices()[index]);
+      index += interval.step;
+    }
+  }
+  return client->MakeDeviceList(devices);
 }
 
 }  // namespace
@@ -141,47 +225,197 @@ std::string RemapPlan::Mapping::DebugString() const {
                       ",to=", format_intervals(to), ")");
 }
 
-absl::Status RemapPlan::Validate() const {
-  const int num_inputs = input_specs.size();
-  if (num_inputs == 0) {
-    return InvalidArgument("Must have at least one input");
+namespace {
+
+absl::StatusOr<
+    absl::flat_hash_map<int, std::vector<RemapPlan::InputDeviceRange>>>
+ComputeInputDevicesForOutputMap(Client* client,
+                                absl::Span<const ArraySpec> input_specs,
+                                absl::Span<const ArraySpec> output_specs,
+                                absl::Span<const RemapPlan::Mapping> mappings) {
+  // A list of intervals along with the sum of entries across all the intervals.
+  struct IntervalsAndCount {
+    std::vector<RemapPlan::Interval> intervals;
+    int64_t count = 0;
+  };
+
+  // Map from output array index to all its input contributors.
+  //
+  // The value is a map from input array index to the intervals of that input
+  // array that contribute to the given output.
+  absl::flat_hash_map<int, absl::flat_hash_map<int, IntervalsAndCount>>
+      output_to_inputs_and_intervals;
+  for (int64_t i = 0; i < mappings.size(); ++i) {
+    const RemapPlan::Mapping& mapping = mappings[i];
+    if (mapping.in_array < 0 || mapping.in_array >= input_specs.size()) {
+      return InvalidArgument(
+          "mappings[%d].in_array must be in [0, %d], but is %d", i,
+          input_specs.size() - 1, mapping.in_array);
+    }
+    if (mapping.out_array < 0 || mapping.out_array >= output_specs.size()) {
+      return InvalidArgument(
+          "mappings[%d].out_array must be in [0, %d], but is %d", i,
+          output_specs.size() - 1, mapping.out_array);
+    }
+    if (mapping.from.size() != mapping.to.size()) {
+      return InvalidArgument(
+          "mappings[%d].from and mappings[%d].to must have the same number of "
+          "intervals, but has %d and %d intervals",
+          i, i, mapping.from.size(), mapping.to.size());
+    }
+    const int64_t in_shards_count = input_specs[mapping.in_array]
+                                        .sharding->devices()
+                                        ->AddressableDeviceList()
+                                        ->size();
+    const int64_t out_shards_count = output_specs[mapping.out_array]
+                                         .sharding->devices()
+                                         ->AddressableDeviceList()
+                                         ->size();
+    IntervalsAndCount& intervals =
+        output_to_inputs_and_intervals[mapping.out_array][mapping.in_array];
+    for (int s = 0; s < mapping.from.size(); ++s) {
+      ABSL_RETURN_IF_ERROR(CheckRange(in_shards_count, mapping.from[s]));
+      ABSL_RETURN_IF_ERROR(CheckRange(out_shards_count, mapping.to[s]));
+      intervals.intervals.push_back(mapping.from[s]);
+      intervals.count += GetNumberOfSteps(mapping.from[s]);
+    }
   }
 
-  for (int i = 0; i < num_inputs; ++i) {
-    if (input_specs[i].dtype != input_specs.front().dtype) {
-      return InvalidArgument(
-          "Input must have the same dtype: %s (input 0) vs. %s (input "
-          "%d)",
-          input_specs.front().dtype.DebugString(),
-          input_specs[i].dtype.DebugString(), i);
+  absl::flat_hash_map<int, std::vector<RemapPlan::InputDeviceRange>>
+      input_devices_for_output_map;
+  for (const auto& [out_array, input_intervals] :
+       output_to_inputs_and_intervals) {
+    TF_RET_CHECK(out_array >= 0 && out_array < output_specs.size());
+    const DeviceListRef& out_devices =
+        output_specs[out_array].sharding->devices();
+    auto [it, inserted] = input_devices_for_output_map.insert({out_array, {}});
+    TF_RET_CHECK(inserted);
+    for (const auto& [in_array, intervals] : input_intervals) {
+      TF_RET_CHECK(in_array >= 0 && in_array < input_specs.size());
+      const DeviceListRef& in_devices =
+          input_specs[in_array].sharding->devices();
+      TF_RET_CHECK(intervals.count >= 0 &&
+                   intervals.count <= out_devices->size());
+      TF_RET_CHECK(intervals.count >= 0 &&
+                   intervals.count <= in_devices->size());
+      DeviceListRef interval_device_list;
+      if (intervals.count == in_devices->size()) {
+        interval_device_list = in_devices;
+      } else if (intervals.count == out_devices->size()) {
+        interval_device_list = out_devices;
+      } else {
+        ABSL_ASSIGN_OR_RETURN(
+            interval_device_list,
+            ComputeDeviceListFromIntervals(client, in_devices, intervals.count,
+                                           intervals.intervals));
+      }
+      it->second.push_back({in_array, interval_device_list});
     }
   }
-  const int num_outputs = output_specs.size();
-  for (int i = 0; i < num_outputs; ++i) {
-    if (output_specs[i].dtype != input_specs.front().dtype) {
-      return InvalidArgument(
-          "Input and output must have the same dtype: %s (input 0) vs. %s "
-          "(output %d)",
-          output_specs.front().dtype.DebugString(),
-          output_specs[i].dtype.DebugString(), i);
+  return input_devices_for_output_map;
+}
+
+}  // namespace
+
+absl::StatusOr<RemapPlan> RemapPlan::CreateOptimized(
+    Client* client, std::vector<ArraySpec> input_specs,
+    std::vector<ArraySpec> output_specs, std::vector<Mapping> mappings) {
+  ABSL_ASSIGN_OR_RETURN(auto input_devices_for_output_map,
+                   ComputeInputDevicesForOutputMap(client, input_specs,
+                                                   output_specs, mappings));
+  RemapPlan plan(std::move(input_specs), std::move(output_specs),
+                 std::move(mappings), std::move(input_devices_for_output_map));
+  ABSL_RETURN_IF_ERROR(plan.Validate());
+  return plan;
+}
+
+namespace {
+
+// A utility class that calculates the shard shape from an array spec.
+class ShardShapeVector {
+ public:
+  static absl::StatusOr<ShardShapeVector> Create(const ArraySpec& spec) {
+    // Fast path for even shardings.
+    if (absl::StatusOr<Shape> s = spec.sharding->GetShardShape(spec.shape);
+        s.ok()) {
+      return ShardShapeVector(*std::move(s));
     }
+
+    ABSL_ASSIGN_OR_RETURN(auto shards,
+                     spec.sharding->Disassemble(
+                         spec.shape, SingleDeviceShardSemantics::kAllShards));
+    std::vector<Shape> shapes;
+    shapes.reserve(shards.size());
+    for (auto& shard : shards) {
+      shapes.push_back(std::move(shard.first));
+    }
+    return ShardShapeVector(std::move(shapes));
+  }
+
+  // Returns the shard shape of `index`-th shard.
+  const Shape& shard(int index) const {
+    if (auto* shape = std::get_if<Shape>(&shapes_)) {
+      return *shape;
+    }
+    if (auto* shapes = std::get_if<std::vector<Shape>>(&shapes_)) {
+      return (*shapes)[index];
+    }
+    LOG(FATAL) << "Unexpected shapes variant: " << shapes_.index();
+  }
+
+ private:
+  explicit ShardShapeVector(Shape shape) : shapes_(std::move(shape)) {}
+
+  explicit ShardShapeVector(std::vector<Shape> shapes)
+      : shapes_(std::move(shapes)) {}
+
+  std::variant<Shape, std::vector<Shape>> shapes_;
+};
+
+}  // namespace
+
+absl::Status RemapPlan::Validate() const {
+  const int num_inputs = rep_->input_specs.size();
+  if (num_inputs == 0) {
+    return InvalidArgument("Must have at least one input");
   }
 
   std::vector<std::vector<bool>> in_used_buffers_list(num_inputs);
   for (int i = 0; i < num_inputs; ++i) {
     in_used_buffers_list[i].resize(
-        /*count=*/input_specs[i].sharding->devices().size(),
+        /*count=*/rep_->input_specs[i]
+            .sharding->devices()
+            ->AddressableDeviceList()
+            ->size(),
         /*value=*/false);
   }
-  std::vector<DeviceList::Devices> out_assigned_devices_list(num_outputs);
+
+  const int num_outputs = rep_->output_specs.size();
+  std::vector<absl::InlinedVector<Device*, 1>> out_assigned_devices_list(
+      num_outputs);
   for (int i = 0; i < num_outputs; ++i) {
     out_assigned_devices_list[i].resize(
-        /*n=*/output_specs[i].sharding->devices().size(),
+        /*n=*/rep_->output_specs[i]
+            .sharding->devices()
+            ->AddressableDeviceList()
+            ->size(),
         /*v=*/nullptr);
   }
 
-  for (int64_t i = 0; i < mappings->size(); ++i) {
-    const RemapPlan::Mapping& mapping = (*mappings)[i];
+  if (rep_->mappings.empty()) {
+    return InvalidArgument("Must have at least one mapping");
+  }
+
+  absl::flat_hash_map<int,
+                      absl::flat_hash_map<int, absl::flat_hash_set<Device*>>>
+      out_buffer_to_in_buffer_and_devices;
+  for (int64_t i = 0; i < rep_->mappings.size(); ++i) {
+    const RemapPlan::Mapping& mapping = rep_->mappings[i];
+    absl::flat_hash_set<Device*>* in_device_set =
+        rep_->input_devices_for_output_map.contains(mapping.out_array)
+            ? &out_buffer_to_in_buffer_and_devices[mapping.out_array]
+                                                  [mapping.in_array]
+            : nullptr;
     if (mapping.in_array < 0 || mapping.in_array >= num_inputs) {
       return InvalidArgument(
           "mappings[%d].in_array must be in [0, %d], but is %d", i,
@@ -199,10 +433,42 @@ absl::Status RemapPlan::Validate() const {
           i, i, mapping.from.size(), mapping.to.size());
     }
 
+    const ArraySpec& input_spec = rep_->input_specs[mapping.in_array];
+    const ArraySpec& output_spec = rep_->output_specs[mapping.out_array];
+
+    if (input_spec.dtype != output_spec.dtype) {
+      return InvalidArgument(
+          "Input and output must have the same dtype: %v (input %d) vs. %v "
+          "(output %d)",
+          input_spec.dtype, mapping.in_array, output_spec.dtype,
+          mapping.out_array);
+    }
+
+    const std::shared_ptr<const xla::PjRtLayout>& in_layout = input_spec.layout;
+    const std::shared_ptr<const xla::PjRtLayout>& out_layout =
+        output_spec.layout;
+    if (in_layout != out_layout &&
+        (!in_layout || !out_layout || *in_layout != *out_layout)) {
+      return InvalidArgument(
+          "Input and output must have the same layout: %s (input %d) vs. %s "
+          "(output %d)",
+          in_layout != nullptr ? in_layout->ToString() : "<nullptr>",
+          mapping.in_array,
+          out_layout != nullptr ? out_layout->ToString() : "<nullptr>",
+          mapping.out_array);
+    }
+
+    ABSL_ASSIGN_OR_RETURN(const auto input_shard_shapes,
+                     ShardShapeVector::Create(input_spec));
+    ABSL_ASSIGN_OR_RETURN(const auto output_shard_shapes,
+                     ShardShapeVector::Create(output_spec));
+
     std::vector<bool>& in_used_buffers = in_used_buffers_list[mapping.in_array];
-    const DeviceList& in_devices =
-        input_specs[mapping.in_array].sharding->devices();
-    DeviceList::Devices& out_assigned_devices =
+    absl::Span<Device* const> in_devices = rep_->input_specs[mapping.in_array]
+                                               .sharding->devices()
+                                               ->AddressableDeviceList()
+                                               ->devices();
+    absl::InlinedVector<Device*, 1>& out_assigned_devices =
         out_assigned_devices_list[mapping.out_array];
     const int64_t in_shards_count = in_used_buffers.size();
     const int64_t out_shards_count = out_assigned_devices.size();
@@ -211,8 +477,8 @@ absl::Status RemapPlan::Validate() const {
       const RemapPlan::Interval& in_interval = mapping.from[s];
       const RemapPlan::Interval& out_interval = mapping.to[s];
 
-      TF_RETURN_IF_ERROR(CheckRange(in_shards_count, in_interval));
-      TF_RETURN_IF_ERROR(CheckRange(out_shards_count, out_interval));
+      ABSL_RETURN_IF_ERROR(CheckRange(in_shards_count, in_interval));
+      ABSL_RETURN_IF_ERROR(CheckRange(out_shards_count, out_interval));
       if (GetNumberOfSteps(in_interval) != GetNumberOfSteps(out_interval)) {
         return InvalidArgument(
             "mappings[%d].from[%d] and mappings[%d].to[%d] must have the same "
@@ -226,99 +492,202 @@ absl::Status RemapPlan::Validate() const {
       int64_t in_shard = in_interval.start;
       int64_t out_shard = out_interval.start;
       while (in_shard < in_interval.end) {
+        TF_RET_CHECK(in_shard >= 0 && in_shard < in_shards_count);
+        TF_RET_CHECK(out_shard >= 0 && out_shard < out_shards_count);
         if (in_used_buffers[in_shard]) {
-          return InvalidArgument("Input array %d shard %d is already used",
-                                 mapping.in_array, in_shard);
+          return InvalidArgument(
+              "Input array %d addressable shard %d is already used",
+              mapping.in_array, in_shard);
         }
         in_used_buffers[in_shard] = true;
+
+        if (in_device_set) {
+          if (!in_device_set->insert(in_devices[in_shard]).second) {
+            return InvalidArgument(
+                "Input device %s used more than once in mappings from input "
+                "array %d to output array %d",
+                in_devices[in_shard]->DebugString(), mapping.in_array,
+                mapping.out_array);
+          }
+        }
         if (out_assigned_devices[out_shard] != nullptr) {
-          return InvalidArgument("Output array %d shard %d is already assigned",
-                                 mapping.out_array, out_shard);
+          return InvalidArgument(
+              "Output array %d addressable shard %d is already assigned",
+              mapping.out_array, out_shard);
         }
         out_assigned_devices[out_shard] = in_devices[in_shard];
+
+        if (input_shard_shapes.shard(in_shard) !=
+            output_shard_shapes.shard(out_shard)) {
+          return InvalidArgument(
+              "Output array %d addressable shard %d has a different shard "
+              "shape from the corresponding input shard: %v -> %v",
+              mapping.out_array, out_shard, input_shard_shapes.shard(in_shard),
+              output_shard_shapes.shard(out_shard));
+        }
+
         in_shard += in_interval.step;
         out_shard += out_interval.step;
       }
     }
   }
 
-  for (int i = 0; i < num_outputs; ++i) {
-    for (int out_shard = 0;
-         out_shard < output_specs[i].sharding->devices().size(); ++out_shard) {
-      if (out_assigned_devices_list[i][out_shard] == nullptr) {
-        return InvalidArgument("Output array %d shard %d is unassigned", i,
-                               out_shard);
+  for (const auto& [out_array, inputs] : rep_->input_devices_for_output_map) {
+    const auto out_it = out_buffer_to_in_buffer_and_devices.find(out_array);
+    if (out_it == out_buffer_to_in_buffer_and_devices.end()) {
+      return InvalidArgument(
+          "Output buffer index %d in `input_devices_for_output_map` but not in "
+          "`mappings`",
+          out_array);
+    }
+    if (inputs.size() != out_it->second.size()) {
+      return InvalidArgument(
+          "Output buffer index %d in `input_devices_for_output_map` has %d "
+          "inputs, but `mappings` reference %d inputs",
+          out_array, inputs.size(), out_it->second.size());
+    }
+    for (const InputDeviceRange& range : inputs) {
+      const auto in_it = out_it->second.find(range.in_array);
+      if (in_it == out_it->second.end()) {
+        return InvalidArgument(
+            "Output buffer index %d in `input_devices_for_output_map` "
+            "references input array %d that is not present in `mappings`",
+            out_array, range.in_array);
+      }
+      if (in_it->second.size() !=
+          range.input_devices->AddressableDeviceList()->size()) {
+        return InvalidArgument(
+            "Output buffer index %d in `input_devices_for_output_map` "
+            "uses %d addressable devices from input array %d, but `mappings` "
+            "contains %d addressable devices",
+            out_array, range.input_devices->AddressableDeviceList()->size(),
+            range.in_array, in_it->second.size());
+      }
+      for (const Device* const device :
+           range.input_devices->AddressableDeviceList()->devices()) {
+        if (!in_it->second.contains(device)) {
+          return InvalidArgument(
+              "Output buffer index %d in `input_devices_for_output_map` "
+              "references device %s from input array %d, but `mappings` does "
+              "not reference that device",
+              out_array, device->DebugString(), range.in_array);
+        }
       }
     }
-    if (out_assigned_devices_list[i] !=
-        output_specs[i].sharding->devices().devices()) {
+  }
+
+  for (int i = 0; i < num_outputs; ++i) {
+    xla::ifrt::DeviceList* devices =
+        rep_->output_specs[i].sharding->devices()->AddressableDeviceList();
+    for (int out_shard = 0; out_shard < devices->size(); ++out_shard) {
+      if (out_assigned_devices_list[i][out_shard] == nullptr) {
+        return InvalidArgument(
+            "Output array %d addressable shard %d is unassigned", i, out_shard);
+      }
+    }
+    if (out_assigned_devices_list[i] != devices->devices()) {
       return InvalidArgument(
-          "Output array %d devices and sharding devices do not match: "
-          "Expected %s, but got %s",
-          i, output_specs[i].sharding->devices().DebugString(),
-          DeviceList(std::move(out_assigned_devices_list[i])).DebugString());
+          "Output array %d addressable devices and sharding devices do not "
+          "match: Expected %v, but got [%s]",
+          i, *devices,
+          absl::StrJoin(out_assigned_devices_list[i], ", ",
+                        [](std::string* s, Device* d) {
+                          absl::StrAppend(s, d->ToString());
+                        }));
     }
   }
   return absl::OkStatus();
 }
 
-absl::StatusOr<RemapPlan> RemapPlan::FromProto(
-    DeviceList::LookupDeviceFunc lookup_device, const RemapPlanProto& proto) {
-  RemapPlan plan;
+absl::StatusOr<RemapPlan> RemapPlan::FromProto(Client* client,
+                                               const RemapPlanProto& proto) {
+  const SerDesVersionNumber version_number(proto.version_number());
+  if (version_number != SerDesVersionNumber(0)) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "Unsupported ", version_number, " for RemapPlan deserialization"));
+  }
 
-  plan.input_specs.reserve(proto.input_specs_size());
+  std::vector<ArraySpec> input_specs;
+  input_specs.reserve(proto.input_specs_size());
   for (const auto& input_spec_proto : proto.input_specs()) {
-    TF_ASSIGN_OR_RETURN(ArraySpec input_spec,
-                        ArraySpec::FromProto(lookup_device, input_spec_proto));
-    plan.input_specs.push_back(std::move(input_spec));
+    ABSL_ASSIGN_OR_RETURN(ArraySpec input_spec,
+                     ArraySpec::FromProto(client, input_spec_proto));
+    input_specs.push_back(std::move(input_spec));
   }
 
-  plan.output_specs.reserve(proto.output_specs_size());
+  std::vector<ArraySpec> output_specs;
+  output_specs.reserve(proto.output_specs_size());
   for (const auto& output_spec_proto : proto.output_specs()) {
-    TF_ASSIGN_OR_RETURN(ArraySpec output_spec,
-                        ArraySpec::FromProto(lookup_device, output_spec_proto));
-    plan.output_specs.push_back(std::move(output_spec));
+    ABSL_ASSIGN_OR_RETURN(ArraySpec output_spec,
+                     ArraySpec::FromProto(client, output_spec_proto));
+    output_specs.push_back(std::move(output_spec));
   }
 
-  plan.mappings = std::make_shared<std::vector<Mapping>>();
-  plan.mappings->reserve(proto.mappings_size());
+  std::vector<Mapping> mappings;
+  mappings.reserve(proto.mappings_size());
   for (const auto& mapping_proto : proto.mappings()) {
-    TF_ASSIGN_OR_RETURN(auto mapping, MappingFromProto(mapping_proto));
-    plan.mappings->push_back(std::move(mapping));
+    ABSL_ASSIGN_OR_RETURN(auto mapping, MappingFromProto(mapping_proto));
+    mappings.push_back(std::move(mapping));
   }
 
-  return plan;
+  absl::flat_hash_map<int, std::vector<InputDeviceRange>>
+      input_devices_for_output_map;
+  input_devices_for_output_map.reserve(proto.input_devices_for_output_size());
+  for (const auto& inputs_for_output_proto : proto.input_devices_for_output()) {
+    std::vector<InputDeviceRange>& input_ranges =
+        input_devices_for_output_map[inputs_for_output_proto.out_array()];
+    for (const auto& inputs_range_proto :
+         inputs_for_output_proto.input_devices()) {
+      ABSL_ASSIGN_OR_RETURN(auto devices,
+                       InputDeviceRangeFromProto(client, inputs_range_proto));
+      input_ranges.push_back(std::move(devices));
+    }
+  }
+
+  return RemapPlan(std::move(input_specs), std::move(output_specs),
+                   std::move(mappings),
+                   std::move(input_devices_for_output_map));
 }
 
-absl::StatusOr<RemapPlanProto> RemapPlan::ToProto() const {
-  RemapPlanProto proto;
-
-  proto.mutable_input_specs()->Reserve(input_specs.size());
-  for (const auto& input_spec : input_specs) {
-    TF_ASSIGN_OR_RETURN(*proto.add_input_specs(), input_spec.ToProto());
-  }
-  proto.mutable_output_specs()->Reserve(output_specs.size());
-  for (const auto& output_spec : output_specs) {
-    TF_ASSIGN_OR_RETURN(*proto.add_output_specs(), output_spec.ToProto());
+absl::Status RemapPlan::ToProto(RemapPlanProto& proto,
+                                SerDesVersion version) const {
+  if (version.version_number() < SerDesVersionNumber(0)) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Unsupported ", version.version_number(),
+                     " for RemapPlan serialization"));
   }
 
-  proto.mutable_mappings()->Reserve(mappings->size());
-  for (const auto& mapping : *mappings) {
-    TF_ASSIGN_OR_RETURN(*proto.add_mappings(), MappingToProto(mapping));
+  proto.Clear();
+  proto.set_version_number(SerDesVersionNumber(0).value());
+
+  proto.mutable_input_specs()->Reserve(rep_->input_specs.size());
+  for (const auto& input_spec : rep_->input_specs) {
+    ABSL_RETURN_IF_ERROR(input_spec.ToProto(*proto.add_input_specs(), version));
+  }
+  proto.mutable_output_specs()->Reserve(rep_->output_specs.size());
+  for (const auto& output_spec : rep_->output_specs) {
+    ABSL_RETURN_IF_ERROR(output_spec.ToProto(*proto.add_output_specs(), version));
   }
 
-  return proto;
+  proto.mutable_mappings()->Reserve(rep_->mappings.size());
+  for (const auto& mapping : rep_->mappings) {
+    ABSL_RETURN_IF_ERROR(MappingToProto(mapping, *proto.add_mappings()));
+  }
+
+  proto.mutable_input_devices_for_output()->Reserve(
+      rep_->input_devices_for_output_map.size());
+  for (const auto& [out_array, input_devices] :
+       rep_->input_devices_for_output_map) {
+    InputDeviceToOutputToProto(version, out_array, input_devices,
+                               *proto.add_input_devices_for_output());
+  }
+
+  return absl::OkStatus();
 }
 
 std::string RemapPlan::DebugString() const {
   auto format_array_specs = [](absl::Span<const ArraySpec> array_specs) {
-    return absl::StrCat(
-        "[",
-        absl::StrJoin(array_specs, ",",
-                      [](std::string* out, const ArraySpec& spec) {
-                        absl::StrAppend(out, spec.DebugString());
-                      }),
-        "]");
+    return absl::StrCat("[", absl::StrJoin(array_specs, ","), "]");
   };
   auto format_mappings = [](absl::Span<const Mapping> mappings) {
     return absl::StrCat(
@@ -329,9 +698,57 @@ std::string RemapPlan::DebugString() const {
                       }),
         "]");
   };
+  auto format_output_to_inputs =
+      [](const absl::flat_hash_map<int, std::vector<InputDeviceRange>>&
+             output_to_inputs) {
+        return absl::StrCat(
+            "[",
+            absl::StrJoin(
+                output_to_inputs, ",",
+                [](std::string* out, const auto& output_to_inputs) {
+                  const auto& [out_array, input_devices] = output_to_inputs;
+                  absl::StrAppend(
+                      out, "o", out_array, ":{",
+                      absl::StrJoin(
+                          input_devices, ",",
+                          [](std::string* out, const InputDeviceRange& range) {
+                            absl::StrAppend(out, "i", range.in_array, ":#",
+                                            range.input_devices->size());
+                          }),
+                      "}");
+                }),
+            "]");
+      };
   return absl::StrCat(
-      "RemapPlan(output_specs=", format_array_specs(output_specs), ",",
-      "mappings=", format_mappings(*mappings), ")");
+      "RemapPlan(input_specs=", format_array_specs(rep_->input_specs),
+      ",output_specs=", format_array_specs(rep_->output_specs), ",",
+      "mappings=", format_mappings(rep_->mappings), ",output_map=",
+      format_output_to_inputs(rep_->input_devices_for_output_map), ")");
+}
+
+absl::Status RemapPlan::CheckArrayCopySemantics(
+    xla::ifrt::ArrayCopySemantics semantics) const {
+  if (semantics != xla::ifrt::ArrayCopySemantics::kDonateInput) {
+    if (!CheckOneInputForOneOutput(*this)) {
+      return absl::InvalidArgumentError(
+          "kDonateInput is required if multiple inputs are mapped to one "
+          "output");
+    }
+  }
+  return absl::OkStatus();
+}
+
+void RemapPlan::Hash(absl::HashState state) const {
+  uint64_t hash = rep_->hash.load(std::memory_order_relaxed);
+  if (hash == Rep::kUnsetHash) {
+    hash = absl::HashOf(rep_->input_specs, rep_->output_specs, rep_->mappings,
+                        rep_->input_devices_for_output_map);
+    if (ABSL_PREDICT_FALSE(hash == Rep::kUnsetHash)) {
+      ++hash;
+    }
+    rep_->hash.store(hash, std::memory_order_relaxed);
+  }
+  absl::HashState::combine(std::move(state), hash);
 }
 
 }  // namespace ifrt

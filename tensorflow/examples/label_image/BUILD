@@ -1,7 +1,22 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 #   TensorFlow C++ inference example for labeling images.
 
-load("//tensorflow:strict.default.bzl", "py_strict_binary")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 
 package(
@@ -46,24 +61,27 @@ tf_cc_binary(
             "//tensorflow/core:tensorflow",
         ],
     }) + [
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "//tensorflow/cc:ops",
         "//tensorflow/cc:scope",
-        "@local_xla//xla/tsl/util:command_line_flags",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:types",
+        "@xla//xla/tsl/util:command_line_flags",
+        "@xla//xla/tsl/platform:status",
+        "@xla//xla/tsl/platform:types",
         # cc:cc_ops is used to include image ops (for label_image)
         # Jpg, gif, and png related code won't be included
         "//tensorflow/cc:cc_ops",
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "label_image_py",
     srcs = ["label_image.py"],
     main = "label_image.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow:tensorflow_py",
         "//third_party/py/numpy",

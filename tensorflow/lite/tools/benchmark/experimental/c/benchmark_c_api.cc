@@ -15,9 +15,14 @@ limitations under the License.
 
 #include "tensorflow/lite/tools/benchmark/experimental/c/benchmark_c_api.h"
 
+#include <cstdint>
+#include <memory>
 #include <utility>
 
 #include "xla/tsl/util/stats_calculator.h"
+#include "tensorflow/lite/c/c_api_types.h"
+#include "tensorflow/lite/tools/benchmark/benchmark_model.h"
+#include "tensorflow/lite/tools/benchmark/benchmark_params.h"
 #include "tensorflow/lite/tools/benchmark/benchmark_tflite_model.h"
 
 extern "C" {
@@ -116,8 +121,8 @@ struct TfLiteBenchmarkListener {
 };
 
 TfLiteBenchmarkListener* TfLiteBenchmarkListenerCreate() {
-  std::unique_ptr<BenchmarkListenerAdapter> adapter(
-      new BenchmarkListenerAdapter());
+  std::unique_ptr<BenchmarkListenerAdapter> adapter =
+      std::make_unique<BenchmarkListenerAdapter>();
   return new TfLiteBenchmarkListener{std::move(adapter)};
 }
 

@@ -23,7 +23,7 @@ using shape_inference::DimensionHandle;
 using shape_inference::InferenceContext;
 using shape_inference::ShapeHandle;
 
-static Status StatelessShapeV2(InferenceContext* c) {
+static absl::Status StatelessShapeV2(InferenceContext* c) {
   // Check key and counter shapes
   ShapeHandle key;
   ShapeHandle counter;
@@ -70,17 +70,17 @@ REGISTER_OP("StatelessRandomUniformIntV2")
     .Attr("Tshape: {int32, int64} = DT_INT32")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
-      Status s = c->WithRank(c->input(4), 0, &unused);
+      absl::Status s = c->WithRank(c->input(4), 0, &unused);
       if (!s.ok()) {
-        return errors::InvalidArgument(
-            "minval must be a scalar; got a tensor of shape ",
-            c->DebugString(c->input(4)));
+        return absl::InvalidArgumentError(
+            absl::StrCat("minval must be a scalar; got a tensor of shape ",
+                         c->DebugString(c->input(4))));
       }
       s = c->WithRank(c->input(5), 0, &unused);
       if (!s.ok()) {
-        return errors::InvalidArgument(
-            "maxval must be a scalar; got a tensor of shape ",
-            c->DebugString(c->input(5)));
+        return absl::InvalidArgumentError(
+            absl::StrCat("maxval must be a scalar; got a tensor of shape ",
+                         c->DebugString(c->input(5))));
       }
       return StatelessShapeV2(c);
     });

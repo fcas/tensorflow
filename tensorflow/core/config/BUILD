@@ -1,6 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
-load("//tensorflow:strict.default.bzl", "py_strict_test")
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//tensorflow:tensorflow.bzl", "py_test", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "filegroup")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
@@ -21,7 +35,10 @@ cc_library(
         "flags.h",
     ],
     visibility = ["//tensorflow:internal"],
-    deps = ["//tensorflow/core/platform:stringpiece"],
+    deps = [
+        "//tensorflow/core/platform:stringpiece",
+        "@com_google_absl//absl/strings:string_view",
+    ],
 )
 
 filegroup(
@@ -37,8 +54,15 @@ filegroup(
     name = "mobile_srcs_only_runtime",
     srcs = [
         "flag_defs.cc",
-        "flag_defs.h",
         "flags.cc",
+    ],
+    visibility = ["//tensorflow:internal"],
+)
+
+filegroup(
+    name = "mobile_hdrs_only_runtime",
+    srcs = [
+        "flag_defs.h",
         "flags.h",
     ],
     visibility = ["//tensorflow:internal"],
@@ -63,6 +87,7 @@ cc_library(
         "//tensorflow/core/platform:stringpiece",
         "//tensorflow/core/util:env_var",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -80,7 +105,6 @@ tf_cc_test(
 pytype_strict_library(
     name = "flags_py",
     srcs = ["flags.py"],
-    srcs_version = "PY3",
     visibility = ["//tensorflow:internal"],
     deps = [
         "//tensorflow/python:flags_pybind",
@@ -88,12 +112,12 @@ pytype_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "flags_py_test",
     size = "small",
     srcs = ["flags_test.py"],
     main = "flags_test.py",
-    python_version = "PY3",
+    strict_deps = True,
     deps = [
         ":flags_py",
         #internal proto upb dep

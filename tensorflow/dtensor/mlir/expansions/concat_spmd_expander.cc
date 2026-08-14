@@ -15,13 +15,18 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/concat_spmd_expander.h"
 
+#include <cstdint>
 #include <optional>
 
+#include "absl/status/status.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "llvm/Support/Casting.h"
 #include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
@@ -33,15 +38,15 @@ namespace tensorflow {
 namespace dtensor {
 namespace {
 
-Status VerifyConcatLayout(mlir::Value concat_dim_operand,
-                          const Layout& concat_layout) {
+absl::Status VerifyConcatLayout(mlir::Value concat_dim_operand,
+                                const Layout& concat_layout) {
   TF_ASSIGN_OR_RETURN(int64_t concat_dim_value,
                       ExtractConstIntFromValue(concat_dim_operand));
   for (const auto& shard_and_dimension :
        llvm::enumerate(concat_layout.num_shards())) {
     if (shard_and_dimension.index() == concat_dim_value &&
         shard_and_dimension.value() > 1) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Concat op SPMD with concat dimension in sharded dimension is "
           "not supported.");
     }
@@ -63,7 +68,7 @@ StatusOr<Layout> ReduceForConcatOutputLayout(mlir::Value concat_dim_operand,
 
 StatusOr<mlir::Operation*> ConcatSPMDExpander::ExpandOp(mlir::Operation* op) {
   if (!llvm::isa<mlir::TF::ConcatOp, mlir::TF::ConcatV2Op>(op))
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Requested SPMD Expansion for op that is not Concat or ConcatV2.");
 
   // Extract the concat dim. ConcatOp and ConcatV2Op define the dim at

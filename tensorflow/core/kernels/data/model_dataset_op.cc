@@ -66,18 +66,18 @@ class ModelDatasetOp::Dataset : public DatasetBase {
         traceme_metadata_(
             {{"algorithm", model::AutotuneAlgorithm_Name(algorithm)},
              {"cpu_budget",
-              strings::Printf("%lld", static_cast<long long>(cpu_budget))},
+              absl::StrFormat("%lld", static_cast<long long>(cpu_budget))},
              {"ram_budget",
-              strings::Printf("%lldB", static_cast<long long>(ram_budget))}}) {
+              absl::StrFormat("%lldB", static_cast<long long>(ram_budget))}}) {
     input_->Ref();
   }
 
   ~Dataset() override { input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(
-        Iterator::Params{this, strings::StrCat(prefix, "::Model")});
+        Iterator::Params{this, absl::StrCat(prefix, "::Model")});
   }
 
   const DataTypeVector& output_dtypes() const override {
@@ -87,25 +87,26 @@ class ModelDatasetOp::Dataset : public DatasetBase {
     return input_->output_shapes();
   }
 
-  string DebugString() const override { return "ModelDatasetOp::Dataset"; }
+  std::string DebugString() const override { return "ModelDatasetOp::Dataset"; }
 
   int64_t CardinalityInternal(CardinalityOptions options) const override {
     return input_->Cardinality(options);
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     inputs->push_back(input_);
     return absl::OkStatus();
   }
 
-  Status CheckExternalState() const override {
+  absl::Status CheckExternalState() const override {
     return input_->CheckExternalState();
   }
 
  protected:
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     Node* input_graph_node = nullptr;
     TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
     AttrValue algorithm_attr;
@@ -140,14 +141,14 @@ class ModelDatasetOp::Dataset : public DatasetBase {
 
     ~Iterator() override { cancellation_manager_->StartCancel(); }
 
-    Status Initialize(IteratorContext* ctx) override {
+    absl::Status Initialize(IteratorContext* ctx) override {
       return dataset()->input_->MakeIterator(IteratorContext(CreateParams(ctx)),
                                              this, prefix(), &input_impl_);
     }
 
-    Status GetNextInternal(IteratorContext* ctx,
-                           std::vector<Tensor>* out_tensors,
-                           bool* end_of_sequence) override {
+    absl::Status GetNextInternal(IteratorContext* ctx,
+                                 std::vector<Tensor>* out_tensors,
+                                 bool* end_of_sequence) override {
       if (!ctx->model()) {
         mutex_lock l(mu_);
         TF_RETURN_IF_ERROR(EnsureOptimizationLoopThreadStarted(ctx));
@@ -163,13 +164,13 @@ class ModelDatasetOp::Dataset : public DatasetBase {
                                        /*ratio=*/1);
     }
 
-    Status SaveInternal(SerializationContext* ctx,
-                        IteratorStateWriter* writer) override {
+    absl::Status SaveInternal(SerializationContext* ctx,
+                              IteratorStateWriter* writer) override {
       return SaveInput(ctx, writer, input_impl_);
     }
 
-    Status RestoreInternal(IteratorContext* ctx,
-                           IteratorStateReader* reader) override {
+    absl::Status RestoreInternal(IteratorContext* ctx,
+                                 IteratorStateReader* reader) override {
       return RestoreInput(IteratorContext(CreateParams(ctx)), reader,
                           input_impl_);
     }
@@ -187,7 +188,7 @@ class ModelDatasetOp::Dataset : public DatasetBase {
       return params;
     }
 
-    Status EnsureOptimizationLoopThreadStarted(IteratorContext* ctx)
+    absl::Status EnsureOptimizationLoopThreadStarted(IteratorContext* ctx)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
       if (!model_thread_) {
         auto ram_budget_manager = ctx->ram_budget_manager();
@@ -195,7 +196,7 @@ class ModelDatasetOp::Dataset : public DatasetBase {
             ctx->StartThread("tf_data_model", [this, ram_budget_manager]() {
               int64_t captured_cpu_budget = cpu_budget_;
               int64_t captured_ram_budget = ram_budget_;
-              Status status = model_->OptimizeLoop(
+              absl::Status status = model_->OptimizeLoop(
                   dataset()->algorithm_,
                   [captured_cpu_budget]() { return captured_cpu_budget; }, 1.0,
                   captured_ram_budget, *ram_budget_manager,
@@ -251,16 +252,16 @@ ModelDatasetOp::ModelDatasetOp(OpKernelConstruction* ctx)
   }
   OP_REQUIRES_OK(ctx, ctx->GetAttr(kCpuBudget, &cpu_budget_));
   OP_REQUIRES(ctx, cpu_budget_ >= 0,
-              errors::InvalidArgument("CPU budget must be positive but is ",
-                                      cpu_budget_, "."));
+              absl::InvalidArgumentError(absl::StrCat(
+                  "CPU budget must be positive but is ", cpu_budget_, ".")));
   if (ctx->HasAttr(kRamBudget)) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr(kRamBudget, &ram_budget_));
   } else {
     ram_budget_ = 0;
   }
   OP_REQUIRES(ctx, ram_budget_ >= 0,
-              errors::InvalidArgument("RAM budget must be positive but is ",
-                                      ram_budget_, "."));
+              absl::InvalidArgumentError(absl::StrCat(
+                  "RAM budget must be positive but is ", ram_budget_, ".")));
 }
 
 void ModelDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,

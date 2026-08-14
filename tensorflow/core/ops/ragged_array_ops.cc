@@ -22,7 +22,7 @@ using shape_inference::DimensionHandle;
 using shape_inference::InferenceContext;
 using shape_inference::ShapeHandle;
 
-Status RaggedGatherShapeFn(InferenceContext* c);
+absl::Status RaggedGatherShapeFn(InferenceContext* c);
 
 //==============================================================================
 // Registered Ops
@@ -106,7 +106,7 @@ REGISTER_OP("RaggedCross")
       int dense_start = num_ragged * 2 + num_sparse * 3;
       for (int i = 0; i < dense_types.size(); ++i) {
         ShapeHandle dense_input = c->input(i + dense_start);
-        int32 rank = c->Rank(dense_input);
+        int32_t rank = c->Rank(dense_input);
         if (rank == InferenceContext::kUnknownRank) {
           continue;
         } else if (rank != 2) {
@@ -184,7 +184,7 @@ REGISTER_OP("RaggedFillEmptyRowsGrad")
 // Shape Functions
 //==============================================================================
 
-Status RaggedGatherShapeFn(InferenceContext* c) {
+absl::Status RaggedGatherShapeFn(InferenceContext* c) {
   int num_splits;
   int64_t PARAMS_RAGGED_RANK;
   TF_RETURN_IF_ERROR(

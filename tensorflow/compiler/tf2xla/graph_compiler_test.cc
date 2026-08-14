@@ -61,7 +61,8 @@ class MockAlwaysFailsOp : public XlaOpKernel {
  public:
   explicit MockAlwaysFailsOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
   void Compile(XlaOpKernelContext* ctx) override {
-    ctx->CtxFailure(__FILE__, __LINE__, errors::InvalidArgument("MockBroken"));
+    ctx->CtxFailure(__FILE__, __LINE__,
+                    absl::InvalidArgumentError("MockBroken"));
   }
 };
 
@@ -87,7 +88,7 @@ class GraphCompilerTest : public ::testing::Test {
     device_mgr_ = std::make_unique<StaticDeviceMgr>(absl::WrapUnique(device_));
   }
 
-  Status RunGraphCompiler(Graph& graph) {
+  absl::Status RunGraphCompiler(Graph& graph) {
     ProcessFunctionLibraryRuntime runtime(
         device_mgr_.get(), Env::Default(), nullptr, TF_GRAPH_DEF_VERSION,
         &graph.flib_def(), OptimizerOptions());
@@ -104,9 +105,10 @@ class GraphCompilerTest : public ::testing::Test {
     core::ScopedUnref context_unref(xla_context);
     xla_context->Ref();
 
-    auto step_container =
-        std::make_unique<ScopedStepContainer>(0, [this](const string& name) {
-          Status status = this->device_->resource_manager()->Cleanup(name);
+    auto step_container = std::make_unique<ScopedStepContainer>(
+        0, [this](const std::string& name) {
+          absl::Status status =
+              this->device_->resource_manager()->Cleanup(name);
         });
     auto container_status = step_container->Create(
         device_->resource_manager(), XlaContext::kXlaContextResourceName,

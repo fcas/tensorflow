@@ -16,6 +16,7 @@ limitations under the License.
 #include "tensorflow/core/grappler/optimizers/data/make_deterministic.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
@@ -158,7 +159,7 @@ absl::flat_hash_map<absl::string_view, const NodeDef*> NameToNode(
   return name_to_node;
 }
 
-NodeDef* GetMutableNode(const string& node_name, MutableGraphView* graph) {
+NodeDef* GetMutableNode(const std::string& node_name, MutableGraphView* graph) {
   int index = graph_utils::FindGraphNodeWithName(node_name, *graph->graph());
   DCHECK_NE(index, -1) << "Failed to find node " << node_name
                        << " in the optimized graph.";
@@ -167,14 +168,14 @@ NodeDef* GetMutableNode(const string& node_name, MutableGraphView* graph) {
 
 // Converts a ParallelInterleaveDataset or ParallelMapDataset to the equivalent
 // non-parallel version, to make it deterministic.
-Status ConvertMapOrInterleave(const string& node_name,
-                              MutableGraphView* graph) {
+absl::Status ConvertMapOrInterleave(const std::string& node_name,
+                                    MutableGraphView* graph) {
   NodeDef* node = GetMutableNode(node_name, graph);
 
   auto Targuments = node->attr().find("Targuments");
   if (Targuments == node->attr().end()) {
-    return errors::Internal("Failed to find Targuments attribute for node ",
-                            node_name);
+    return absl::InternalError(absl::StrCat(
+        "Failed to find Targuments attribute for node ", node_name));
   }
 
   int num_inputs_after_rewrite;
@@ -202,9 +203,9 @@ Status ConvertMapOrInterleave(const string& node_name,
     inputs_processed++;
   }
   if (inputs_processed < num_inputs_after_rewrite) {
-    return errors::Internal("Found only ", inputs_processed, " inputs to node ",
-                            node_name, ", but expected to find at least ",
-                            num_inputs_after_rewrite);
+    return absl::InternalError(absl::StrCat(
+        "Found only ", inputs_processed, " inputs to node ", node_name,
+        ", but expected to find at least ", num_inputs_after_rewrite));
   }
 
   // Remove extra attributes not in Interleave or Map.
@@ -256,16 +257,17 @@ absl::flat_hash_set<absl::string_view> GetAllTransitiveDependencies(
 // ParallelMapV2 ops, or a MapAndBatch op deterministic by splitting it into
 // separate Map and MapAndBatch ops. All the nondeterministic nodes and their
 // dependencies are moved to the Map node.
-Status SplitMap(
-    const FunctionLibraryDefinition& library, const string& map_node_name,
+absl::Status SplitMap(
+    const FunctionLibraryDefinition& library, const std::string& map_node_name,
     MutableGraphView* graph,
     const absl::flat_hash_set<absl::string_view>& nondeterministic_nodes) {
   NodeDef* map_node = GetMutableNode(map_node_name, graph);
   NameAttrList func = map_node->attr().at("f").func();
   const FunctionDef* function_def = library.Find(func.name());
   if (!function_def) {
-    return errors::Internal("Could not look up function ", func.name(),
-                            " in FunctionLibraryDefinition");
+    return absl::InternalError(absl::StrCat("Could not look up function ",
+                                            func.name(),
+                                            " in FunctionLibraryDefinition"));
   }
 
   absl::flat_hash_set<absl::string_view> nodes_to_move =
@@ -274,8 +276,12 @@ Status SplitMap(
   VLOG(2) << "Will move nodes to nonparallel function: "
           << absl::StrJoin(nodes_to_move, ", ");
 
-  int64_t num_captured_arguments =
-      map_node->attr().find("Targuments")->second.list().type_size();
+  auto targuments_iter = map_node->attr().find("Targuments");
+  if (targuments_iter == map_node->attr().end()) {
+    return absl::InternalError(absl::StrCat(
+        "Failed to find Targuments attribute for node ", map_node_name));
+  }
+  int64_t num_captured_arguments = targuments_iter->second.list().type_size();
 
   TF_ASSIGN_OR_RETURN(
       split_utils::SplitResults split_results,
@@ -284,7 +290,7 @@ Status SplitMap(
 
   if (split_results.first_function_output_types.empty()) {
     // Map datasets require there to be at least one output.
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         "The case where the first function has no outputs is unimplemented.");
   }
 
@@ -294,7 +300,7 @@ Status SplitMap(
   {
     NodeDef first_map_node;
     graph_utils::SetUniqueGraphNodeName(
-        strings::StrCat("make_deterministic_sequential_map/", map_node->name()),
+        absl::StrCat("make_deterministic_sequential_map/", map_node->name()),
         graph->graph(), &first_map_node);
     first_map_node.set_op(kMapOp);
     int num_control_deps = NumControlInputs(*map_node);
@@ -344,11 +350,11 @@ Status SplitMap(
   NodeDef* second_map_node_ptr;
   {
     NodeDef second_map_node;
-    string node_name =
+    std::string node_name =
         map_node->op() == kMapAndBatchOp ? "map_and_batch" : "parallel_map";
     graph_utils::SetUniqueGraphNodeName(
-        strings::StrCat("make_deterministic_parallel_", node_name, "/",
-                        map_node->name()),
+        absl::StrCat("make_deterministic_parallel_", node_name, "/",
+                     map_node->name()),
         graph->graph(), &second_map_node);
     second_map_node.set_op(map_node->op());
     second_map_node.add_input(first_map_node_ptr->name());
@@ -384,7 +390,8 @@ Status SplitMap(
 
 // Converts a ParallalBatch dataset to a Batch dataset, to make it
 // deterministic.
-Status ConvertBatch(const string& node_name, MutableGraphView* graph) {
+absl::Status ConvertBatch(const std::string& node_name,
+                          MutableGraphView* graph) {
   NodeDef* node = GetMutableNode(node_name, graph);
   node->set_op(kBatchV2Op);
   std::string num_parallel_calls_input = node->input(2);
@@ -398,7 +405,8 @@ Status ConvertBatch(const string& node_name, MutableGraphView* graph) {
 // deterministic. Caller should delete the MapAndBatch node afterwards.
 // TODO(reedwm): Handle 'metadata' attribute. Currently the Map node and Batch
 // node will have an empty 'metadata' attribute.
-Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
+absl::Status ConvertMapAndBatch(const std::string& node_name,
+                                MutableGraphView* graph) {
   int index = graph_utils::FindGraphNodeWithName(node_name, *graph->graph());
   DCHECK_NE(index, -1) << "Failed to find node " << node_name
                        << " in the optimized graph.";
@@ -406,8 +414,8 @@ Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
 
   auto Targuments = orig_node.attr().find("Targuments");
   if (Targuments == orig_node.attr().end()) {
-    return errors::Internal("Failed to find Targuments attribute for node ",
-                            node_name);
+    return absl::InternalError(absl::StrCat(
+        "Failed to find Targuments attribute for node ", node_name));
   }
 
   // Create map node
@@ -435,8 +443,8 @@ Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
   }
   auto orig_output_shapes = orig_node.attr().find("output_shapes");
   if (orig_output_shapes == orig_node.attr().end()) {
-    return errors::Internal("Failed to find output_shapes attribute for node ",
-                            node_name);
+    return absl::InternalError(absl::StrCat(
+        "Failed to find output_shapes attribute for node ", node_name));
   }
 
   // Set "output_shapes" attr of Map to be "output_shapes" of MapAndBatch with
@@ -449,7 +457,7 @@ Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
     if (orig_shape.unknown_rank()) {
       new_shape->set_unknown_rank(true);
     } else if (orig_shape.dim_size() == 0) {
-      return errors::Internal(
+      return absl::InternalError(
           "Output shape of MapAndBatch node cannot be scalar");
     } else {
       for (int i = 1; i < orig_shape.dim_size(); i++) {
@@ -478,7 +486,8 @@ Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
 
 // Change the buffer_size of a Prefetch node to zero, effectively disabling it,
 // to make it deterministic.
-Status ConvertPrefetch(const string& node_name, MutableGraphView* graph) {
+absl::Status ConvertPrefetch(const std::string& node_name,
+                             MutableGraphView* graph) {
   NodeDef* node = GetMutableNode(node_name, graph);
   constexpr int buffer_size_index = 1;
   node->add_input(absl::StrCat("^", node->input(buffer_size_index)));
@@ -547,7 +556,7 @@ bool FunctionMayIntroduceNondeterminism(
 bool FunctionMayIntroduceNondeterminism(
     const FunctionLibraryDefinition& library, const std::string& function_name,
     NondeterminismType nondeterminism_type) {
-  absl::flat_hash_set<string> functions_processed;
+  absl::flat_hash_set<std::string> functions_processed;
   return FunctionMayIntroduceNondeterminism(library, function_name,
                                             nondeterminism_type,
                                             &functions_processed, nullptr);
@@ -559,7 +568,7 @@ bool FunctionNodeMayIntroduceNondeterminism(
     NondeterminismType nondeterminism_type,
     absl::flat_hash_set<std::string>* functions_processed) {
   const OpRegistrationData* op_reg_data = nullptr;
-  Status s = library.LookUp(node_def.op(), &op_reg_data);
+  absl::Status s = library.LookUp(node_def.op(), &op_reg_data);
   if (!s.ok()) {
     VLOG(2) << "Could not look up op " << node_def.op()
             << " in FunctionLibraryDefinition, so rewriting op to be safe";
@@ -616,7 +625,7 @@ bool FunctionNodeMayIntroduceNondeterminism(
 bool NodeMayIntroduceNondeterminismWhenAsync(
     const FunctionLibraryDefinition& library, const NodeDef& node) {
   const OpDef* op_def;
-  Status s = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
+  absl::Status s = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
   if (s.code() == error::NOT_FOUND) {
     return false;
   } else if (!s.ok()) {
@@ -651,7 +660,7 @@ bool GraphMayHaveAsyncNondeterminism(const FunctionLibraryDefinition& library,
       return true;
     }
   }
-  for (const string& function_name : library.ListFunctionNames()) {
+  for (const std::string& function_name : library.ListFunctionNames()) {
     const FunctionDef* function_def = library.Find(function_name);
     CHECK(function_def);  // Crash Ok
     for (const NodeDef& node : function_def->node_def()) {
@@ -665,15 +674,14 @@ bool GraphMayHaveAsyncNondeterminism(const FunctionLibraryDefinition& library,
 
 }  // namespace
 
-Status MakeDeterministic::OptimizeAndCollectStats(Cluster* cluster,
-                                                  const GrapplerItem& item,
-                                                  GraphDef* output,
-                                                  OptimizationStats* stats) {
+absl::Status MakeDeterministic::OptimizeAndCollectStats(
+    Cluster* cluster, const GrapplerItem& item, GraphDef* output,
+    OptimizationStats* stats) {
   *output = item.graph;
   MutableGraphView graph(output);
   FunctionLibraryDefinition function_library(OpRegistry::Global(),
                                              item.graph.library());
-  absl::flat_hash_set<string> nodes_to_delete;
+  absl::flat_hash_set<std::string> nodes_to_delete;
   bool remove_async_nodes =
       GraphMayHaveAsyncNondeterminism(function_library, item.graph);
 
@@ -711,8 +719,8 @@ Status MakeDeterministic::OptimizeAndCollectStats(Cluster* cluster,
         !rewrite_due_to_async &&
         (node.op() == kParallelMapOpV2 || IsMapAndBatch(node.op()));
     if (maybe_can_split) {
-      Status s = SplitMap(function_library, node.name(), &graph,
-                          nondeterministic_nodes);
+      absl::Status s = SplitMap(function_library, node.name(), &graph,
+                                nondeterministic_nodes);
       if (s.ok()) {
         VLOG(1) << "Split node " << node.name() << " (" << node.op()
                 << ") into two map nodes: a nonparallel version and a "

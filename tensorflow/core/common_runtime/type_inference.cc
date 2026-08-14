@@ -17,15 +17,21 @@ limitations under the License.
 
 #include <functional>
 #include <list>
-#include <queue>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "tensorflow/core/framework/full_type.pb.h"
 #include "tensorflow/core/framework/full_type_util.h"
+#include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/op_def_builder.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/util/dump_graph.h"
@@ -96,7 +102,8 @@ std::vector<std::reference_wrapper<const FullTypeDef>> input_types(
   return input_types;
 }
 
-Status update_inferred_type(Node* target, const FullTypeDef& t, bool& updated) {
+absl::Status update_inferred_type(Node* target, const FullTypeDef& t,
+                                  bool& updated) {
   if (t.type_id() == TFT_UNSET) {
     VLOG(3) << "  " << target->name() << " no inferred type";
     return absl::OkStatus();
@@ -110,7 +117,7 @@ Status update_inferred_type(Node* target, const FullTypeDef& t, bool& updated) {
     } else if (!full_type::IsSubtype(t, existing)) {
       // The only allowable type mismatches are those which would further
       // specialize the existing type.
-      return Status(
+      return absl::Status(
           absl::StatusCode::kInvalidArgument,
           absl::StrCat("type mismatch for node '", target->name(),
                        "': expected a subtype of:\n", existing.DebugString(),
@@ -124,7 +131,7 @@ Status update_inferred_type(Node* target, const FullTypeDef& t, bool& updated) {
   return absl::OkStatus();
 }
 
-absl::StatusOr<FullTypeDef> run_inference(const string& fn_name,
+absl::StatusOr<FullTypeDef> run_inference(const std::string& fn_name,
                                           const TypeRefVector& in_types) {
   // TODO(b/224776031): Things remaining to implement:
   //  * look up function by name
@@ -136,7 +143,7 @@ absl::StatusOr<FullTypeDef> run_inference(const string& fn_name,
 
 }  // namespace
 
-Status TypeInferencePass::Run(
+absl::Status TypeInferencePass::Run(
     const GraphOptimizationPassOptions& options) {
   VLOG(1) << "TypeInferencePass::Run";
 
@@ -331,7 +338,7 @@ Status TypeInferencePass::Run(
   return absl::OkStatus();
 }
 
-Status WeakTypeInferencePass::Run(
+absl::Status WeakTypeInferencePass::Run(
     const GraphOptimizationPassOptions& options) {
   TypeInferencePass pass;
   const auto& pass_status = pass.Run(options);

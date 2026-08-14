@@ -1,3 +1,17 @@
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: flatbuffer_translate -mlir-to-tflite-flatbuffer --emit-stablehlo-ops=true %s -o - | flatbuffer_translate --tflite-flatbuffer-to-mlir --disable-vhlo-to-stablehlo=true - -o - | FileCheck %s
 // test stablehlo roundtrip
 
@@ -551,3 +565,20 @@ func.func @scatter(%input_tensor: tensor<200x100x300xf32>,
 // CHECK-NEXT:  }) : (tensor<200x100x300xf32>, tensor<10x2xi32>, tensor<10x300xf32>) -> tensor<200x100x300xf32>
 // CHECK-NEXT:  return %0 : tensor<200x100x300xf32>
 // CHECK-NEXT: }
+
+// CHECK-LABEL: @shift_left
+func.func @shift_left(%arg0: tensor<2x2xi32>, %arg1: tensor<2x2xi32>) -> tensor<2x2xi32> {
+  %0 = "vhlo.shift_left_v1"(%arg0, %arg1) : (tensor<2x2xi32>, tensor<2x2xi32>) -> tensor<2x2xi32>
+  func.return %0 : tensor<2x2xi32>
+}
+
+// CHECK: "vhlo.shift_left_v1"(%arg0, %arg1) : (tensor<2x2xi32>, tensor<2x2xi32>) -> tensor<2x2xi32>
+
+// CHECK-LABEL: @cbrt
+func.func @cbrt(%arg0: tensor<1x1x1x96xf32>) -> tensor<1x1x1x96xf32> {
+  %0 = "vhlo.cbrt_v1" (%arg0) : (tensor<1x1x1x96xf32>) -> tensor<1x1x1x96xf32>
+  func.return %0 : tensor<1x1x1x96xf32>
+}
+
+//CHECK: %0 = "vhlo.cbrt_v1"(%arg0) : (tensor<1x1x1x96xf32>) -> tensor<1x1x1x96xf32>
+//CHECK: return %0 : tensor<1x1x1x96xf32>

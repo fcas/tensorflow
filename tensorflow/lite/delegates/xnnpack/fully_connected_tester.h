@@ -17,17 +17,19 @@ limitations under the License.
 #define TENSORFLOW_LITE_DELEGATES_XNNPACK_FULLY_CONNECTED_TESTER_H_
 
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/delegates/xnnpack/test_util.h"
 #include "tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 namespace xnnpack {
 
-class FullyConnectedTester {
+class FullyConnectedTester : public ModelCache<FullyConnectedTester> {
  public:
   enum class WeightsType {
     kFP32,
@@ -143,10 +145,21 @@ class FullyConnectedTester {
     return *this;
   }
 
-  void Test(TfLiteDelegate* delegate) const;
+  FullyConnectedTester& RelativeTolerance(float relative_tolerance) {
+    relative_tolerance_ = relative_tolerance;
+    return *this;
+  }
+
+  FullyConnectedTester& ExpectFp16Precision(bool fp16_precision = true) {
+    yield_fp16_precision_ = fp16_precision;
+    return *this;
+  }
+  bool ExpectFp16Precision() const { return yield_fp16_precision_; }
+
+  void Test(TfLiteDelegate* delegate);
 
  private:
-  std::vector<char> CreateTfLiteModel() const;
+  std::vector<char> CreateTfLiteModel() const override;
 
   inline bool HasBias() const { return bias_type_ != BiasType::kNone; }
 
@@ -169,7 +182,9 @@ class FullyConnectedTester {
   enum BiasType bias_type_ { BiasType::kFP32 };
   ::tflite::ActivationFunctionType activation_ =
       ::tflite::ActivationFunctionType_NONE;
+  float relative_tolerance_ = 0.0f;
   TfLiteXNNPackDelegateWeightsCache* weights_cache_ = nullptr;
+  bool yield_fp16_precision_ = false;
 };
 
 }  // namespace xnnpack

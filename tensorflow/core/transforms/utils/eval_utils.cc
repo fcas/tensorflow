@@ -13,6 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
+
+#include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "tensorflow/core/framework/node_def.pb.h"
+#include "tensorflow/core/framework/tensor.pb.h"
 #define EIGEN_USE_THREADS
 
 #include "tensorflow/core/transforms/utils/eval_utils.h"
@@ -63,17 +71,16 @@ tensorflow::Allocator *SimpleDevice::GetAllocator(
   return tensorflow::cpu_allocator();
 }
 
-tensorflow::Status SimpleDevice::MakeTensorFromProto(
+absl::Status SimpleDevice::MakeTensorFromProto(
     const tensorflow::TensorProto &tensor_proto,
     const tensorflow::AllocatorAttributes alloc_attrs,
     tensorflow::Tensor *tensor) {
   tensorflow::Tensor parsed(tensor_proto.dtype());
   if (!parsed.FromProto(tensorflow::cpu_allocator(), tensor_proto)) {
-    return tensorflow::errors::InvalidArgument(
-        "Cannot parse tensor from tensor_proto.");
+    return absl::InvalidArgumentError("Cannot parse tensor from tensor_proto.");
   }
   *tensor = std::move(parsed);
-  return ::tensorflow::OkStatus();
+  return absl::OkStatus();
 }
 
 LogicalResult EvaluateOperation(tensorflow::DeviceBase *cpu_device,
@@ -111,7 +118,7 @@ LogicalResult EvaluateOperation(tensorflow::DeviceBase *cpu_device,
     input_tensor_value.tensor = &input_tensor;
   }
 
-  tensorflow::Status status;
+  absl::Status status;
   std::unique_ptr<tensorflow::OpKernel> op_kernel = tensorflow::CreateOpKernel(
       tensorflow::DEVICE_CPU, cpu_device, cpu_device->GetAllocator({}),
       node_def, TF_GRAPH_DEF_VERSION, &status);

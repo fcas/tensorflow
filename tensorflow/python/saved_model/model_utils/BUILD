@@ -16,7 +16,8 @@
 # Description:
 #   Keras saving and loading libraries.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library", "py_strict_test")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -24,10 +25,10 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "model_utils",
     srcs = ["__init__.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":export_output",
         ":export_utils",
@@ -35,10 +36,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "export_output",
     srcs = ["export_output.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
@@ -49,11 +50,10 @@ py_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "export_output_test",
     srcs = ["export_output_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":export_output",
         "//tensorflow/core:protos_all_py",
@@ -71,10 +71,10 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "export_utils",
     srcs = ["export_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":export_output",
         ":mode_keys",
@@ -92,11 +92,10 @@ py_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "export_test",
     srcs = ["export_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":export_output",
         ":export_utils",
@@ -113,18 +112,17 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "mode_keys",
     srcs = ["mode_keys.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//tensorflow/python/util:compat"],
 )
 
-py_strict_test(
+py_test(
     name = "mode_keys_test",
     srcs = ["mode_keys_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":mode_keys",
         "//tensorflow/python/platform:client_testlib",

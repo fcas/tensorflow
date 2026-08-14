@@ -12,22 +12,25 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <cstddef>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
+#include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/status.h"
 #include "tensorflow/lite/toco/graph_transformations/graph_transformations.h"
 #include "tensorflow/lite/toco/model.h"
 #include "tensorflow/lite/toco/tooling_util.h"
-#include "tensorflow/core/platform/logging.h"
 
 namespace toco {
 
-::tensorflow::Status ConvertExpandDimsToReshape::Run(Model* model,
-                                                     std::size_t op_index,
-                                                     bool* modified) {
+absl::Status ConvertExpandDimsToReshape::Run(Model* model, std::size_t op_index,
+                                             bool* modified) {
   *modified = false;
   auto expand_it = model->operators.begin() + op_index;
   if (expand_it->get()->type != OperatorType::kExpandDims) {
@@ -58,7 +61,7 @@ namespace toco {
   std::vector<int> reshape_dims(input_array.shape().dims());
   int original_dims_num = reshape_dims.size();
   if (axis > original_dims_num || axis < -(original_dims_num + 1)) {
-    return tensorflow::errors::InvalidArgument(absl::StrCat(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Invalid axis attribute ", axis, " for original dimension ",
         original_dims_num, " in ExpandDims op."));
   }

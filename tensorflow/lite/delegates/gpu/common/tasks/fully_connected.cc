@@ -37,7 +37,9 @@ namespace gpu {
 namespace {
 bool UseBufferForWeights(const GpuInfo& gpu_info) {
   return gpu_info.IsAdreno() || gpu_info.IsAMD() || gpu_info.IsMali() ||
-         gpu_info.IsApple();
+         gpu_info.IsApple() ||
+         (gpu_info.IsIntel() && gpu_info.IsApiOpenCl() &&
+          gpu_info.opencl_info.IsCLVK());
 }
 
 void RearrangeFCWeightsToOIO4I4(
@@ -196,7 +198,7 @@ void FullyConnected::UploadQuantizedWeights(
   const int src_depth = DivideRoundUp(weights.shape.i, 4);
   const int dst_depth = DivideRoundUp(weights.shape.o, 4);
 
-  std::vector<uint8_t> data(src_depth * 4 * dst_depth * 4);
+  std::vector<uint8_t> data(static_cast<size_t>(src_depth) * 4 * dst_depth * 4);
   RearrangeFCWeightsToOIO4I4(weights, data.data());
   TensorDescriptor desc = CreateConstantHWVec4TensorDescriptor(
       DataType::UINT8, TensorStorageType::TEXTURE_2D, src_depth * 4, dst_depth,
@@ -241,8 +243,6 @@ FullyConnected CreateFullyConnected(const GpuInfo& gpu_info,
       gpu_info, definition.src_tensors[0].GetDataType(), attr.bias);
   result.args_.AddObject("biases", std::make_unique<TensorDescriptor>(
                                        std::move(bias_tensor_desc)));
-
-  return result;
 
   return result;
 }

@@ -29,17 +29,19 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "Eigen/Core"  // from @eigen_archive
 #include "tensorflow/lite/core/c/builtin_op_data.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/core/kernels/builtin_op_kernels.h"
+#include "tensorflow/lite/core/subgraph.h"
 #include "tensorflow/lite/delegates/utils/simple_delegate.h"
 #include "tensorflow/lite/external_cpu_backend_context.h"
+#include "tensorflow/lite/interpreter_options.h"
 #include "tensorflow/lite/interpreter_test_util.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/string_util.h"
 #include "tensorflow/lite/testing/util.h"
+#include "tensorflow/lite/types/half.h"
 #include "tensorflow/lite/util.h"
 
 #ifdef __APPLE__
@@ -270,7 +272,7 @@ TEST(BasicInterpreter, CheckResize) {
   const uint8_t uint8s[] = {3, 4};
   const int64_t int64s[] = {6, -7};
   const int16_t int16s[] = {8, -9};
-  const Eigen::half float16s[] = {Eigen::half(-3.f), Eigen::half(-4.f)};
+  const half float16s[] = {half(-3.f), half(-4.f)};
 
   struct {
     TfLiteType type;
@@ -1179,6 +1181,67 @@ TEST_F(InterpreterTest, SubgraphNumbering) {
     subgraph_indices.push_back(interpreter_->subgraph(i)->GetSubgraphIndex());
   }
   EXPECT_THAT(subgraph_indices, ElementsAre(0, 1, 2, 3, 4, 5));
+}
+
+TEST_F(InterpreterTest, ModifyGraphWithDelegateUsesActiveSubgraphs) {
+  AddSubgraphs(2);
+
+  std::vector<int> prepared_subgraphs;
+  TfLiteDelegate delegate = TfLiteDelegateCreate();
+  delegate.data_ = &prepared_subgraphs;
+  delegate.Prepare = [](TfLiteContext* context,
+                        TfLiteDelegate* delegate) -> TfLiteStatus {
+    auto* prepared_subgraphs = static_cast<std::vector<int>*>(delegate->data_);
+    prepared_subgraphs->push_back(
+        reinterpret_cast<Subgraph*>(context->impl_)->GetSubgraphIndex());
+    return kTfLiteOk;
+  };
+
+  EXPECT_EQ(interpreter_->ModifyGraphWithDelegate(
+                &delegate, /*active_subgraph_indices=*/{2, 0, 2}),
+            kTfLiteOk);
+  EXPECT_THAT(prepared_subgraphs, ElementsAre(0, 2));
+}
+
+TEST_F(InterpreterTest, ModifyGraphWithDelegateCanSkipMainSubgraph) {
+  AddSubgraphs(2);
+
+  std::vector<int> prepared_subgraphs;
+  TfLiteDelegate delegate = TfLiteDelegateCreate();
+  delegate.data_ = &prepared_subgraphs;
+  delegate.Prepare = [](TfLiteContext* context,
+                        TfLiteDelegate* delegate) -> TfLiteStatus {
+    auto* prepared_subgraphs = static_cast<std::vector<int>*>(delegate->data_);
+    prepared_subgraphs->push_back(
+        reinterpret_cast<Subgraph*>(context->impl_)->GetSubgraphIndex());
+    return kTfLiteOk;
+  };
+
+  EXPECT_EQ(interpreter_->ModifyGraphWithDelegate(
+                &delegate, /*active_subgraph_indices=*/{2}),
+            kTfLiteOk);
+  EXPECT_THAT(prepared_subgraphs, ElementsAre(2));
+}
+
+TEST_F(InterpreterTest,
+       ModifyGraphWithDelegateValidatesActiveSubgraphsBeforeDelegation) {
+  AddSubgraphs(2);
+
+  std::vector<int> prepared_subgraphs;
+  TfLiteDelegate delegate = TfLiteDelegateCreate();
+  delegate.data_ = &prepared_subgraphs;
+  delegate.Prepare = [](TfLiteContext* context,
+                        TfLiteDelegate* delegate) -> TfLiteStatus {
+    auto* prepared_subgraphs = static_cast<std::vector<int>*>(delegate->data_);
+    prepared_subgraphs->push_back(
+        reinterpret_cast<Subgraph*>(context->impl_)->GetSubgraphIndex());
+    return kTfLiteOk;
+  };
+
+  EXPECT_NE(interpreter_->ModifyGraphWithDelegate(
+                &delegate, /*active_subgraph_indices=*/{0, 3}),
+            kTfLiteOk);
+  EXPECT_THAT(prepared_subgraphs, IsEmpty());
 }
 
 struct TestExternalContext : public TfLiteExternalContext {

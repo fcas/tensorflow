@@ -12,6 +12,7 @@ limitations under the License.
 
 #include "bindings/c/Attributes.h"
 
+#include <cstdint>
 #include <optional>
 
 #include "mhlo/IR/hlo_ops.h"
@@ -24,13 +25,20 @@ limitations under the License.
 //
 
 MlirAttribute mlirMhloScatterDimensionNumbersGet(
-    MlirContext ctx, intptr_t nUpdateWindowDims,
-    const int64_t *updateWindowDims, intptr_t nInsertedWindowDims,
-    const int64_t *insertedWindowDims, intptr_t nScatteredDimsToOperandDims,
-    const int64_t *scatteredDimsToOperandDims, int64_t indexVectorDim) {
+    MlirContext ctx,                                                  //
+    intptr_t nUpdateWindowDims, const int64_t *updateWindowDims,      //
+    intptr_t nInsertedWindowDims, const int64_t *insertedWindowDims,  //
+    intptr_t nInputBatchingDims, const int64_t *inputBatchingDims,    //
+    intptr_t nScatterIndicesBatchingDims,
+    const int64_t *scatterIndicesBatchingDims,  //
+    intptr_t nScatteredDimsToOperandDims,
+    const int64_t *scatteredDimsToOperandDims,  //
+    int64_t indexVectorDim) {
   return wrap(mlir::mhlo::ScatterDimensionNumbersAttr::get(
       unwrap(ctx), llvm::ArrayRef(updateWindowDims, nUpdateWindowDims),
       llvm::ArrayRef(insertedWindowDims, nInsertedWindowDims),
+      llvm::ArrayRef(inputBatchingDims, nInputBatchingDims),
+      llvm::ArrayRef(scatterIndicesBatchingDims, nScatterIndicesBatchingDims),
       llvm::ArrayRef(scatteredDimsToOperandDims, nScatteredDimsToOperandDims),
       indexVectorDim));
 }
@@ -65,6 +73,32 @@ int64_t mlirMhloScatterDimensionNumbersGetInsertedWindowDimsElem(
       .getInsertedWindowDims()[pos];
 }
 
+intptr_t mlirMhloScatterDimensionNumbersGetInputBatchingDimsSize(
+    MlirAttribute attr) {
+  return mlir::cast<mlir::mhlo::ScatterDimensionNumbersAttr>(unwrap(attr))
+      .getInputBatchingDims()
+      .size();
+}
+
+int64_t mlirMhloScatterDimensionNumbersGetInputBatchingDimsElem(
+    MlirAttribute attr, intptr_t pos) {
+  return mlir::cast<mlir::mhlo::ScatterDimensionNumbersAttr>(unwrap(attr))
+      .getInputBatchingDims()[pos];
+}
+
+intptr_t mlirMhloScatterDimensionNumbersGetScatterIndicesBatchingDimsSize(
+    MlirAttribute attr) {
+  return mlir::cast<mlir::mhlo::ScatterDimensionNumbersAttr>(unwrap(attr))
+      .getScatterIndicesBatchingDims()
+      .size();
+}
+
+int64_t mlirMhloScatterDimensionNumbersGetScatterIndicesBatchingDimsElem(
+    MlirAttribute attr, intptr_t pos) {
+  return mlir::cast<mlir::mhlo::ScatterDimensionNumbersAttr>(unwrap(attr))
+      .getScatterIndicesBatchingDims()[pos];
+}
+
 intptr_t mlirMhloScatterDimensionNumbersGetScatteredDimsToOperandDimsSize(
     MlirAttribute attr) {
   return mlir::cast<mlir::mhlo::ScatterDimensionNumbersAttr>(unwrap(attr))
@@ -88,13 +122,19 @@ int64_t mlirMhloDimensionNumbersGetIndexVectorDim(MlirAttribute attr) {
 //
 
 MlirAttribute mlirMhloGatherDimensionNumbersGet(
-    MlirContext ctx, intptr_t nOffsetDims, const int64_t *offsetDims,
-    intptr_t nCollapsedSliceDims, const int64_t *collapsedSliceDims,
-    intptr_t nStartIndexMap, const int64_t *startIndexMap,
+    MlirContext ctx,                                                    //
+    intptr_t nOffsetDims, const int64_t *offsetDims,                    //
+    intptr_t nCollapsedSliceDims, const int64_t *collapsedSliceDims,    //
+    intptr_t nOperandBatchingDims, const int64_t *operandBatchingDims,  //
+    intptr_t nStartIndicesBatchingDims,
+    const int64_t *startIndicesBatchingDims,                //
+    intptr_t nStartIndexMap, const int64_t *startIndexMap,  //
     int64_t indexVectorDim) {
   return wrap(mlir::mhlo::GatherDimensionNumbersAttr::get(
       unwrap(ctx), llvm::ArrayRef(offsetDims, nOffsetDims),
       llvm::ArrayRef(collapsedSliceDims, nCollapsedSliceDims),
+      llvm::ArrayRef(operandBatchingDims, nOperandBatchingDims),
+      llvm::ArrayRef(startIndicesBatchingDims, nStartIndicesBatchingDims),
       llvm::ArrayRef(startIndexMap, nStartIndexMap), indexVectorDim));
 }
 
@@ -125,6 +165,32 @@ int64_t mlirMhloGatherDimensionNumbersGetCollapsedSliceDimsElem(
     MlirAttribute attr, intptr_t pos) {
   return mlir::cast<mlir::mhlo::GatherDimensionNumbersAttr>(unwrap(attr))
       .getCollapsedSliceDims()[pos];
+}
+
+intptr_t mlirMhloGatherDimensionNumbersGetOperandBatchingDimsSize(
+    MlirAttribute attr) {
+  return mlir::cast<mlir::mhlo::GatherDimensionNumbersAttr>(unwrap(attr))
+      .getOperandBatchingDims()
+      .size();
+}
+
+int64_t mlirMhloGatherDimensionNumbersGetOperandBatchingDimsElem(
+    MlirAttribute attr, intptr_t pos) {
+  return mlir::cast<mlir::mhlo::GatherDimensionNumbersAttr>(unwrap(attr))
+      .getOperandBatchingDims()[pos];
+}
+
+intptr_t mlirMhloGatherDimensionNumbersGetStartIndicesBatchingDimsSize(
+    MlirAttribute attr) {
+  return mlir::cast<mlir::mhlo::GatherDimensionNumbersAttr>(unwrap(attr))
+      .getStartIndicesBatchingDims()
+      .size();
+}
+
+int64_t mlirMhloGatherDimensionNumbersGetStartIndicesBatchingDimsElem(
+    MlirAttribute attr, intptr_t pos) {
+  return mlir::cast<mlir::mhlo::GatherDimensionNumbersAttr>(unwrap(attr))
+      .getStartIndicesBatchingDims()[pos];
 }
 
 intptr_t mlirMhloGatherDimensionNumbersGetStartIndexMapSize(
@@ -621,29 +687,3 @@ int64_t mlirMhloTypeExtensionsGetBoundsElem(MlirAttribute attr, intptr_t pos) {
       .getBounds()[pos];
 }
 
-//
-// SparsityDescriptor
-//
-
-MlirAttribute mlirMhloSparsityDescriptorGet(MlirContext ctx, int64_t dimension,
-                                            int64_t n, int64_t m) {
-  return wrap(
-      mlir::mhlo::SparsityDescriptorAttr::get(unwrap(ctx), dimension, n, m));
-}
-
-bool mlirMhloAttributeIsASparsityDescriptor(MlirAttribute attr) {
-  return mlir::isa<mlir::mhlo::SparsityDescriptorAttr>(unwrap(attr));
-}
-
-int64_t mlirMhloSparsityDescriptorGetDimension(MlirAttribute attr) {
-  return mlir::cast<mlir::mhlo::SparsityDescriptorAttr>(unwrap(attr))
-      .getDimension();
-}
-
-int64_t mlirMhloSparsityDescriptorGetN(MlirAttribute attr) {
-  return mlir::cast<mlir::mhlo::SparsityDescriptorAttr>(unwrap(attr)).getN();
-}
-
-int64_t mlirMhloSparsityDescriptorGetM(MlirAttribute attr) {
-  return mlir::cast<mlir::mhlo::SparsityDescriptorAttr>(unwrap(attr)).getM();
-}

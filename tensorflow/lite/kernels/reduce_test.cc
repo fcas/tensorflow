@@ -17,18 +17,31 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
+#include <memory>
 #include <numeric>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "tensorflow/lite/c/c_api_types.h"
+#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/kernels/reduce_test_common.h"
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
+namespace ops {
+namespace builtin {
+TfLiteRegistration* Register_MEAN_REF();
+TfLiteRegistration* Register_SUM_REF();
+}  // namespace builtin
+}  // namespace ops
+
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::IsEmpty;
 
@@ -57,6 +70,49 @@ using AnyOpDynamicModel = BaseDynamicOpModel<BuiltinOperator_REDUCE_ANY>;
 
 using AllOpConstModel = BaseConstOpModel<BuiltinOperator_REDUCE_ALL>;
 using AllOpDynamicModel = BaseDynamicOpModel<BuiltinOperator_REDUCE_ALL>;
+
+/**
+ * Test the reference kernel's error handling
+ */
+class ReferenceDynamicSumOpModel : public BaseOpModel {
+ public:
+  /**
+   * @param input The input tensor.
+   * @param output The output tensor.
+   * @param axis The axis tensor.
+   * @param keep_dims Whether to keep the dimensions of the input tensor.
+   * NOTE: the input and output tensors can be passed by const reference, but
+   * currently the other code (like BaseConstOpModel and BaseDynamicOpModel) use
+   * value passing for these tensors, so we follow the same here for
+   * consistency.
+   */
+  ReferenceDynamicSumOpModel(TensorData input, TensorData output,
+                             const TensorData& axis, bool keep_dims) {
+    input_ = AddInput(input);
+    axis_ = AddInput(axis);
+    output_ = AddOutput(output);
+    SetBuiltinOp(BuiltinOperator_SUM, BuiltinOptions_ReducerOptions,
+                 CreateReducerOptions(builder_, keep_dims).Union());
+    SetResolver(std::make_unique<SingleOpResolver>(
+        BuiltinOperator_SUM, ops::builtin::Register_SUM_REF()));
+    BuildInterpreter({GetShape(input_)});
+  }
+};
+
+class ReferenceDynamicMeanOpModel : public BaseOpModel {
+ public:
+  ReferenceDynamicMeanOpModel(TensorData input, TensorData output,
+                              const TensorData& axis, bool keep_dims) {
+    input_ = AddInput(input);
+    axis_ = AddInput(axis);
+    output_ = AddOutput(output);
+    SetBuiltinOp(BuiltinOperator_MEAN, BuiltinOptions_ReducerOptions,
+                 CreateReducerOptions(builder_, keep_dims).Union());
+    SetResolver(std::make_unique<SingleOpResolver>(
+        BuiltinOperator_MEAN, ops::builtin::Register_MEAN_REF()));
+    BuildInterpreter({GetShape(input_)});
+  }
+};
 
 // for quantized Add, the error shouldn't exceed step
 template <typename integer_type = int8_t>
@@ -90,6 +146,14 @@ TYPED_TEST_SUITE(ReductionIsCopyTest, NonBoolReductions);
 TYPED_TEST_SUITE(ReductionIsCopyTestBool, BoolReductions);
 TYPED_TEST_SUITE(DynamicReductionIsCopyTest, DynamicNonBoolReductions);
 TYPED_TEST_SUITE(DynamicReductionIsCopyTestBool, DynamicBoolReductions);
+
+template <typename T>
+class DynamicReductionInvalidAxisTest : public testing::Test {};
+template <typename T>
+class DynamicReductionInvalidAxisBoolTest : public testing::Test {};
+
+TYPED_TEST_SUITE(DynamicReductionInvalidAxisTest, DynamicNonBoolReductions);
+TYPED_TEST_SUITE(DynamicReductionInvalidAxisBoolTest, DynamicBoolReductions);
 
 // Test reductions which are copies.
 TYPED_TEST(ReductionIsCopyTest, ReduceIsCopy) {
@@ -138,6 +202,80 @@ TYPED_TEST(DynamicReductionIsCopyTestBool, ReduceIsCopy) {
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 2}));
   EXPECT_THAT(m.template GetOutput<bool>(), ElementsAreArray(data));
+}
+
+TEST(DynamicUint8MaxOpTest, ReduceIsCopyEmptyInputEmptyAxis) {
+  MaxOpDynamicModel m({TensorType_UINT8, {0}, 0.0, 1.0},
+                      {TensorType_UINT8, {0}, 0.0, 1.0},
+                      {TensorType_INT32, {0}}, false);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({0}));
+  EXPECT_THAT(m.GetOutput<uint8_t>(), IsEmpty());
+}
+
+TYPED_TEST(DynamicReductionInvalidAxisTest, RejectsOutOfRangeAxis) {
+  TypeParam m({TensorType_FLOAT32, {2, 2}}, {TensorType_FLOAT32, {2}},
+              {TensorType_INT32, {1}}, true);
+  m.SetAxis({2});
+  m.SetInput(std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f});
+  EXPECT_EQ(m.Invoke(), kTfLiteError);
+}
+
+TYPED_TEST(DynamicReductionInvalidAxisBoolTest, RejectsOutOfRangeAxis) {
+  TypeParam m({TensorType_BOOL, {2, 2}}, {TensorType_BOOL, {2}},
+              {TensorType_INT32, {1}}, true);
+  m.SetAxis({2});
+  m.SetInput(std::vector<bool>{true, false, true, false});
+  EXPECT_EQ(m.Invoke(), kTfLiteError);
+}
+
+TEST(ReferenceFloatSumOpTest, ReduceAllDimsRank33) {
+  constexpr int kRank = 33;
+  std::vector<int> input_shape(kRank, 1);
+  input_shape.back() = 2;
+  std::vector<int> axis(input_shape.size());
+  std::iota(axis.begin(), axis.end(), 0);
+  ReferenceDynamicSumOpModel m({TensorType_FLOAT32, input_shape},
+                               {TensorType_FLOAT32, {}},
+                               {TensorType_INT32, {kRank}}, false);
+  m.SetAxis(axis);
+  m.SetInput(std::vector<float>{1.0f, 2.0f});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), IsEmpty());
+  EXPECT_THAT(m.GetOutput<float>(), ElementsAreArray(ArrayFloatNear({3.0f})));
+}
+
+TEST(DynamicFloatSumOpTest, ReduceAllDimsRank64) {
+  constexpr int kRank = 64;
+  std::vector<int> input_shape(kRank, 1);
+  input_shape.back() = 2;
+  std::vector<int> axis(kRank);
+  std::iota(axis.begin(), axis.end(), 0);
+  SumOpDynamicModel m({TensorType_FLOAT32, input_shape},
+                      {TensorType_FLOAT32, {}}, {TensorType_INT32, {kRank}},
+                      false);
+  m.SetAxis(axis);
+  m.SetInput(std::vector<float>{1.0f, 2.0f});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), IsEmpty());
+  EXPECT_THAT(m.GetOutput<float>(), ElementsAreArray(ArrayFloatNear({3.0f})));
+}
+
+TEST(DynamicFloatSumOpTest, ReducesSizeOneDimensionRank64) {
+  constexpr int kRank = 64;
+  std::vector<int> input_shape(kRank, 1);
+  input_shape.back() = 2;
+  std::vector<int> output_shape(kRank - 1, 1);
+  output_shape.back() = 2;
+  SumOpDynamicModel m({TensorType_FLOAT32, input_shape},
+                      {TensorType_FLOAT32, output_shape},
+                      {TensorType_INT32, {1}}, false);
+  m.SetAxis({0});
+  m.SetInput(std::vector<float>{1.0f, 2.0f});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray(output_shape));
+  EXPECT_THAT(m.GetOutput<float>(),
+              ElementsAreArray(ArrayFloatNear({1.0f, 2.0f})));
 }
 
 TEST(ConstFloatMeanOpTest, FoldFirstDim) {
@@ -386,6 +524,38 @@ TEST(DynamicFloatMeanOpTest, Scale) {
   EXPECT_THAT(m.GetOutput<float>(), ElementsAreArray(ArrayFloatNear({9.527})));
 }
 
+TEST(ReferenceDynamicInt64MeanOpTest, WrapsAccumulatorWithoutUb) {
+  const std::vector<int64_t> data = {std::numeric_limits<int64_t>::max(),
+                                     std::numeric_limits<int64_t>::max()};
+  ReferenceDynamicMeanOpModel m({TensorType_INT64, {2}}, {TensorType_INT64, {}},
+                                {TensorType_INT32, {1}}, false);
+  m.SetAxis({0});
+  m.SetInput<int64_t>(data);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), IsEmpty());
+  EXPECT_THAT(m.GetOutput<int64_t>(), ElementsAreArray({-1}));
+}
+
+TEST(DynamicInt64MeanOpTest, WrapsAccumulatorWithoutUb) {
+  const std::vector<int64_t> data = {std::numeric_limits<int64_t>::max(),
+                                     std::numeric_limits<int64_t>::max()};
+  MeanOpDynamicModel m({TensorType_INT64, {2}}, {TensorType_INT64, {}},
+                       {TensorType_INT32, {1}}, false);
+  m.SetAxis({0});
+  m.SetInput<int64_t>(data);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), IsEmpty());
+  EXPECT_THAT(m.GetOutput<int64_t>(), ElementsAreArray({-1}));
+}
+
+TEST(DynamicFloatMeanOpTest, RejectsExtremeAxis) {
+  MeanOpDynamicModel m({TensorType_FLOAT32, {2, 2}}, {TensorType_FLOAT32, {2}},
+                       {TensorType_INT32, {1}}, true);
+  m.SetAxis({std::numeric_limits<int>::max()});
+  m.SetInput(std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f});
+  EXPECT_EQ(m.Invoke(), kTfLiteError);
+}
+
 TEST(ConstUint8MeanOpTest, NotKeepDims) {
   float kQuantizedTolerance = GetTolerance(-1.0, 1.0);
   std::vector<float> data = {0.4, 0.2, 0.3, 0.4, 0.5, 0.6};
@@ -607,6 +777,20 @@ TEST(DynamicUint8MeanOpTest, QuantizedScalar) {
   EXPECT_THAT(m.GetOutputShape(), IsEmpty());
   EXPECT_THAT(m.GetDequantizedOutput<uint8_t>(),
               ElementsAreArray(ArrayFloatNear({0.643}, kQuantizedTolerance)));
+}
+
+TEST(DynamicUint8MeanOpTest, KeepDimsRankFive) {
+  const float kQuantizedTolerance = GetTolerance(0.0, 1.0);
+  std::vector<float> data = {0.2, 0.6};
+  MeanOpDynamicModel m({TensorType_UINT8, {1, 1, 1, 1, 2}, 0.0, 1.0},
+                       {TensorType_UINT8, {5}, 0.0, 1.0},
+                       {TensorType_INT32, {5}}, true);
+  m.SetAxis({0, 1, 2, 3, 4});
+  m.QuantizeAndPopulate<uint8_t>(m.Input(), data);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1, 1, 1, 1, 1}));
+  EXPECT_THAT(m.GetDequantizedOutput<uint8_t>(),
+              ElementsAreArray(ArrayFloatNear({0.4}, kQuantizedTolerance)));
 }
 
 TEST(ConstUint8MeanOpTest, QuantizedKeepDims) {
@@ -886,6 +1070,24 @@ TEST(DynamicUint8SumOpTest, KeepDims) {
       ElementsAreArray(ArrayFloatNear({12.0, 0.739}, kQuantizedTolerance)));
 }
 
+TEST(ReferenceDynamicInt8SumOpTest, ZeroOutputDimEmptyAxis) {
+  ReferenceDynamicSumOpModel m({TensorType_INT8, {3, 0}, -1.0, 1.0},
+                               {TensorType_INT8, {3, 0}, -1.0, 1.0},
+                               {TensorType_INT32, {0}}, true);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 0}));
+  EXPECT_THAT(m.GetOutput<int8_t>(), IsEmpty());
+}
+
+TEST(DynamicInt8SumOpTest, ZeroOutputDimEmptyAxis) {
+  SumOpDynamicModel m({TensorType_INT8, {3, 0}, -1.0, 1.0},
+                      {TensorType_INT8, {3, 0}, -1.0, 1.0},
+                      {TensorType_INT32, {0}}, true);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 0}));
+  EXPECT_THAT(m.GetOutput<int8_t>(), IsEmpty());
+}
+
 TEST(ConstInt8SumOpTest, Rescale) {
   const std::vector<float> data = {0.4, 0.2, 0.3, 0.4, 0.5, 0.3};
   SumOpConstModel m({TensorType_INT8, {1, 3, 2}, -1.0, 1.0},
@@ -898,6 +1100,22 @@ TEST(ConstInt8SumOpTest, Rescale) {
   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1, 2}));
   EXPECT_THAT(
       m.GetDequantizedOutput<int8_t>(),
+      ElementsAreArray(ArrayFloatNear(expected_sum, kQuantizedTolerance)));
+}
+
+TEST(ConstInt16SumOpTest, Rescale) {
+  const std::vector<float> data = {0.4, 0.2, 0.3, 0.4, 0.5, 0.3};
+  BaseConstOpModel<BuiltinOperator_SUM, /*symmetric_int16_scaling=*/true> m(
+      {TensorType_INT16, {1, 3, 2}, -1.0, 1.0},
+      {TensorType_INT16, {2}, -2.0, 2.0}, {1}, {1}, false);
+  // Expect the sum to be 0.4 + 0.3 + 0.5 = 1.2 and 0.2 + 0.4 + 0.3 = 0.9.
+  const std::vector<float> expected_sum = {1.2, 0.9};
+  const float kQuantizedTolerance = GetTolerance(-5.0, 5.0);
+  m.QuantizeAndPopulate<int16_t>(m.Input(), data);
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1, 2}));
+  EXPECT_THAT(
+      m.GetDequantizedOutput<int16_t>(),
       ElementsAreArray(ArrayFloatNear(expected_sum, kQuantizedTolerance)));
 }
 
@@ -1123,6 +1341,35 @@ TEST(ConstInt8ProdOpTest, ZeroInputDim) {
                      {TensorType_INT8, {3}, 0.0, 1.0}, {2}, {0, 2}, true);
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1, 0, 1}));
+}
+
+TEST(DynamicInt8ProdOpTest, ZeroInputDim) {
+  ProdOpDynamicModel m({TensorType_INT8, {4, 0, 2}, 0.0, 1.0},
+                       {TensorType_INT8, {3}, 0.0, 1.0},
+                       {TensorType_INT32, {2}}, true);
+  m.SetAxis({0, 2});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1, 0, 1}));
+}
+
+TEST(DynamicInt8ProdOpTest, ZeroInputDimRejectsOutOfRangeAxis) {
+  ProdOpDynamicModel m({TensorType_INT8, {4, 0, 2}, 0.0, 1.0},
+                       {TensorType_INT8, {3}, 0.0, 1.0},
+                       {TensorType_INT32, {1}}, true);
+  m.SetAxis({3});
+  EXPECT_EQ(m.Invoke(), kTfLiteError);
+}
+
+TEST(DynamicInt8ProdOpTest, ScalarReduceIsCopyEmptyAxis) {
+  ProdOpDynamicModel m({TensorType_INT8, {}, -1.0, 1.0},
+                       {TensorType_INT8, {}, -1.0, 1.0},
+                       {TensorType_INT32, {0}}, false);
+  m.QuantizeAndPopulate<int8_t>(m.Input(), {0.25f});
+  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+  EXPECT_THAT(m.GetOutputShape(), IsEmpty());
+  EXPECT_THAT(m.GetDequantizedOutput<int8_t>(),
+              ElementsAreArray(
+                  ArrayFloatNear({0.25f}, GetTolerance<int8_t>(-1.0, 1.0))));
 }
 
 TEST(DynamicFloatProdOpTest, NotKeepDims) {
@@ -1893,9 +2140,8 @@ TEST(ConstFloatMinOpTest, EmptyInputButScalarOutput) {
                     {0}, false);
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_TRUE(m.GetOutputShape().empty());
-  EXPECT_THAT(
-      m.GetOutput<float>(),
-      ElementsAreArray(ArrayFloatNear({std::numeric_limits<float>::max()})));
+  EXPECT_THAT(m.GetOutput<float>(),
+              ElementsAre(testing::Ge(std::numeric_limits<float>::max())));
 }
 
 TEST(ConstFloatMaxOpTest, EmptyInputButScalarOutput) {
@@ -1906,9 +2152,8 @@ TEST(ConstFloatMaxOpTest, EmptyInputButScalarOutput) {
                     {0}, false);
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_TRUE(m.GetOutputShape().empty());
-  EXPECT_THAT(
-      m.GetOutput<float>(),
-      ElementsAreArray(ArrayFloatNear({-std::numeric_limits<float>::max()})));
+  EXPECT_THAT(m.GetOutput<float>(),
+              ElementsAre(testing::Le(-std::numeric_limits<float>::max())));
 }
 
 TEST(ConstFloatProdOpTest, EmptyInputButScalarOutput) {
@@ -1935,9 +2180,7 @@ TEST(ConstFloatMeanOpTest, EmptyInputButScalarOutput) {
                      {0}, false);
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_TRUE(m.GetOutputShape().empty());
-  auto output_data = m.GetOutput<float>();
-  EXPECT_TRUE(std::all_of(output_data.begin(), output_data.end(),
-                          [](float value) { return std::isnan(value); }));
+  EXPECT_THAT(m.GetOutput<float>(), ElementsAre(testing::IsNan()));
 }
 
 TEST(ConstAllOpTest, EmptyInputButScalarOutputKeepDim) {
@@ -1957,6 +2200,23 @@ TEST(ConstAnyOpTest, EmptyInputButScalarOutputKeepDim) {
   ASSERT_EQ(m.Invoke(), kTfLiteOk);
   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({1}));
   EXPECT_THAT(m.GetOutput<bool>(), ElementsAreArray({false}));
+}
+
+TEST(ConstFloatProdOpTest, EmptyAxis) {
+  const std::vector<float> data = {1.0, 2.0, 3.0, 4.0};
+  ProdOpConstModel m({TensorType_FLOAT32, {4}}, {TensorType_FLOAT32, {1}},
+                     {TensorType_INT32, {}}, {}, false);
+  m.SetInput(data);
+  EXPECT_EQ(m.Invoke(), kTfLiteOk);
+}
+
+TEST(ConstInt8MeanOpTest, AxisCountExceedsMaxLimitNoCrash) {
+  std::vector<float> data = {1.0, 2.0};
+  MeanOpConstModel m({TensorType_INT8, {1, 2}, -10.0, 10.0},
+                     {TensorType_INT8, {1}, -10.0, 10.0}, {5}, {0, 0, 0, 0, 0},
+                     false);
+  m.QuantizeAndPopulate<int8_t>(m.Input(), data);
+  EXPECT_EQ(m.Invoke(), kTfLiteOk);
 }
 
 }  // namespace

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/xla_device_context.h"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -22,15 +23,37 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/jit/xla_launch_util.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "tensorflow/compiler/jit/xla_tensor.h"
+#include "tensorflow/compiler/tf2xla/layout_util.h"
 #include "tensorflow/compiler/tf2xla/literal_util.h"
-#include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
-#include "xla/util.h"
-#include "tensorflow/core/common_runtime/device.h"
+#include "xla/client/local_client.h"
+#include "xla/layout_util.h"
+#include "xla/literal.h"
+#include "xla/service/stream_pool.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/allocator_stats.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/framework/allocator.h"
+#include "tensorflow/core/framework/device.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_reference.h"
-#include "tsl/platform/statusor.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/status.h"
+#include "tensorflow/core/platform/threadpool.h"
 
 namespace tensorflow {
 
@@ -108,7 +131,8 @@ void XlaDeviceContext::CopyTensorInSameDevice(const Tensor* input_tensor,
                                               Device* device,
                                               Tensor* output_tensor,
                                               StatusCallback done) const {
-  done(errors::Unimplemented("XLA->XLA same-device copies not implemented."));
+  done(
+      absl::UnimplementedError("XLA->XLA same-device copies not implemented."));
 }
 
 void XlaDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
@@ -136,7 +160,7 @@ void XlaDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor,
   XlaLayoutPreference layout_preference =
       shape_determination_fns_.layout_preference_fn(
           device_tensor->shape(), device_tensor->dtype(), std::nullopt);
-  Status status = [&]() -> Status {
+  absl::Status status = [&]() -> absl::Status {
     TF_ASSIGN_OR_RETURN(xla::Shape shape,
                         shape_determination_fns_.shape_representation_fn(
                             device_tensor->shape(), device_tensor->dtype(),
@@ -249,7 +273,7 @@ void XlaDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
   // shape as it is derived from the cpu_tensor's shape using
   // shape_representation_fn_.
   xla::MutableBorrowingLiteral literal;
-  TF_CHECK_OK(HostTensorToMutableBorrowingLiteral(
+  CHECK_OK(HostTensorToMutableBorrowingLiteral(
       xla::LayoutUtil::GetWithDefaultLayout(
           xla_tensor->shaped_buffer().on_host_shape()),
       cpu_tensor, &literal));
@@ -263,7 +287,7 @@ void XlaDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
       device_to_host_stream.get(), xla_tensor->shaped_buffer(), literal,
       [this, ref, xla_tensor, done, device_to_host_stream,
        device_allows_sync_on_completion](absl::Status status) {
-        Status done_status = status;
+        absl::Status done_status = status;
         VLOG(2) << "Transfer from device as literal: "
                 << xla_tensor->shaped_buffer().ToString();
         // For devices don't allow sync on completion, the device execution is
@@ -294,15 +318,15 @@ void XlaDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor,
 
 se::Stream* XlaDeviceContext::GetDeviceToDeviceStream() {
   DCHECK_GT(device_to_device_streams_.size(), 0);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   int stream = next_stream_;
   next_stream_ = (next_stream_ + 1) % device_to_device_streams_.size();
   return device_to_device_stream(stream);
 }
 
-Status XlaDeviceContext::ThenExecute(Device* device,
-                                     stream_executor::Stream* stream,
-                                     std::function<void()> func) {
+absl::Status XlaDeviceContext::ThenExecute(Device* device,
+                                           stream_executor::Stream* stream,
+                                           std::function<void()> func) {
   VLOG(2) << "XlaDeviceContext::ThenExecute";
   return stream->DoHostCallback(std::move(func));
 }

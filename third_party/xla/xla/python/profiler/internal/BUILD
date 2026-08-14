@@ -1,7 +1,22 @@
-load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@local_tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
-load("//xla/tsl:tsl.bzl", "internal_visibility")
+# Copyright 2026 The OpenXLA Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,22 +36,37 @@ cc_library(
         "//tensorflow/python/profiler/internal:__subpackages__",
     ]),
     deps = [
+        ":traceme_state",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/profiler/utils:time_utils",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:env",
-        "@local_tsl//tsl/platform:macros",
-        "@local_tsl//tsl/platform:path",
-        "@local_tsl//tsl/platform:types",
-        "@local_tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@local_tsl//tsl/profiler/utils:time_utils",
-        "@local_tsl//tsl/profiler/utils:xplane_builder",
-        "@local_tsl//tsl/profiler/utils:xplane_schema",
-        "@local_tsl//tsl/profiler/utils:xplane_utils",
+        "@com_google_absl//absl/synchronization",
         "@pybind11",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
     alwayslink = True,
+)
+
+cc_library(
+    name = "traceme_state",
+    srcs = ["traceme_state.cc"],
+    hdrs = ["traceme_state.h"],
+    copts = tf_profiler_copts() + if_windows(["/DTF_COMPILE_LIBRARY"]),
+    visibility = internal_visibility([
+        "//tensorflow/python/profiler/internal:__pkg__",
+    ]),
+    deps = [
+        "//xla/tsl/platform:macros",
+    ],
 )
 
 cc_library(
@@ -48,10 +78,10 @@ cc_library(
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
     deps = [
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:macros",
-        "@local_tsl//tsl/platform:types",
-        "@local_tsl//tsl/profiler/lib:traceme_for_pybind",
         "@pybind11",
+        "@tsl//tsl/profiler/lib:traceme_for_pybind",
     ],
 )

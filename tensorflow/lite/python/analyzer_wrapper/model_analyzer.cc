@@ -13,18 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <algorithm>
+#include <cctype>
+#include <cstdarg>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "absl/strings/str_join.h"
 #include "flatbuffers/vector.h"  // from @flatbuffers
-#include "tensorflow/core/public/version.h"
+#include "tensorflow/compiler/mlir/lite/schema/schema_utils.h"
+#include "tensorflow/core/public/release_version.h"
 #include "tensorflow/lite/core/api/error_reporter.h"
 #include "tensorflow/lite/core/model_builder.h"
 #include "tensorflow/lite/schema/schema_generated.h"
-#include "tensorflow/lite/schema/schema_utils.h"
-#include "tensorflow/lite/tools/versioning/gpu_compatibility.h"
+#include "tensorflow/lite/version.h"
 
 namespace tflite {
 
@@ -417,16 +423,17 @@ std::string model_analyzer(const std::string& model_file_or_buffer,
   StreamErrorReporter error_reporter(&out_stream);
   std::unique_ptr<FlatBufferModel> fb_model;
   if (input_is_filepath) {
-    fb_model = FlatBufferModel::BuildFromFile(model_file_or_buffer.c_str(),
-                                              &error_reporter);
+    fb_model = FlatBufferModel::VerifyAndBuildFromFile(
+        model_file_or_buffer.c_str(), /*extra_verifier=*/nullptr,
+        &error_reporter);
     if (!fb_model) {
       out_stream << "Failed to mmap model " << model_file_or_buffer;
       return out_stream.str();
     }
   } else {
-    fb_model = FlatBufferModel::BuildFromBuffer(model_file_or_buffer.c_str(),
-                                                model_file_or_buffer.size(),
-                                                &error_reporter);
+    fb_model = FlatBufferModel::VerifyAndBuildFromBuffer(
+        model_file_or_buffer.c_str(), model_file_or_buffer.size(),
+        /*extra_verifier=*/nullptr, &error_reporter);
     if (!fb_model) {
       out_stream << "Failed to mmap the given model buffer.";
       return out_stream.str();
@@ -459,15 +466,6 @@ std::string model_analyzer(const std::string& model_file_or_buffer,
             model->operator_codes()->Get(op->opcode_index());
         out_stream << "  ";  // indents for operators
         dump_node(out_stream, /*node_no=*/j, op_code, op, i, model);
-        if (check_gpu_compatibility) {
-          auto status =
-              CheckGpuDelegateCompatibility(op_code, op, subgraph, model);
-          if (!status.ok()) {
-            gpu_incompatible_nodes.push_back(j);
-            out_stream << "GPU COMPATIBILITY WARNING: " << status.message()
-                       << "\n";
-          }
-        }
       }
     }
     if (!gpu_incompatible_nodes.empty()) {
@@ -475,7 +473,8 @@ std::string model_analyzer(const std::string& model_file_or_buffer,
       out_stream << "\nGPU COMPATIBILITY WARNING: Subgraph#" << i
                  << " has GPU delegate compatibility issues at nodes "
                  << absl::StrJoin(gpu_incompatible_nodes, ", ")
-                 << " on TFLite runtime version " << TF_VERSION_STRING << "\n";
+                 << " on TFLite runtime version " << TFLITE_VERSION_STRING
+                 << "\n";
     }
 
     // Dump Subgraph Tensors.
@@ -493,7 +492,7 @@ std::string model_analyzer(const std::string& model_file_or_buffer,
   if (check_gpu_compatibility && model_is_gpu_compatible) {
     out_stream
         << "\nYour model looks compatible with GPU delegate"
-        << " on TFLite runtime version " << TF_VERSION_STRING
+        << " on TFLite runtime version " << TFLITE_VERSION_STRING
         << ".\nThis does not guarantee that your model will work well with GPU"
            " delegate because there could still be runtime "
            "incompatibililties.\n";

@@ -19,9 +19,11 @@ limitations under the License.
 #include <string>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "tsl/platform/logging.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -43,19 +45,21 @@ class Lockable {
    public:
     Lock() = default;
 
-    Lock(Lock&& other) {
+    Lock(Lock&& other) noexcept {
       lockable_ = other.lockable_;
       other.lockable_ = nullptr;
     }
 
-    Lock& operator=(Lock&& other) {
+    Lock& operator=(Lock&& other) noexcept {
       lockable_ = other.lockable_;
       other.lockable_ = nullptr;
       return *this;
     }
 
     ~Lock() {
-      if (lockable_) lockable_->Release();
+      if (lockable_) {
+        lockable_->Release();
+      }
     }
 
     T& operator*() const { return lockable_->value_; }
@@ -88,12 +92,17 @@ class Lockable {
 
   ~Lockable() {
     VLOG(2) << "Destroy " << LockableName::ToString(value_);
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     CHECK_EQ(is_unlocked_, true);  // NOLINT
   }
 
   Lock Acquire() {
-    absl::MutexLock lock(&mutex_);
+    tsl::profiler::TraceMe trace([&] {
+      return tsl::profiler::TraceMeEncode("Lockable::Lock::Acquire",
+                                          {{"lockable", ToString()}});
+    });
+
+    absl::MutexLock lock(mutex_);
     mutex_.Await(absl::Condition(&is_unlocked_));
     VLOG(2) << "Acquired " << LockableName::ToString(value_);
     is_unlocked_ = false;
@@ -102,7 +111,7 @@ class Lockable {
   }
 
   Lock TryAcquire() {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
 
     // Someone already locked this object, return an empty lock.
     if (is_unlocked_ == false) {
@@ -119,12 +128,13 @@ class Lockable {
 
  protected:
   const T& value() const { return value_; }
+  T& mutable_value() { return value_; }
 
  private:
   friend class Lock;
 
   void Release() {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     VLOG(2) << "Released " << LockableName::ToString(value_);
     CHECK(!is_unlocked_);  // NOLINT
     is_unlocked_ = true;

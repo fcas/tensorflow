@@ -1,4 +1,19 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -6,7 +21,7 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "distributions",
     srcs = ["__init__.py"],
     deprecation = ("TensorFlow Distributions has migrated to " +
@@ -16,16 +31,16 @@ py_strict_library(
                    "will not receive new features, and will be removed by " +
                    "early 2019. You should update all usage of " +
                    "`tf.distributions` to `tfp.distributions`."),
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":distributions_py",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "distributions_py",
     srcs = ["distributions.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":bernoulli",
         ":beta",
@@ -45,10 +60,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "util",
     srcs = ["util.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:for_generated_wrappers",
@@ -66,9 +81,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "kullback_leibler",
     srcs = ["kullback_leibler.py"],
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:for_generated_wrappers",
         "//tensorflow/python/ops:array_ops",
@@ -80,9 +96,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "laplace",
     srcs = ["laplace.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":special_math",
@@ -99,9 +116,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "dirichlet",
     srcs = ["dirichlet.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":kullback_leibler",
@@ -119,9 +137,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "beta",
     srcs = ["beta.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":kullback_leibler",
@@ -140,9 +159,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "bernoulli",
     srcs = ["bernoulli.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":kullback_leibler",
@@ -157,9 +177,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "uniform",
     srcs = ["uniform.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         "//tensorflow/python/framework:constant_op",
@@ -173,9 +194,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "special_math",
     srcs = ["special_math.py"],
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:for_generated_wrappers",
@@ -185,9 +207,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "bijector_impl",
     srcs = ["bijector_impl.py"],
+    strict_deps = True,
     deps = [
         ":util",
         "//tensorflow/python/framework:for_generated_wrappers",
@@ -200,9 +223,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "normal",
     srcs = ["normal.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":kullback_leibler",
@@ -219,9 +243,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "dirichlet_multinomial",
     srcs = ["dirichlet_multinomial.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":util",
@@ -237,9 +262,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "distribution",
     srcs = ["distribution.py"],
+    strict_deps = True,
     deps = [
         ":kullback_leibler",
         ":util",
@@ -255,9 +281,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "identity_bijector",
     srcs = ["identity_bijector.py"],
+    strict_deps = True,
     deps = [
         ":bijector",
         "//tensorflow/python/framework:constant_op",
@@ -265,9 +292,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "categorical",
     srcs = ["categorical.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":kullback_leibler",
@@ -283,9 +311,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "bijector_test_util",
     srcs = ["bijector_test_util.py"],
+    strict_deps = True,
     deps = [
         ":uniform",
         "//tensorflow/python/framework:for_generated_wrappers",
@@ -294,15 +323,17 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "bijector",
     srcs = ["bijector.py"],
+    strict_deps = True,
     deps = [":bijector_impl"],
 )
 
-py_strict_library(
+py_library(
     name = "exponential",
     srcs = ["exponential.py"],
+    strict_deps = True,
     deps = [
         ":gamma",
         "//tensorflow/python/framework:for_generated_wrappers",
@@ -316,9 +347,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "gamma",
     srcs = ["gamma.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":kullback_leibler",
@@ -337,9 +369,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "multinomial",
     srcs = ["multinomial.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":util",
@@ -356,9 +389,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "transformed_distribution",
     srcs = ["transformed_distribution.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":identity_bijector",
@@ -376,9 +410,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "student_t",
     srcs = ["student_t.py"],
+    strict_deps = True,
     deps = [
         ":distribution",
         ":util",

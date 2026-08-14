@@ -1,4 +1,18 @@
-// RUN: stablehlo-quant-opt %s -split-input-file -stablehlo-lift-quantizable-spots-as-functions | FileCheck %s
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+// RUN: stablehlo-quant-opt %s -split-input-file -tf-stablehlo-lift-quantizable-spots-as-functions | FileCheck %s
 
 // CHECK-LABEL: @conv_fn(
 // CHECK-SAME:          %[[ARG_0:.*]]: tensor<1x3x3x4xf32>
@@ -839,17 +853,23 @@ module {
 // CHECK-LABEL: @conv_3_fn
 // CHECK: tf.XlaCallModule
 // CHECK-SAME: _entry_function = @composite_conv_fn_6, _original_entry_function = "composite_conv_fn_6"
+// CHECK-SAME: _stablehlo_version = "{{.*}}"
 // CHECK: tf.XlaCallModule
 // CHECK-SAME: _entry_function = @composite_conv_fn_5, _original_entry_function = "composite_conv_fn_5"
+// CHECK-SAME: _stablehlo_version = "{{.*}}"
 
 // CHECK-LABEL: @conv_1_fn
 // CHECK: tf.XlaCallModule
 // CHECK-SAME: _entry_function = @composite_conv_fn_2, _original_entry_function = "composite_conv_fn_2"
+// CHECK-SAME: _stablehlo_version = "{{.*}}"
 // CHECK: tf.XlaCallModule
 // CHECK-SAME: _entry_function = @composite_conv_fn_1, _original_entry_function = "composite_conv_fn_1"
+// CHECK-SAME: _stablehlo_version = "{{.*}}"
 
 // CHECK-LABEL: @conv_2_fn
 // CHECK: tf.XlaCallModule
 // CHECK-SAME: _entry_function = @composite_conv_fn_4, _original_entry_function = "composite_conv_fn_4"
+// CHECK-SAME: _stablehlo_version = "{{.*}}"
 // CHECK: tf.XlaCallModule
 // CHECK-SAME: _entry_function = @composite_conv_fn_3, _original_entry_function = "composite_conv_fn_3"
+// CHECK-SAME: _stablehlo_version = "{{.*}}"

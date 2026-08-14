@@ -1,8 +1,24 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_custom_op_library",
-    "tf_features_nolayering_check_if_ios",
     "tf_gen_op_wrapper_py",
     "tf_opts_nortti_if_android",
 )
@@ -10,7 +26,7 @@ load("//tensorflow:tensorflow.default.bzl", "pybind_extension", "tf_custom_op_py
 load("//tensorflow/lite:build_def.bzl", "tf_to_tflite", "tflite_copts")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = ["//tensorflow:internal"],
     licenses = ["notice"],
 )
@@ -69,6 +85,7 @@ filegroup(
     name = "interpreter_test_data",
     srcs = [
         "pc_conv.bin",
+        "two_signatures.tflite",
         ":gather_string",
         ":gather_string_0d",
         ":permute_float",
@@ -102,8 +119,10 @@ cc_library(
     name = "double_op_and_kernels",
     testonly = 1,
     srcs = ["double_op.cc"],
-    copts = tflite_copts() + tf_opts_nortti_if_android(),
-    features = tf_features_nolayering_check_if_ios(),
+    copts = tflite_copts() + tf_opts_nortti_if_android() + select({
+        "//tensorflow:android": ["-Wno-private-header"],
+        "//conditions:default": [],
+    }),
     deps = select({
         "//tensorflow:android": [
             "//tensorflow/core:portable_tensorflow_lib_lite",
@@ -135,7 +154,7 @@ tf_gen_op_wrapper_py(
         "//tensorflow/python/util:deprecation",
         "//tensorflow/python/util:tf_export",
     ],
-    py_lib_rule = py_strict_library,
+    py_lib_rule = py_library,
     deps = [":double_op_and_kernels"],
 )
 
@@ -145,7 +164,6 @@ tf_custom_op_py_strict_library(
     srcs = ["double_op.py"],
     dso = [":_double_op.so"],
     kernels = [":double_op_and_kernels"],
-    srcs_version = "PY3",
     deps = [
         ":gen_double_op_wrapper",
         "//tensorflow/python/framework:dtypes",
@@ -184,7 +202,7 @@ pybind_extension(
         ":test_registerer",
         "//tensorflow/lite:framework",
         "//tensorflow/lite/kernels:builtin_ops",
-        "//third_party/python_runtime:headers",
         "@pybind11",
+        "@xla//third_party/python_runtime:headers",
     ],
 )

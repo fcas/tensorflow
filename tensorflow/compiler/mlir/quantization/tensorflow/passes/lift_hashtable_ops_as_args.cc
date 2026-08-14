@@ -19,6 +19,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Block.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
@@ -34,6 +35,7 @@ limitations under the License.
 #include "mlir/Support/TypeID.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/quantization/tensorflow/passes/constants.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/passes/manipulate_model_attr.h"
+#include "tensorflow/compiler/mlir/quantization/tensorflow/passes/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_saved_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/import_model.h"
@@ -70,14 +72,15 @@ bool IsHashTableOp(Operation* op) {
 
 // Checks if the function is the main or initializer function.
 bool IsMainOrInitializerFunction(ModuleOp module, func::FuncOp func) {
-  if (func.getSymName().equals(tensorflow::kImportModelDefaultGraphFuncName) ||
-      func.getSymName().equals(kTfQuantSaveFuncName)) {
+  if (func.getSymName() ==
+          llvm::StringRef(tensorflow::kImportModelDefaultGraphFuncName) ||
+      func.getSymName() == kTfQuantSaveFuncName) {
     return true;
   }
 
   for (func::FuncOp init_func :
        tf_saved_model::GetInitializerFunctions(module)) {
-    if (func.getSymName().equals(init_func.getSymName())) {
+    if (func.getSymName() == init_func.getSymName()) {
       return true;
     }
   }
@@ -118,7 +121,7 @@ bool IsResourceInitialized(ModuleOp module_op, Operation* hash_table) {
        tf_saved_model::GetInitializerFunctions(module_op)) {
     for (Operation& op : init_func_op.getBody().getOps()) {
       StringRef other_shared_name = GetSharedName(&op);
-      if (IsHashTableOp(&op) && other_shared_name.equals(shared_name)) {
+      if (IsHashTableOp(&op) && other_shared_name == shared_name) {
         return true;
       }
     }

@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,20 +15,14 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_PROFILER_LIB_PROFILER_FACTORY_H_
 #define TENSORFLOW_CORE_PROFILER_LIB_PROFILER_FACTORY_H_
 
-#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include "absl/base/macros.h"
-#include "tensorflow/core/profiler/lib/profiler_interface.h"
+#include "tensorflow/core/profiler/lib/profiler_interface.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
-
-// TODO: b/323943471 - This macro should eventually be provided by Abseil.
-#ifndef ABSL_DEPRECATE_AND_INLINE
-#define ABSL_DEPRECATE_AND_INLINE()
-#endif
 
 namespace tensorflow {
 namespace profiler {

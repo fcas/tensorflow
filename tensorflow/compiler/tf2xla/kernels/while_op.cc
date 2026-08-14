@@ -17,11 +17,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_join.h"
 #include "tensorflow/compiler/tf2xla/kernels/if_while_utils.h"
 #include "tensorflow/compiler/tf2xla/kernels/tensor_list_utils.h"
@@ -33,13 +35,16 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
 #include "tensorflow/compiler/tf2xla/xla_resource.h"
 #include "xla/client/client.h"
-#include "xla/client/lib/tuple.h"
-#include "xla/client/xla_builder.h"
-#include "xla/client/xla_computation.h"
+#include "xla/hlo/builder/lib/tuple.h"
+#include "xla/hlo/builder/xla_builder.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/framework/op_kernel.h"
@@ -48,17 +53,15 @@ limitations under the License.
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/platform/types.h"
-#include "tsl/platform/errors.h"
 
 namespace tensorflow {
 
 namespace {
 
 // Verify that input resources are grouped in the end.
-Status VerifyResourceArgsGroupedAtEnd(XlaOpKernelContext* ctx,
-                                      const NameAttrList& body_name_attr) {
+absl::Status VerifyResourceArgsGroupedAtEnd(
+    XlaOpKernelContext* ctx, const NameAttrList& body_name_attr) {
   const FunctionBody* body;
   TF_RETURN_IF_ERROR(ctx->compiler()->FindFunctionBody(body_name_attr, &body));
   bool has_seen_resource = false;
@@ -81,7 +84,7 @@ Status VerifyResourceArgsGroupedAtEnd(XlaOpKernelContext* ctx,
 }
 
 // Builds XlaCompiler argument descriptions `args` from `ctx`.
-Status MakeXlaCompilerArgumentsFromInputs(
+absl::Status MakeXlaCompilerArgumentsFromInputs(
     XlaOpKernelContext* ctx, std::vector<XlaCompiler::Argument>* args,
     bool* has_uninitialized_vars, bool* has_tensor_arrays,
     bool* has_uninitialized_tensor_lists) {
@@ -151,7 +154,7 @@ void GetLoopInvariants(XlaOpKernelContext* ctx,
 // Converts entries in `args` which are loop invariants and have compile time
 // constant inputs and need to be constants in order to be compilable to
 // constants so that they can be propagated in the loop body.
-Status ConvertLoopInvariantsToConst(
+absl::Status ConvertLoopInvariantsToConst(
     XlaOpKernelContext* ctx, const NameAttrList& body_name_attr,
     const NameAttrList& cond_name_attr,
     std::vector<XlaCompiler::Argument>* args,
@@ -189,7 +192,7 @@ Status ConvertLoopInvariantsToConst(
   return absl::OkStatus();
 }
 
-Status VerifyBodyInputAndOutputShapeMatch(
+absl::Status VerifyBodyInputAndOutputShapeMatch(
     XlaOpKernelContext* ctx,
     const std::vector<bool>& compile_time_const_arg_indices,
     const XlaCompiler::CompilationResult& body, bool has_token_input_output) {
@@ -262,7 +265,7 @@ absl::StatusOr<xla::XlaComputation> BuildWrappedBody(
               if (output_subshape.IsArray()) {
                 const xla::Shape& input_subshape =
                     xla::ShapeUtil::GetSubshape(input_shape, index);
-                for (int d = 0; d < output_subshape.rank(); ++d) {
+                for (int d = 0; d < output_subshape.dimensions().size(); ++d) {
                   if (input_subshape.is_dynamic_dimension(d) &&
                       !output_subshape.is_dynamic_dimension(d)) {
                     *element = xla::SetDimensionSize(
@@ -447,7 +450,8 @@ void XlaWhileOp::Compile(XlaOpKernelContext* ctx) {
 
       // Add any TensorArray gradients touched by the body to the enclosing
       // graph.
-      for (const string& grad_source : update.tensor_array_gradients_accessed) {
+      for (const std::string& grad_source :
+           update.tensor_array_gradients_accessed) {
         VLOG(4) << "TensorArray " << resource->name() << " accessed gradient "
                 << grad_source;
         XlaResource* gradient;
@@ -551,7 +555,7 @@ void XlaWhileOp::Compile(XlaOpKernelContext* ctx) {
       // Set token input for this "while" op.
       std::vector<xla::XlaOp> token_inputs;
       token_inputs.reserve(token_input_nodes_.size());
-      for (const string& node_name : token_input_nodes_) {
+      for (const std::string& node_name : token_input_nodes_) {
         auto token_or = compiler->GetNodeToken(node_name);
         OP_REQUIRES_OK(ctx, token_or.status());
         token_inputs.push_back(token_or.value());
@@ -574,7 +578,7 @@ void XlaWhileOp::Compile(XlaOpKernelContext* ctx) {
       if (input_shape != list_shape) {
         // Prepare dynamic dimensions for element shapes.
         std::vector<std::vector<xla::XlaOp>> list_dynamic_dims;
-        for (int i = 0; i < list_shape.tuple_shapes_size() - 1; ++i) {
+        for (int i = 0; i < list_shape.tuple_shapes().size() - 1; ++i) {
           std::vector<xla::XlaOp> dynamic_dims;
 
           const xla::Shape& shape = list_shape.tuple_shapes(i);
@@ -588,13 +592,13 @@ void XlaWhileOp::Compile(XlaOpKernelContext* ctx) {
           } else {
             int32_t dim_size = shape.dimensions(0);
             dynamic_dims.push_back(
-                xla::ConstantR0<int32>(ctx->builder(), dim_size));
+                xla::ConstantR0<int32_t>(ctx->builder(), dim_size));
           }
 
           // Set dynamic dimension size to 0 for element value. Inside the while
           // loop, TensorlistSetItem will properly set the element shape's
           // dynamic dimension.
-          for (int64_t dim = 1; dim < shape.dimensions_size(); ++dim) {
+          for (int64_t dim = 1; dim < shape.dimensions().size(); ++dim) {
             int32_t dim_size = shape.dimensions(dim);
             if (shape.is_dynamic_dimension(dim)) {
               dim_size = 0;

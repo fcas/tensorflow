@@ -150,7 +150,8 @@ absl::Status ComposableSplitterBase::CheckIfWriteImplemented() {
   return absl::OkStatus();
 }
 
-absl::Status ComposableSplitterBase::Write(std::string file_prefix) {
+absl::StatusOr<std::string> ComposableSplitterBase::Write(
+    std::string file_prefix) {
   TF_RETURN_IF_ERROR(CheckIfWriteImplemented());
 
   auto split_results = Split();
@@ -180,7 +181,7 @@ absl::Status ComposableSplitterBase::Write(std::string file_prefix) {
     if (!writer.Close()) return writer.status();
   }
   LOG(INFO) << "Splitter output written to " << output_path;
-  return absl::OkStatus();
+  return output_path;
 }
 
 absl::StatusOr<std::tuple<std::string, bool>>
@@ -225,7 +226,7 @@ ComposableSplitterBase::WriteToCord() {
   absl::Cord output;
   if (chunked_message->chunked_fields().empty()) {
     // Export regular pb.
-    if (!message_->SerializeToCord(&output))
+    if (!message_->SerializeToString(&output))
       return absl::InvalidArgumentError("Serialization to absl::Cord failed");
     LOG(INFO) << "Splitter output written to absl::Cord";
     return std::make_tuple(output, false);

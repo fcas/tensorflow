@@ -51,15 +51,15 @@ do_external_licenses_check(){
 @pybind11_abseil//pybind11_abseil
 @org_tensorflow//
 @com_github_googlecloudplatform_google_cloud_cpp//google
-@com_github_grpc_grpc//src/compiler
+@grpc//src/compiler
 @platforms//os
 @ruy//
 EOF
 
   # grep patterns for targets which are allowed to be extra licenses
   cat > $BATS_TEST_TMPDIR/allowed_to_be_extra <<EOF
-//third_party/mkl
-//third_party/mkl_dnn
+@xla//third_party/mkl
+@xla//third_party/mkl_dnn
 @absl_py//
 @bazel_tools//src
 @bazel_tools//platforms
@@ -216,6 +216,8 @@ EOF
   bazel cquery \
     --experimental_cc_shared_library \
     --@local_config_cuda//:enable_cuda \
+    --repo_env=HERMETIC_CUDA_VERSION="12.3.2" \
+    --repo_env=HERMETIC_CUDNN_VERSION="8.9.7.29" \
     "somepath(//tensorflow/tools/pip_package:build_pip_package, " \
     "@local_config_cuda//cuda:cudart + "\
     "@local_config_cuda//cuda:cudart + "\
@@ -236,6 +238,8 @@ EOF
   bazel cquery \
     --experimental_cc_shared_library \
     --@local_config_cuda//:enable_cuda \
+    --repo_env=HERMETIC_CUDA_VERSION="12.3.2" \
+    --repo_env=HERMETIC_CUDNN_VERSION="8.9.7.29" \
     --define framework_shared_object=false \
     "somepath(//tensorflow/tools/pip_package:build_pip_package, " \
     "@local_config_cuda//cuda:cudart + "\

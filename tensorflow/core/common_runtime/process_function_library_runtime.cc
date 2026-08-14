@@ -27,8 +27,11 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/synchronization/notification.h"
 #include "absl/types/optional.h"
 #include "absl/types/variant.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/env_var.h"
 #include "tensorflow/core/common_runtime/build_graph_options.h"
 #include "tensorflow/core/common_runtime/device_set.h"
@@ -66,8 +69,6 @@ limitations under the License.
 #include "tensorflow/core/util/device_name_utils.h"
 #include "tensorflow/core/util/dump_graph.h"
 #include "tensorflow/core/util/reffed_status_callback.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 #if !defined(IS_MOBILE_PLATFORM)
 #include "tensorflow/core/protobuf/remote_tensor_handle.pb.h"
 #endif  // IS_MOBILE_PLATFORM
@@ -91,7 +92,7 @@ int64_t GetParallelSubgraphThreshold() {
 const char ProcessFunctionLibraryRuntime::kDefaultFLRDevice[] = "null";
 
 void ProcessFunctionLibraryRuntime::FunctionData::DistributedInit(
-    DistributedFunctionLibraryRuntime* parent, const string& function_name,
+    DistributedFunctionLibraryRuntime* parent, const std::string& function_name,
     const FunctionLibraryDefinition& lib_def, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::DoneCallback done) {
@@ -106,7 +107,7 @@ void ProcessFunctionLibraryRuntime::FunctionData::DistributedInit(
     init_started_ = true;
   }
   parent->Instantiate(function_name, lib_def, attrs, options, &local_handle_,
-                      [this, done](const Status& s) {
+                      [this, done](const absl::Status& s) {
                         init_done_.Notify();
                         done(s);
                       });
@@ -147,17 +148,18 @@ ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime(
 }
 
 /* static */
-Status ProcessFunctionLibraryRuntime::SendTensors(
-    const string& source_device, const string& target_device,
-    const string& key_prefix, int64_t src_incarnation,
+absl::Status ProcessFunctionLibraryRuntime::SendTensors(
+    const std::string& source_device, const std::string& target_device,
+    const std::string& key_prefix, int64_t src_incarnation,
     absl::Span<const Tensor> tensors_to_send, DeviceContext* device_context,
     const std::vector<AllocatorAttributes>& alloc_attrs,
     RendezvousInterface* rendezvous) {
-  std::vector<string> keys;
+  std::vector<std::string> keys;
   for (int i = 0; i < tensors_to_send.size(); ++i) {
-    string name = strings::StrCat(key_prefix, i);
-    string key = Rendezvous::CreateKey(source_device, src_incarnation,
-                                       target_device, name, FrameAndIter(0, 0));
+    std::string name = absl::StrCat(key_prefix, i);
+    std::string key =
+        Rendezvous::CreateKey(source_device, src_incarnation, target_device,
+                              name, FrameAndIter(0, 0));
     keys.push_back(key);
   }
   TF_RETURN_IF_ERROR(SendTensorsToRendezvous(
@@ -167,24 +169,25 @@ Status ProcessFunctionLibraryRuntime::SendTensors(
 
 /* static */
 void ProcessFunctionLibraryRuntime::ReceiveTensorsAsync(
-    const string& source_device, const string& target_device,
-    const string& key_prefix, int64_t src_incarnation, int64_t num_tensors,
+    const std::string& source_device, const std::string& target_device,
+    const std::string& key_prefix, int64_t src_incarnation, int64_t num_tensors,
     DeviceContext* device_context,
     const std::vector<AllocatorAttributes>& alloc_attrs,
     RendezvousInterface* rendezvous, std::vector<Tensor>* received_tensors,
     StatusCallback done) {
-  std::vector<string> keys;
+  std::vector<std::string> keys;
   for (int64_t i = 0; i < num_tensors; ++i) {
-    string name = strings::StrCat(key_prefix, i);
-    string key = Rendezvous::CreateKey(source_device, src_incarnation,
-                                       target_device, name, FrameAndIter(0, 0));
+    std::string name = absl::StrCat(key_prefix, i);
+    std::string key =
+        Rendezvous::CreateKey(source_device, src_incarnation, target_device,
+                              name, FrameAndIter(0, 0));
     keys.push_back(key);
   }
   RecvOutputsFromRendezvousAsync(rendezvous, device_context, alloc_attrs, keys,
                                  received_tensors, std::move(done));
 }
 
-Status ProcessFunctionLibraryRuntime::GetRetTypes(
+absl::Status ProcessFunctionLibraryRuntime::GetRetTypes(
     FunctionLibraryRuntime::Handle h, DataTypeVector* ret_types) {
   FunctionLibraryRuntime* flr = nullptr;
   {
@@ -202,28 +205,30 @@ Status ProcessFunctionLibraryRuntime::GetRetTypes(
   if (flr != nullptr) {
     return flr->GetRetTypes(h, ret_types);
   }
-  return errors::InvalidArgument("Handle ", h, " not found.");
+  return absl::InvalidArgumentError(absl::StrCat("Handle ", h, " not found."));
 }
 
-Status ProcessFunctionLibraryRuntime::GetDeviceIncarnation(
-    const string& device_name, int64_t* incarnation) const {
+absl::Status ProcessFunctionLibraryRuntime::GetDeviceIncarnation(
+    const std::string& device_name, int64_t* incarnation) const {
   FunctionLibraryRuntime* flr = GetFLR(device_name);
   if (flr == nullptr) {
-    return errors::InvalidArgument("Device name: ", device_name, " not found.");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Device name: ", device_name, " not found."));
   }
   *incarnation = flr->device()->attributes().incarnation();
   return absl::OkStatus();
 }
 
-Status ProcessFunctionLibraryRuntime::GetDeviceContext(
-    const string& device_name, DeviceContext** device_context) const {
+absl::Status ProcessFunctionLibraryRuntime::GetDeviceContext(
+    const std::string& device_name, DeviceContext** device_context) const {
   *device_context = nullptr;
   FunctionLibraryRuntime* flr = GetFLR(device_name);
   if (flr == nullptr) {
-    return errors::InvalidArgument("Device name: ", device_name, " not found.");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Device name: ", device_name, " not found."));
   }
   Device* device = flr->device();
-  string device_type = device->parsed_name().type;
+  std::string device_type = device->parsed_name().type;
   if (device_type == "CPU" || device_type == "TPU_SYSTEM") {
     // "TPU_SYSTEM" indicates that `device` is a CPU.
     return absl::OkStatus();
@@ -237,9 +242,9 @@ Status ProcessFunctionLibraryRuntime::GetDeviceContext(
     }
   }
 
-  return errors::Internal("Device type: ", device_type,
-                          " is currently unsupported for remote ",
-                          "function executions");
+  return absl::InternalError(absl::StrCat(
+      "Device type: ", device_type, " is currently unsupported for remote ",
+      "function executions"));
 }
 
 void ProcessFunctionLibraryRuntime::InitializeDeviceAndFlr() {
@@ -280,7 +285,7 @@ void ProcessFunctionLibraryRuntime::InitializeDeviceAndFlr() {
 }
 
 FunctionLibraryRuntime* ProcessFunctionLibraryRuntime::GetFLR(
-    const string& device_name) const {
+    const std::string& device_name) const {
   Device* device = nullptr;
   if (device_name != kDefaultFLRDevice) {
     if (!device_mgr_->LookupDevice(device_name, &device).ok()) {
@@ -298,14 +303,14 @@ FunctionLibraryRuntime* ProcessFunctionLibraryRuntime::GetFLR(
 }
 
 FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandle(
-    const string& function_key, const string& device_name,
+    const std::string& function_key, const std::string& device_name,
     FunctionLibraryRuntime::LocalHandle local_handle) {
   mutex_lock l(mu_);
   return AddHandleLocked(function_key, device_name, local_handle);
 }
 
 FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandleLocked(
-    const string& function_key, const string& device_name,
+    const std::string& function_key, const std::string& device_name,
     FunctionLibraryRuntime::LocalHandle local_handle) {
   auto h = next_handle_;
   function_data_[h] =
@@ -317,7 +322,8 @@ FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandleLocked(
 
 FunctionLibraryRuntime::Handle
 ProcessFunctionLibraryRuntime::AddMultiDeviceHandle(
-    std::unique_ptr<MultiDeviceFunctionData> data, const string& function_key) {
+    std::unique_ptr<MultiDeviceFunctionData> data,
+    const std::string& function_key) {
   mutex_lock l(mu_);
   auto h = next_handle_;
   mdevice_data_[h] = std::move(data);
@@ -337,14 +343,14 @@ bool ProcessFunctionLibraryRuntime::HasMultiDeviceHandle(
 }
 
 FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::GetHandle(
-    const string& function_key) const {
+    const std::string& function_key) const {
   tf_shared_lock l(mu_);
   return gtl::FindWithDefault(table_, function_key, kInvalidHandle);
 }
 
 FunctionLibraryRuntime::LocalHandle
 ProcessFunctionLibraryRuntime::GetHandleOnDevice(
-    const string& device_name, FunctionLibraryRuntime::Handle handle,
+    const std::string& device_name, FunctionLibraryRuntime::Handle handle,
     bool include_multi_device) const {
   tf_shared_lock l(mu_);
 
@@ -356,7 +362,7 @@ ProcessFunctionLibraryRuntime::GetHandleOnDevice(
     if (data.glue_.size() != 1) return kInvalidLocalHandle;
 
     const auto& pair = *data.glue_.begin();
-    const string& func_device_name = pair.first;
+    const std::string& func_device_name = pair.first;
     const ComponentFunctionData& component_data = pair.second;
     if (func_device_name != device_name) return kInvalidLocalHandle;
 
@@ -376,7 +382,7 @@ ProcessFunctionLibraryRuntime::GetHandleOnDevice(
   return function_data->local_handle();
 }
 
-string ProcessFunctionLibraryRuntime::GetDeviceName(
+std::string ProcessFunctionLibraryRuntime::GetDeviceName(
     FunctionLibraryRuntime::Handle handle) const {
   tf_shared_lock l(mu_);
   auto iter = function_data_.find(handle);
@@ -413,7 +419,7 @@ std::vector<Tensor> GetLocalArgs(absl::Span<const FunctionArg> args) {
 FunctionLibraryRuntime::DoneCallback TensorsToFunctionRetsDoneCallback(
     std::vector<FunctionRet>* rets, std::vector<Tensor>* tensors,
     FunctionLibraryRuntime::DoneCallback done) {
-  return [rets, tensors, done = std::move(done)](const Status& s) {
+  return [rets, tensors, done = std::move(done)](const absl::Status& s) {
     if (s.ok()) {
       for (const auto& t : *tensors) {
         rets->push_back(t);
@@ -425,11 +431,12 @@ FunctionLibraryRuntime::DoneCallback TensorsToFunctionRetsDoneCallback(
 }
 
 // Push Tensors in `function_rets` into `tensors`.
-Status FunctionRetsToTensors(const std::vector<FunctionRet>* function_rets,
-                             std::vector<Tensor>* tensors) {
+absl::Status FunctionRetsToTensors(
+    const std::vector<FunctionRet>* function_rets,
+    std::vector<Tensor>* tensors) {
   for (const auto& ret : *function_rets) {
     if (ret.index() != 0) {
-      return errors::Internal(
+      return absl::InternalError(
           "Expect a Tensor as a function output but got a TensorShape.");
     }
     // NOLINTNEXTLINE
@@ -493,12 +500,12 @@ void ProcessFunctionLibraryRuntime::PublishSubgraphs(
   stats_publishers_.push_back(std::move(stats_publisher));
 }
 
-Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
-    const string& function_name, AttrSlice attrs,
+absl::Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
+    const std::string& function_name, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::Handle* handle) {
   // Check if this function has already been instantiated.
-  const string& function_key = Canonicalize(function_name, attrs, options);
+  const std::string& function_key = Canonicalize(function_name, attrs, options);
 
   {
     mutex_lock l(mu_);
@@ -515,12 +522,12 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
   if (VLOG_IS_ON(3)) {
     int index = 0;
     VLOG(3) << "Requested input devices:";
-    for (const string& device : options.input_devices) {
+    for (const std::string& device : options.input_devices) {
       VLOG(3) << "    [input " << index++ << "] " << device;
     }
     index = 0;
     VLOG(3) << "Requested output devices:";
-    for (const string& device : options.output_devices) {
+    for (const std::string& device : options.output_devices) {
       VLOG(3) << "    [output " << index++ << "] " << device;
     }
   }
@@ -534,9 +541,9 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     // different devices depending on the `PartitionedCallOp` device.
     FunctionLibraryRuntime* flr = GetFLR(options.target);
     if (flr == nullptr) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Cannot instantiate multi-device function with target device ",
-          options.target);
+          options.target));
     }
     default_device = flr->device();
   }
@@ -550,7 +557,7 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
   Device* cpu_device;
   TF_RETURN_IF_ERROR(device_mgr_->LookupDevice("CPU:0", &cpu_device));
 
-  const uint64 optimization_start_time_usecs = Env::Default()->NowMicros();
+  const uint64_t optimization_start_time_usecs = Env::Default()->NowMicros();
   // Look up for optimized function graph in library. If found, skip
   // `OptimizeFunctionGraph` step.
   std::optional<absl::StatusOr<OptimizedFunctionGraph>> optimized_graph_proto =
@@ -591,8 +598,8 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
                                           function_name, *optimized_graph_info,
                                           options, *dev_set, lib_def_,
                                           composite_devices, cpu_device, env_));
-  const uint64 optimization_end_time_usecs = Env::Default()->NowMicros();
-  const uint64 graph_optimization_duration =
+  const uint64_t optimization_end_time_usecs = Env::Default()->NowMicros();
+  const uint64_t graph_optimization_duration =
       optimization_end_time_usecs - optimization_start_time_usecs;
   metrics::UpdateFunctionGraphOptimizationTime(graph_optimization_duration);
   VLOG(1) << "Finished graph optimizations for MultiDevice function \""
@@ -615,13 +622,13 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
   // We must preserve control returns in each of the function components,
   // otherwise after function inlining we might prune side-effectful nodes.
   const auto control_ret =
-      [&node_name_to_control_ret](const Node* n) -> std::optional<string> {
+      [&node_name_to_control_ret](const Node* n) -> std::optional<std::string> {
     const auto it = node_name_to_control_ret.find(n->name());
     return it != node_name_to_control_ret.end()
                // NOLINTNEXTLINE
-               ? absl::make_optional<string>(it->second)
+               ? absl::make_optional<std::string>(it->second)
                // NOLINTNEXTLINE
-               : absl::nullopt;
+               : std::nullopt;
   };
 
   auto data = std::make_unique<MultiDeviceFunctionData>(
@@ -637,7 +644,7 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
       &data_lib_def,
       absl::StrCat(function_name, "_partitioned_", random::New64()));
   const int num_subgraphs = subgraphs->size();
-  gtl::InlinedVector<Status, 4> instantiate_status(num_subgraphs);
+  absl::InlinedVector<absl::Status, 4UL> instantiate_status(num_subgraphs);
 
   // Before instantiating component functions, determine synchronous execution.
   data->enable_sync_execution = false;
@@ -657,11 +664,11 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
 
   auto instantiate_component = [this, dev_set, &data_lib_def, &control_ret,
                                 &options,
-                                &data](const string& target,
+                                &data](const std::string& target,
                                        std::unique_ptr<Graph> subgraph,
                                        ComponentFunctionData* comp_data,
-                                       std::function<void(Status)> done) {
-    const string& device_type =
+                                       std::function<void(absl::Status)> done) {
+    const std::string& device_type =
         dev_set->FindDeviceByName(target)->device_type();
 
     bool ints_on_device =
@@ -669,7 +676,8 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
          device_type == "XLA_GPU" || options.int_args_and_retvals_on_device);
     Int32FulltypePass int32_fulltype(
         "ProcessFunctionLibraryRuntime::InstantiateMultiDevice");
-    Status s = int32_fulltype.ProcessGraph(subgraph.get(), ints_on_device);
+    absl::Status s =
+        int32_fulltype.ProcessGraph(subgraph.get(), ints_on_device);
     if (!s.ok()) {
       done(s);
       return;
@@ -702,6 +710,17 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     // before the move in case `GraphToFunctionDef()` changes in future.
     AttrValueMap attrs(shard.attr());
 
+    // Propagate the `function_runs_at_most_once` attribute in the subgraphs.
+    // This ensures that remote instantiations of the component functions will
+    // also appropriately be run at most once.
+    if (options.function_runs_at_most_once) {
+      AttrValue function_runs_at_most_once;
+      function_runs_at_most_once.set_b(true);
+      (*shard.mutable_attr())
+          [FunctionLibraryDefinition::kFunctionRunsAtMostOnce] =
+              function_runs_at_most_once;
+    }
+
     s = data_lib_def.AddFunctionDef(std::move(shard));
     if (!s.ok()) {
       done(s);
@@ -717,6 +736,7 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     opts.allow_small_function_optimizations = data->enable_sync_execution;
     opts.allow_control_flow_sync_execution =
         options.allow_control_flow_sync_execution;
+    opts.function_runs_at_most_once = options.function_runs_at_most_once;
     AttrValue ints_on_device_attr;
     ints_on_device_attr.set_b(options.int_args_and_retvals_on_device);
     attrs.insert(
@@ -726,7 +746,7 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
 
     auto* component_handle = new FunctionLibraryRuntime::Handle;
     auto wrapped_done = [this, comp_data, component_handle, &data,
-                         done = std::move(done)](const Status& s) {
+                         done = std::move(done)](const absl::Status& s) {
       VLOG(1) << "Finished instantiating component function " << comp_data->name
               << " with handle " << *component_handle << " status: " << s;
       if (s.ok()) {
@@ -745,8 +765,8 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     FunctionLibraryRuntime* flr = GetFLR(opts.target);
     if (flr != nullptr) {
       // Initialize local function synchronously.
-      Status s = flr->Instantiate(comp_data->name, AttrSlice(&attrs), opts,
-                                  component_handle);
+      absl::Status s = flr->Instantiate(comp_data->name, AttrSlice(&attrs),
+                                        opts, component_handle);
       wrapped_done(s);
     } else {
       opts.ret_indices = comp_data->ret_indices;
@@ -767,13 +787,13 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
       num_subgraphs > GetParallelSubgraphThreshold()) {
     BlockingCounter counter(static_cast<int>(num_subgraphs));
     for (auto& pair : *subgraphs) {
-      Status* status = &instantiate_status[i];
+      absl::Status* status = &instantiate_status[i];
       ComponentFunctionData* comp_data = &data->glue_[pair.first];
       comp_data->name = name_generator.GetName();
       default_thread_pool_->Schedule(
           [&instantiate_component, &pair, comp_data, &counter, status]() {
             instantiate_component(pair.first, std::move(pair.second), comp_data,
-                                  [&counter, status](Status s) {
+                                  [&counter, status](absl::Status s) {
                                     status->Update(s);
                                     counter.DecrementCount();
                                   });
@@ -783,12 +803,12 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     counter.Wait();
   } else {
     for (auto& pair : *subgraphs) {
-      Notification n;
-      Status* status = &instantiate_status[i];
+      absl::Notification n;
+      absl::Status* status = &instantiate_status[i];
       ComponentFunctionData* comp_data = &data->glue_[pair.first];
       comp_data->name = name_generator.GetName();
       instantiate_component(pair.first, std::move(pair.second), comp_data,
-                            [&n, status](Status s) {
+                            [&n, status](absl::Status s) {
                               status->Update(s);
                               n.Notify();
                             });
@@ -823,13 +843,13 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
   return absl::OkStatus();
 }
 
-Status ProcessFunctionLibraryRuntime::GetOutputDevices(
+absl::Status ProcessFunctionLibraryRuntime::GetOutputDevices(
     FunctionLibraryRuntime::Handle handle,
     std::vector<Device*>* output_devices) const {
   MultiDeviceFunctionData* data = IsMultiDevice(handle);
   if (data == nullptr) {
-    return errors::InvalidArgument(
-        "Failed for find multi-device function handle ", handle);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Failed for find multi-device function handle ", handle));
   }
 
   for (const auto& pair : data->glue_) {
@@ -839,7 +859,7 @@ Status ProcessFunctionLibraryRuntime::GetOutputDevices(
       continue;
     }
 
-    const string& target = pair.first;
+    const std::string& target = pair.first;
     FunctionLibraryRuntime* target_flr = GetFLR(target);
     Device* target_device = nullptr;
     Device* host = nullptr;
@@ -848,7 +868,7 @@ Status ProcessFunctionLibraryRuntime::GetOutputDevices(
         data->has_remote_outputs = true;
       }
       target_device = device_set()->FindDeviceByName(target);
-      string remote_host;
+      std::string remote_host;
       TF_RETURN_IF_ERROR(
           DeviceNameUtils::DeviceNameToCpuDeviceName(target, &remote_host));
       host = device_set()->FindDeviceByName(remote_host);
@@ -870,7 +890,7 @@ Status ProcessFunctionLibraryRuntime::GetOutputDevices(
   return absl::OkStatus();
 }
 
-Status ProcessFunctionLibraryRuntime::PrepareRunMultiDevice(
+absl::Status ProcessFunctionLibraryRuntime::PrepareRunMultiDevice(
     const FunctionLibraryRuntime::Options& opts,
     FunctionLibraryRuntime::Handle handle,
     const MultiDeviceFunctionData** data) const {
@@ -879,7 +899,7 @@ Status ProcessFunctionLibraryRuntime::PrepareRunMultiDevice(
     // creates rendezvous, etc.
     // Letting create_rendezvous through will do the wrong thing - each
     // component function will get a separate rendezvous created by its FLR.
-    return errors::Internal(
+    return absl::InternalError(
         "Cannot call ProcessFunctionLibraryRuntime::Run with "
         "create_rendezvous=true. Please run the function "
         "using FunctionLibraryRuntime::Run");
@@ -887,29 +907,30 @@ Status ProcessFunctionLibraryRuntime::PrepareRunMultiDevice(
 
   *data = IsMultiDevice(handle);
   if (*data == nullptr) {
-    return errors::NotFound("Multi-device function handle ", handle,
-                            "not found. Was the function instantiated?");
+    return absl::NotFoundError(
+        absl::StrCat("Multi-device function handle ", handle,
+                     "not found. Was the function instantiated?"));
   }
 
   // Check whether we have the right rendezvous.
   if (opts.rendezvous && (*data)->is_cross_process_ &&
       !opts.rendezvous->is_cross_process()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Running a cross process function ", (*data)->function_name_,
-        " without an appropriate cross process Rendezvous.");
+        " without an appropriate cross process Rendezvous."));
   }
 
   return absl::OkStatus();
 }
 
-std::vector<string> ProcessFunctionLibraryRuntime::GetOrderedSubgraphs(
+std::vector<std::string> ProcessFunctionLibraryRuntime::GetOrderedSubgraphs(
     const MultiDeviceFunctionData* data) const {
-  std::vector<string> subgraph_keys;
+  std::vector<std::string> subgraph_keys;
   subgraph_keys.reserve(data->glue_.size());
   for (const auto& pair : data->glue_) {
     subgraph_keys.push_back(pair.first);
   }
-  auto send_first_ordering = [&](const string& a, const string& b) {
+  auto send_first_ordering = [&](const std::string& a, const std::string& b) {
     auto a_summary = data->glue_.at(a).async_attributes.summary();
     auto b_summary = data->glue_.at(b).async_attributes.summary();
     if (a_summary == b_summary) {
@@ -924,14 +945,15 @@ std::vector<string> ProcessFunctionLibraryRuntime::GetOrderedSubgraphs(
   return subgraph_keys;
 }
 
-Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
+absl::Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
     const FunctionLibraryRuntime::Options& opts,
     FunctionLibraryRuntime::Handle outer_handle, std::vector<FunctionRet>* rets,
-    std::function<Status(const ComponentFunctionData& comp_data,
-                         InternalArgs* args)>
+    std::function<absl::Status(const ComponentFunctionData& comp_data,
+                               InternalArgs* args)>
         get_component_args) const {
   const MultiDeviceFunctionData* data;
-  Status prepare_status = PrepareRunMultiDevice(opts, outer_handle, &data);
+  absl::Status prepare_status =
+      PrepareRunMultiDevice(opts, outer_handle, &data);
   if (!prepare_status.ok()) {
     return prepare_status;
   }
@@ -953,9 +975,9 @@ Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
   //
   // We assume that the partitioning has a valid deadlock-free ordering and the
   // safety of running synchronously has already been confirmed by this point.
-  std::vector<string> subgraph_keys = GetOrderedSubgraphs(data);
+  std::vector<std::string> subgraph_keys = GetOrderedSubgraphs(data);
 
-  for (const string& target : subgraph_keys) {
+  for (const std::string& target : subgraph_keys) {
     const ComponentFunctionData& comp_data = data->glue_.at(target);
     FunctionLibraryRuntime::Handle comp_handle = comp_data.handle;
 
@@ -963,7 +985,7 @@ Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
     opts_copy.rets_alloc_attrs = comp_data.ret_alloc_attrs;
 
     InternalArgs comp_args;
-    Status args_status = get_component_args(comp_data, &comp_args);
+    absl::Status args_status = get_component_args(comp_data, &comp_args);
     if (!args_status.ok()) {
       VLOG(2) << "Failed to get component function arguments: " << args_status;
       return args_status;
@@ -982,14 +1004,14 @@ Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
       VLOG(4) << "    with " << opts_copy.DebugString();
 
       std::vector<Tensor> comp_tensor_rets;
-      Status run_status =
+      absl::Status run_status =
           flr->RunSync(opts_copy, comp_handle, GetLocalArgs(comp_args.args),
                        &comp_tensor_rets);
       if (!run_status.ok()) {
         VLOG(2) << "Component function execution failed: " << run_status;
-        const string function_and_msg = strings::StrCat(
-            errors::FormatFunctionForError(data->function_name_), " ",
-            run_status.message());
+        const std::string function_and_msg =
+            absl::StrCat(errors::FormatFunctionForError(data->function_name_),
+                         " ", run_status.message());
         if (opts.rendezvous != nullptr) opts.rendezvous->StartAbort(run_status);
         return errors::CreateWithUpdatedMessage(run_status, function_and_msg);
       } else {
@@ -1004,11 +1026,11 @@ Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
       VLOG(4) << "    with " << opts_copy.DebugString();
 
       std::vector<std::unique_ptr<CleanUpItem>> cleanup_items;
-      Notification n;
-      Status s;
+      absl::Notification n;
+      absl::Status s;
       std::vector<FunctionRet> comp_rets;
       RunInternal(opts_copy, comp_handle, comp_args.args, &comp_rets,
-                  &cleanup_items, [&n, &s](const Status& status) {
+                  &cleanup_items, [&n, &s](const absl::Status& status) {
                     s.Update(status);
                     n.Notify();
                   });
@@ -1024,11 +1046,12 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
     FunctionLibraryRuntime::Handle outer_handle, std::vector<FunctionRet>* rets,
     std::vector<std::unique_ptr<CleanUpItem>>* cleanup_items,
     FunctionLibraryRuntime::DoneCallback done,
-    std::function<Status(const ComponentFunctionData& comp_data,
-                         InternalArgs* args)>
+    std::function<absl::Status(const ComponentFunctionData& comp_data,
+                               InternalArgs* args)>
         get_component_args) const {
   const MultiDeviceFunctionData* data;
-  Status prepare_status = PrepareRunMultiDevice(opts, outer_handle, &data);
+  absl::Status prepare_status =
+      PrepareRunMultiDevice(opts, outer_handle, &data);
   if (!prepare_status.ok()) {
     done(prepare_status);
     return;
@@ -1050,7 +1073,7 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
 
   FunctionLibraryRuntime::Options opts_copy = opts;
   for (const auto& pair : data->glue_) {
-    const string& target = pair.first;
+    const std::string& target = pair.first;
     const ComponentFunctionData& comp_data = pair.second;
     FunctionLibraryRuntime::Handle comp_handle = pair.second.handle;
 
@@ -1059,7 +1082,7 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
     opts_copy.cancellation_manager = cm;
 
     InternalArgs comp_args;
-    Status s = get_component_args(comp_data, &comp_args);
+    absl::Status s = get_component_args(comp_data, &comp_args);
     if (!s.ok()) {
       VLOG(2) << "Failed to get component function arguments: " << s;
       refcounted_done->UpdateStatus(s);
@@ -1072,14 +1095,14 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
 
     auto component_fn_callback = [comp_rets, rets, comp_data, refcounted_done,
                                   cm, local_cm, data, comp_handle,
-                                  target](const Status& status) {
+                                  target](const absl::Status& status) {
       if (!status.ok()) {
         VLOG(2) << "Component function execution on target " << target
                 << " from " << data->function_name_ << " with handle "
                 << comp_handle << " failed: " << status;
-        const string function_and_msg = strings::StrCat(
-            errors::FormatFunctionForError(data->function_name_), " ",
-            status.message());
+        const std::string function_and_msg =
+            absl::StrCat(errors::FormatFunctionForError(data->function_name_),
+                         " ", status.message());
         refcounted_done->UpdateStatus(
             errors::CreateWithUpdatedMessage(status, function_and_msg));
         // Cancel the execution of other component functions.
@@ -1129,8 +1152,8 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
   refcounted_done->Unref();
 }
 
-Status ProcessFunctionLibraryRuntime::Instantiate(
-    const string& function_name, AttrSlice attrs,
+absl::Status ProcessFunctionLibraryRuntime::Instantiate(
+    const std::string& function_name, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::Handle* handle) {
   if (options.is_multi_device_function) {
@@ -1143,10 +1166,10 @@ Status ProcessFunctionLibraryRuntime::Instantiate(
     return flr->Instantiate(function_name, attrs, options, handle);
   }
 
-  Status status;
-  Notification notification;
+  absl::Status status;
+  absl::Notification notification;
   InstantiateRemote(function_name, attrs, options, handle,
-                    [&status, &notification](const Status& s) {
+                    [&status, &notification](const absl::Status& s) {
                       status = s;
                       notification.Notify();
                     });
@@ -1154,7 +1177,14 @@ Status ProcessFunctionLibraryRuntime::Instantiate(
   return status;
 }
 
-Status ProcessFunctionLibraryRuntime::IsCrossProcess(
+absl::Status ProcessFunctionLibraryRuntime::Finalize() {
+  for (auto& [_, flr] : *flr_map_) {
+    TF_RETURN_IF_ERROR(flr->Finalize());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ProcessFunctionLibraryRuntime::IsCrossProcess(
     FunctionLibraryRuntime::Handle handle, bool* is_cross_process) const {
   tf_shared_lock l(mu_);
   const auto& mdevice_it = mdevice_data_.find(handle);
@@ -1167,23 +1197,24 @@ Status ProcessFunctionLibraryRuntime::IsCrossProcess(
     *is_cross_process = it->second->is_cross_process();
     return absl::OkStatus();
   }
-  return errors::InvalidArgument("Handle ", handle, " not found.");
+  return absl::InvalidArgumentError(
+      absl::StrCat("Handle ", handle, " not found."));
 }
 
 void ProcessFunctionLibraryRuntime::InstantiateRemote(
-    const string& function_name, AttrSlice attrs,
+    const std::string& function_name, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::Handle* handle,
     FunctionLibraryRuntime::DoneCallback done) {
   if (parent_ == nullptr) {
-    done(errors::Internal(
+    done(absl::InternalError(absl::StrCat(
         "Currently don't support instantiating functions on device: ",
-        options.target));
+        options.target)));
     return;
   }
   auto target = options.target;
   VLOG(1) << "ProcessFLR Instantiate: " << function_name << " on: " << target;
-  string function_key = Canonicalize(function_name, attrs, options);
+  std::string function_key = Canonicalize(function_name, attrs, options);
   FunctionData* f;
   {
     mutex_lock l(mu_);
@@ -1198,7 +1229,7 @@ void ProcessFunctionLibraryRuntime::InstantiateRemote(
   f->DistributedInit(
       parent_, function_name,
       options.lib_def == nullptr ? *lib_def_ : *options.lib_def, attrs, options,
-      [this, function_name, target, handle, done](const Status& s) {
+      [this, function_name, target, handle, done](const absl::Status& s) {
         VLOG(1) << "ProcessFLR Instantiate [success]: " << function_name
                 << " on: " << target << " with handle: " << *handle
                 << " (this: " << this << ")";
@@ -1206,7 +1237,7 @@ void ProcessFunctionLibraryRuntime::InstantiateRemote(
       });
 }
 
-Status ProcessFunctionLibraryRuntime::RemoveHandle(
+absl::Status ProcessFunctionLibraryRuntime::RemoveHandle(
     FunctionLibraryRuntime::Handle handle) {
   mutex_lock l(mu_);
   table_.erase(function_data_[handle]->function_key());
@@ -1214,7 +1245,7 @@ Status ProcessFunctionLibraryRuntime::RemoveHandle(
   return absl::OkStatus();
 }
 
-Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
+absl::Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
     FunctionLibraryRuntime::Handle handle) {
   std::unique_ptr<MultiDeviceFunctionData> mdata;
   {
@@ -1231,24 +1262,24 @@ Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
 
   // If we are here we are releasing the last instantiation of `handle`.
   // Release all component function handles.
-  Status overall_status;
+  absl::Status overall_status;
   for (const auto& it : mdata->glue_) {
-    const string& device = it.first;
+    const std::string& device = it.first;
     FunctionLibraryRuntime::Handle flr_handle = it.second.handle;
     FunctionLibraryRuntime* flr = GetFLR(device);
     if (flr == nullptr) {
       // TODO(nareshmodi): Implement DeregisterGraph call to remote device if
       // parent is not null.
       if (parent_ != nullptr) {
-        return errors::Unimplemented(
+        return absl::UnimplementedError(
             "Releasing a multi-device component handle on a remote device is "
             "not yet implemented.");
       }
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Failed to find FunctionLibraryRuntime for device ", device,
-          " when releasing multi-device function handle ", handle);
+          " when releasing multi-device function handle ", handle));
     }
-    Status status = flr->ReleaseHandle(flr_handle);
+    absl::Status status = flr->ReleaseHandle(flr_handle);
     if (!status.ok()) {
       overall_status = status;
     }
@@ -1257,7 +1288,7 @@ Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
   return overall_status;
 }
 
-Status ProcessFunctionLibraryRuntime::ReleaseHandle(
+absl::Status ProcessFunctionLibraryRuntime::ReleaseHandle(
     FunctionLibraryRuntime::Handle handle) {
   // Return directly if all function handles has already been released.
   if (flr_map_ == nullptr) return absl::OkStatus();
@@ -1267,17 +1298,21 @@ Status ProcessFunctionLibraryRuntime::ReleaseHandle(
   }
 
   FunctionLibraryRuntime* flr = nullptr;
-  string target_device;
+  std::string target_device;
   {
     mutex_lock l(mu_);
-    CHECK_EQ(1, function_data_.count(handle)) << " handle: " << handle;
-    target_device = function_data_[handle]->target_device();
+
+    // Return if the handle has already been released. This is possible when a
+    // function is annotated with `function_runs_at_most_once`.
+    auto iter = function_data_.find(handle);
+    if (iter == function_data_.end()) return absl::OkStatus();
+    target_device = iter->second->target_device();
   }
   flr = GetFLR(target_device);
   if (flr != nullptr) {
     return flr->ReleaseHandle(handle);
   }
-  return errors::InvalidArgument("Handle not found: ", handle);
+  return absl::InvalidArgumentError(absl::StrCat("Handle not found: ", handle));
 }
 
 FunctionLibraryRuntime::DoneCallback
@@ -1288,12 +1323,12 @@ ProcessFunctionLibraryRuntime::ApplyCleanUpToDoneCallback(
     tsl::core::RefCountPtr<Rendezvous> created_rendezvous) const {
   return [this, items, done = std::move(done), step_id = opts.step_id,
           created_rendezvous =
-              created_rendezvous.release()](const Status& status) {
+              created_rendezvous.release()](const absl::Status& status) {
     if (created_rendezvous != nullptr) {
       created_rendezvous->Unref();
     }
-    auto* local_status = new Status(status);
-    CleanUp(items, [local_status, done](const Status& cleanup_status) {
+    auto* local_status = new absl::Status(status);
+    CleanUp(items, [local_status, done](const absl::Status& cleanup_status) {
       local_status->Update(cleanup_status);
       done(*local_status);
       delete local_status;
@@ -1302,17 +1337,18 @@ ProcessFunctionLibraryRuntime::ApplyCleanUpToDoneCallback(
   };
 }
 
-Status ProcessFunctionLibraryRuntime::CreateRendezvous(
+absl::Status ProcessFunctionLibraryRuntime::CreateRendezvous(
     FunctionLibraryRuntime::Options& opts,
     tsl::core::RefCountPtr<Rendezvous>* created_rendezvous) const {
   DCHECK(opts.rendezvous == nullptr);
   if (!rendezvous_factory_) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "The caller does not provide a rendezvous and "
         "ProcessFunctionLibraryRuntime was created without a rendezvous "
         "factory.");
   }
-  Status s = rendezvous_factory_(opts.step_id, device_mgr_, created_rendezvous);
+  absl::Status s =
+      rendezvous_factory_(opts.step_id, device_mgr_, created_rendezvous);
   if (s.ok()) {
     opts.rendezvous = created_rendezvous->get();
     opts.create_rendezvous = false;
@@ -1320,28 +1356,28 @@ Status ProcessFunctionLibraryRuntime::CreateRendezvous(
   return s;
 }
 
-Status ProcessFunctionLibraryRuntime::GetComponentArgs(
+absl::Status ProcessFunctionLibraryRuntime::GetComponentArgs(
     const absl::Span<const Tensor> args,
     const ProcessFunctionLibraryRuntime::ComponentFunctionData& comp_data,
     ProcessFunctionLibraryRuntime::InternalArgs* comp_args) {
   // "Index"s of _Arg nodes are unique when all arguments are local Tensors.
   for (const auto& it : comp_data.arg_indices) {
     if (it.index >= args.size()) {
-      return errors::InvalidArgument("index ", it.index,
-                                     " is out of range [0, ", args.size(), ")");
+      return absl::InvalidArgumentError(absl::StrCat(
+          "index ", it.index, " is out of range [0, ", args.size(), ")"));
     }
     if (it.sub_index >= 0) {
       const Tensor& t = args[it.index];
       if (t.dtype() != DT_RESOURCE) {
-        return errors::InvalidArgument("Got unexpected sub_index ",
-                                       it.sub_index, " for argument ",
-                                       it.index);
+        return absl::InvalidArgumentError(
+            absl::StrCat("Got unexpected sub_index ", it.sub_index,
+                         " for argument ", it.index));
       }
       const auto& handles = t.flat<ResourceHandle>();
       if (it.sub_index >= handles.size()) {
-        return errors::InvalidArgument("Sub_index ", it.sub_index,
-                                       "is out of range [0,", handles.size(),
-                                       ") for argument ", it.index);
+        return absl::InvalidArgumentError(
+            absl::StrCat("Sub_index ", it.sub_index, "is out of range [0,",
+                         handles.size(), ") for argument ", it.index));
       }
       comp_args->args.push_back(Tensor(handles(it.sub_index)));
     } else {
@@ -1352,7 +1388,7 @@ Status ProcessFunctionLibraryRuntime::GetComponentArgs(
 }
 
 #if !defined(IS_MOBILE_PLATFORM)
-Status ProcessFunctionLibraryRuntime::GetComponentArgs(
+absl::Status ProcessFunctionLibraryRuntime::GetComponentArgs(
     const FunctionArgsInterface& args,
     const ProcessFunctionLibraryRuntime::ComponentFunctionData& comp_data,
     ProcessFunctionLibraryRuntime::InternalArgs* comp_args) {
@@ -1382,7 +1418,7 @@ void ProcessFunctionLibraryRuntime::Run(
   FunctionLibraryRuntime::Options new_opts = opts;
   tsl::core::RefCountPtr<Rendezvous> created_rendezvous = nullptr;
   if (!opts.rendezvous) {
-    Status s = CreateRendezvous(new_opts, &created_rendezvous);
+    absl::Status s = CreateRendezvous(new_opts, &created_rendezvous);
     if (!s.ok()) {
       done(s);
       return;
@@ -1393,8 +1429,8 @@ void ProcessFunctionLibraryRuntime::Run(
   done = ApplyCleanUpToDoneCallback(cleanup_items, std::move(done), new_opts,
                                     std::move(created_rendezvous));
   std::vector<FunctionRet>* function_rets = new std::vector<FunctionRet>;
-  done = [rets, function_rets, done = std::move(done)](const Status& s) {
-    Status status = s;
+  done = [rets, function_rets, done = std::move(done)](const absl::Status& s) {
+    absl::Status status = s;
     if (status.ok()) {
       status.Update(FunctionRetsToTensors(function_rets, rets));
     }
@@ -1404,7 +1440,7 @@ void ProcessFunctionLibraryRuntime::Run(
   bool multi_device = HasMultiDeviceHandle(handle);
   if (multi_device) {
     auto get_component_args = [&args](const ComponentFunctionData& comp_data,
-                                      InternalArgs* comp_args) -> Status {
+                                      InternalArgs* comp_args) -> absl::Status {
       return GetComponentArgs(args, comp_data, comp_args);
     };
     return RunMultiDeviceAsync(new_opts, handle, function_rets, cleanup_items,
@@ -1426,13 +1462,14 @@ void ProcessFunctionLibraryRuntime::RunInternal(
     std::vector<std::unique_ptr<CleanUpItem>>* cleanup_items,
     FunctionLibraryRuntime::DoneCallback done) const {
   FunctionLibraryRuntime* flr = nullptr;
-  string target_device;
+  std::string target_device;
   FunctionLibraryRuntime::LocalHandle local_handle;
   {
     tf_shared_lock l(mu_);
     auto iter = function_data_.find(handle);
     if (iter == function_data_.end()) {
-      done(errors::NotFound("Handle: ", handle, " not found."));
+      done(
+          absl::NotFoundError(absl::StrCat("Handle: ", handle, " not found.")));
       return;
     }
     FunctionData* function_data = iter->second.get();
@@ -1441,19 +1478,19 @@ void ProcessFunctionLibraryRuntime::RunInternal(
   }
 
   if (!opts.remote_execution) {
-    done(
-        errors::InvalidArgument("ProcessFunctionLibraryRuntime::Run should "
-                                "only be called for multi-device functions or "
-                                "for remote execution."));
+    done(absl::InvalidArgumentError(
+        "ProcessFunctionLibraryRuntime::Run should "
+        "only be called for multi-device functions or "
+        "for remote execution."));
     return;
   }
 
   flr = GetFLR(target_device);
   if (flr != nullptr) {
     auto rendezvous = opts.rendezvous;
-    string source_device = opts.source_device;
+    std::string source_device = opts.source_device;
     DeviceContext* device_context;
-    Status s = GetDeviceContext(source_device, &device_context);
+    absl::Status s = GetDeviceContext(source_device, &device_context);
     if (!s.ok()) {
       done(s);
       return;
@@ -1482,7 +1519,7 @@ void ProcessFunctionLibraryRuntime::RunInternal(
     flr->Run(opts, handle, local_args, remote_rets,
              [source_device, target_device, target_incarnation, rendezvous,
               device_context, rets_alloc_attrs, remote_rets, rets,
-              done = std::move(done)](const Status& status) mutable {
+              done = std::move(done)](const absl::Status& status) mutable {
                if (!status.ok()) {
                  delete remote_rets;
                  done(status);
@@ -1510,7 +1547,7 @@ void ProcessFunctionLibraryRuntime::RunInternal(
     parent_->Run(opts, local_handle, args, rets, std::move(done));
     return;
   }
-  done(errors::Internal("Could not find device"));
+  done(absl::InternalError("Could not find device"));
 }
 
 void ProcessFunctionLibraryRuntime::Run(
@@ -1521,7 +1558,7 @@ void ProcessFunctionLibraryRuntime::Run(
   args.reserve(frame->num_args());
   for (size_t i = 0; i < frame->num_args(); ++i) {
     const Tensor* arg;
-    Status s = frame->GetArg(i, &arg);
+    absl::Status s = frame->GetArg(i, &arg);
     args.emplace_back(*arg);
     if (!s.ok()) {
       done(s);
@@ -1532,7 +1569,7 @@ void ProcessFunctionLibraryRuntime::Run(
 
   Run(opts, handle, args, rets,
 
-      [frame, rets, done = std::move(done)](const Status& status) {
+      [frame, rets, done = std::move(done)](const absl::Status& status) {
         std::unique_ptr<std::vector<Tensor>> rets_releaser(rets);
 
         if (!status.ok()) {
@@ -1541,15 +1578,15 @@ void ProcessFunctionLibraryRuntime::Run(
         }
 
         if (rets->size() != frame->num_retvals()) {
-          done(errors::Internal(
+          done(absl::InternalError(absl::StrCat(
               "Number of return values from function (", rets->size(),
               ") did not match expected number of return values (",
-              frame->num_retvals(), ")."));
+              frame->num_retvals(), ").")));
           return;
         }
 
         for (size_t i = 0; i < frame->num_retvals(); ++i) {
-          Status s = frame->SetRetval(i, (*rets)[i]);
+          absl::Status s = frame->SetRetval(i, (*rets)[i]);
           if (!s.ok()) {
             done(s);
             return;
@@ -1559,7 +1596,7 @@ void ProcessFunctionLibraryRuntime::Run(
       });
 }
 
-Status ProcessFunctionLibraryRuntime::RunSync(
+absl::Status ProcessFunctionLibraryRuntime::RunSync(
     const FunctionLibraryRuntime::Options& orig_opts,
     FunctionLibraryRuntime::Handle handle, absl::Span<const Tensor> args,
     std::vector<Tensor>* rets) const {
@@ -1578,16 +1615,16 @@ Status ProcessFunctionLibraryRuntime::RunSync(
       return GetComponentArgs(args, comp_data, comp_args);
     };
 
-    Status status = RunMultiDeviceSync(new_opts, handle, &function_rets,
-                                       std::move(get_component_args));
+    absl::Status status = RunMultiDeviceSync(new_opts, handle, &function_rets,
+                                             std::move(get_component_args));
     status.Update(FunctionRetsToTensors(&function_rets, rets));
     return status;
   } else {
     // TODO(b/207484417): Either handle or avoid/delete this fallback path.
     metrics::IncrementTestCounter("pflr_runsync", "async");
-    Notification n;
-    Status s;
-    Run(orig_opts, handle, args, rets, [&n, &s](const Status& status) {
+    absl::Notification n;
+    absl::Status s;
+    Run(orig_opts, handle, args, rets, [&n, &s](const absl::Status& status) {
       s.Update(status);
       n.Notify();
     });
@@ -1596,13 +1633,13 @@ Status ProcessFunctionLibraryRuntime::RunSync(
   }
 }
 
-Status ProcessFunctionLibraryRuntime::RunSync(
+absl::Status ProcessFunctionLibraryRuntime::RunSync(
     const FunctionLibraryRuntime::Options& opts,
     FunctionLibraryRuntime::Handle handle, CallFrameInterface* frame) const {
   // TODO(b/207485199): Implement this as synchronous code.
-  Notification n;
-  Status s;
-  Run(opts, handle, frame, [&n, &s](const Status& status) {
+  absl::Notification n;
+  absl::Status s;
+  Run(opts, handle, frame, [&n, &s](const absl::Status& status) {
     s.Update(status);
     n.Notify();
   });
@@ -1631,7 +1668,7 @@ void ProcessFunctionLibraryRuntime::Run(
   FunctionLibraryRuntime::Options new_opts = opts;
   tsl::core::RefCountPtr<Rendezvous> created_rendezvous = nullptr;
   if (!opts.rendezvous) {
-    Status s = CreateRendezvous(new_opts, &created_rendezvous);
+    absl::Status s = CreateRendezvous(new_opts, &created_rendezvous);
     if (!s.ok()) {
       done(s);
       return;
@@ -1648,7 +1685,7 @@ void ProcessFunctionLibraryRuntime::Run(
                                     std::move(created_rendezvous));
 
   auto get_component_args = [&args](const ComponentFunctionData& comp_data,
-                                    InternalArgs* comp_args) -> Status {
+                                    InternalArgs* comp_args) -> absl::Status {
     return GetComponentArgs(args, comp_data, comp_args);
   };
   return RunMultiDeviceAsync(new_opts, handle, rets, cleanup_items,
@@ -1666,11 +1703,11 @@ void ProcessFunctionLibraryRuntime::CleanUp(
     if (flr != nullptr) {
       // TODO(fishx): cleanup state for local execution.
       refcounted_done->UpdateStatus(
-          errors::Internal("Cleanup items shouldn't contain local item."));
+          absl::InternalError("Cleanup items shouldn't contain local item."));
       refcounted_done->Unref();
     } else if (parent_ != nullptr) {
       parent_->CleanUp(item->step_id, item->local_handle,
-                       [refcounted_done](const Status& status) {
+                       [refcounted_done](const absl::Status& status) {
                          if (!status.ok()) {
                            refcounted_done->UpdateStatus(status);
                          }
@@ -1679,14 +1716,14 @@ void ProcessFunctionLibraryRuntime::CleanUp(
                        });
     } else {
       refcounted_done->UpdateStatus(
-          errors::Internal("Could not find device in cleanup."));
+          absl::InternalError("Could not find device in cleanup."));
       refcounted_done->Unref();
     }
   }
   refcounted_done->Unref();
 }
 
-Status ProcessFunctionLibraryRuntime::Clone(
+absl::Status ProcessFunctionLibraryRuntime::Clone(
     Env* env, int graph_def_version, const OptimizerOptions& optimizer_options,
     std::unique_ptr<FunctionLibraryDefinition>* out_lib_def,
     std::unique_ptr<ProcessFunctionLibraryRuntime>* out_pflr,

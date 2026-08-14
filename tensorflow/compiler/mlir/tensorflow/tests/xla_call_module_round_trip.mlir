@@ -1,3 +1,17 @@
+// Copyright 2026 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: tf-opt %s -split-input-file -tf-xla-call-module-serialization -tf-xla-call-module-deserialization | FileCheck %s
 
 // Tests that running xla-call-module-serialization followed by
@@ -19,8 +33,9 @@ module {
     // CHECK-SAME:   version = 5
     // CHECK-SAME:   _entry_function = @main_0
     // CHECK-SAME:   _stablehlo_module_attrs = {}
+    // CHECK-SAME:   _stablehlo_version = "0.12.0"
 
-    %0 = "tf.XlaCallModule"(%arg0, %arg1) {Sout = [#tf_type.shape<?>], dim_args_spec = [], _entry_function = @main_0, module = "", platforms = [], version = 5 : i64} : (tensor<10xi32>, tensor<10xi32>) -> tensor<10xi32>
+    %0 = "tf.XlaCallModule"(%arg0, %arg1) {Sout = [#tf_type.shape<?>], dim_args_spec = [], _entry_function = @main_0, _stablehlo_version = "0.12.0", module = "", platforms = [], version = 5 : i64} : (tensor<10xi32>, tensor<10xi32>) -> tensor<10xi32>
     // CHECK: return %[[RESULT]]
     func.return %0 : tensor<10xi32>
   }

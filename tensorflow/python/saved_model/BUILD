@@ -1,8 +1,23 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 # TensorFlow SavedModel.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
-load("//tensorflow:tensorflow.bzl", "if_google")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "if_google", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test", "tf_pybind_cc_library_wrapper", "tf_python_pybind_extension")
 
 package(
@@ -13,11 +28,11 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "saved_model",
     srcs = ["saved_model.py"],
-    srcs_version = "PY3",
-    visibility = ["//tensorflow:internal"],
+    strict_deps = True,
+    visibility = ["//visibility:public"],
     deps = [
         ":builder",
         ":constants",
@@ -37,43 +52,44 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "constants",
     srcs = ["constants.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":pywrap_saved_model",
         "//tensorflow/python/util:tf_export",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "signature_constants",
     srcs = ["signature_constants.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//tensorflow/python/util:tf_export"],
 )
 
-py_strict_library(
+py_library(
     name = "tag_constants",
     srcs = ["tag_constants.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//tensorflow/python/util:tf_export"],
 )
 
-py_strict_library(
+py_library(
     name = "builder",
     srcs = [
         "builder.py",
         "builder_impl.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":fingerprinting_utils",
         ":path_helpers",
         ":pywrap_saved_model",
         ":signature_def_utils",
         "//tensorflow/core:protos_all_py",
+        "//tensorflow/core/protobuf:for_core_protos_py_proto",
         "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:ops",
         "//tensorflow/python/framework:tensor",
@@ -88,13 +104,13 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "loader",
     srcs = [
         "loader.py",
         "loader_impl.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":constants",
         ":path_helpers",
@@ -136,10 +152,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "simple_save",
     srcs = ["simple_save.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":builder",
         ":signature_constants",
@@ -151,13 +167,13 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "main_op",
     srcs = [
         "main_op.py",
         "main_op_impl.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:ops",
         "//tensorflow/python/ops:control_flow_ops",
@@ -184,6 +200,7 @@ tf_py_strict_test(
         ":tag_constants",
         ":utils",
         "//tensorflow/core:protos_all_py",
+        "//tensorflow/core/protobuf:for_core_protos_py_proto",
         "//tensorflow/python/client:session",
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
@@ -207,10 +224,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "path_helpers",
     srcs = ["path_helpers.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":constants",
         "//tensorflow/python/lib/io:file_io",
@@ -218,13 +235,13 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "utils",
     srcs = [
         "utils.py",
         "utils_impl.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nested_structure_coder",
         "//tensorflow/core:protos_all_py",
@@ -265,13 +282,13 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "signature_def_utils",
     srcs = [
         "signature_def_utils.py",
         "signature_def_utils_impl.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":signature_constants",
         ":utils",
@@ -318,10 +335,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "signature_serialization",
     srcs = ["signature_serialization.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":function_serialization",
         ":revived_types",
@@ -340,16 +357,15 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "save_context",
     srcs = ["save_context.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
 )
 
 tf_py_strict_test(
     name = "save_context_test",
     srcs = ["save_context_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":save_context",
         ":save_options",
@@ -358,10 +374,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "save",
     srcs = ["save.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":builder",
         ":fingerprinting_utils",
@@ -420,12 +436,12 @@ py_strict_library(
     ]),
 )
 
-py_strict_library(
+py_library(
     name = "tracing_utils",
     srcs = [
         "tracing_utils.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/checkpoint:saveable_compat",
         "//tensorflow/python/checkpoint:tensor_callable",
@@ -507,10 +523,10 @@ tf_py_strict_test(
 #
 # copybara:uncomment_end
 
-py_strict_library(
+py_library(
     name = "load",
     srcs = ["load.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     tags = [
         "ignore_for_dep=third_party.py.tf_keras.optimizers.optimizer_v2",
     ],
@@ -563,10 +579,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "load_v1_in_v2",
     srcs = ["load_v1_in_v2.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":function_deserialization",
         ":loader",
@@ -658,6 +674,7 @@ cuda_py_strict_test(
 tf_py_strict_test(
     name = "load_v1_in_v2_test",
     srcs = ["load_v1_in_v2_test.py"],
+    shard_count = 2,
     deps = [
         ":builder",
         ":load",
@@ -695,6 +712,7 @@ tf_py_strict_test(
         "//tensorflow/python/ops:while_loop",
         "//tensorflow/python/ops/ragged:ragged_factory_ops",
         "//tensorflow/python/training:saver",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 
@@ -710,10 +728,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "revived_types",
     srcs = ["revived_types.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/trackable:data_structures",
@@ -732,10 +750,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "function_serialization",
     srcs = ["function_serialization.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nested_structure_coder",
         "//tensorflow/core:protos_all_py",
@@ -748,10 +766,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "function_deserialization",
     srcs = ["function_deserialization.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nested_structure_coder",
         "//tensorflow/core:protos_all_py",
@@ -778,9 +796,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "nested_structure_coder",
     srcs = ["nested_structure_coder.py"],
+    strict_deps = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/framework:dtypes",
@@ -802,6 +821,7 @@ tf_py_strict_test(
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:extension_type",
+        "//tensorflow/python/framework:immutable_dict",
         "//tensorflow/python/framework:sparse_tensor",
         "//tensorflow/python/framework:tensor",
         "//tensorflow/python/framework:tensor_shape",
@@ -815,9 +835,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "save_options",
     srcs = ["save_options.py"],
+    strict_deps = True,
     deps = [
         "//tensorflow/python/checkpoint/sharding:sharding_util",
         "//tensorflow/python/util:compat",
@@ -825,19 +846,20 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "load_options",
     srcs = ["load_options.py"],
+    strict_deps = True,
     deps = [
         ":save_options",
         "//tensorflow/python/util:tf_export",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "method_name_updater",
     srcs = ["method_name_updater.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":constants",
         ":loader",
@@ -927,6 +949,8 @@ tf_python_pybind_extension(
         "pywrap_saved_model/metrics.pyi",
     ],
     visibility = [
+        "//learning/brain/runtime/python:__pkg__",
+        "//tensorflow/python:__pkg__",
         "//tensorflow/python/checkpoint:__subpackages__",
         "//tensorflow/python/tpu:__pkg__",
         "//tensorflow/python/training:__subpackages__",
@@ -945,6 +969,7 @@ tf_python_pybind_extension(
         "//tensorflow/python/lib/core:pybind11_status",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@pybind11",
@@ -991,7 +1016,6 @@ tf_py_strict_test(
     size = "small",
     srcs = ["keras_injection_test.py"],
     data = ["//tensorflow/cc/saved_model:saved_model_test_files"],
-    python_version = "PY3",
     tags = ["no_oss"],  # Due to the usage of keras component.
     deps = [
         "//tensorflow:tensorflow_py",
@@ -1012,9 +1036,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "fingerprinting",
     srcs = ["fingerprinting.py"],
+    strict_deps = True,
     deps = [
         ":pywrap_saved_model",
         "//tensorflow/core:protos_all_py",
@@ -1022,9 +1047,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "fingerprinting_utils",
     srcs = ["fingerprinting_utils.py"],
+    strict_deps = True,
     deps = [
         ":fingerprinting",
         ":pywrap_saved_model",
@@ -1040,7 +1066,6 @@ tf_py_strict_test(
     name = "fingerprinting_test",
     size = "small",
     srcs = ["fingerprinting_test.py"],
-    python_version = "PY3",
     deps = [
         ":fingerprinting",
         ":fingerprinting_utils",
@@ -1062,7 +1087,6 @@ tf_py_strict_test(
     name = "tracing_utils_test",
     size = "small",
     srcs = ["tracing_utils_test.py"],
-    python_version = "PY3",
     deps = [
         ":tracing_utils",
         "//tensorflow/python/eager:def_function",
@@ -1073,3 +1097,39 @@ tf_py_strict_test(
         "//tensorflow/python/trackable:base",
     ],
 )
+
+# copybara:uncomment_begin(google-only)
+#
+# tf_cc_test(
+#     name = "lineage_logging_test",
+#     size = "large",
+#     timeout = "long",
+#     srcs = ["lineage_logging_test.cc"],
+#     tags = ["cpu:4"],
+#     deps = [
+#         "//learning/brain/contrib/hub/public:client",
+#         "//learning/brain/contrib/hub/public:handle",
+#         "//learning/brain/contrib/hub/public/proto:metadata_cc_proto",
+#         "//learning/brain/contrib/hub/public/proto:options_cc_proto",
+#         "//learning/brain/contrib/hub/public/testing:in_process_tfhub_env",
+#         "//learning/brain/contrib/hub/public/testing:testdata_util",
+#         "//learning/metadata/cataline/proto:ml_data_processes_cc_proto",
+#         "//learning/metadata/lineage_log/cc:lineage_log",
+#         "//learning/metadata/lineage_log/cc:mock_process_client",
+#         "//learning/metadata/lineage_log/cc:test_util",
+#         "//tensorflow/core/platform:protobuf",
+#         "//tensorflow/core/protobuf:for_core_protos_cc",
+#         "@tsl//tsl/platform:env",
+#         "@tsl//tsl/platform:path",
+#         "//third_party/protobuf",
+#         "//third_party/protobuf/io",
+#         "@com_google_absl//absl/log:check",
+#         "@com_google_absl//absl/memory",
+#         "@com_google_absl//absl/status",
+#         "@com_google_absl//absl/strings",
+#         "@com_google_absl//absl/strings:string_view",
+#         "@com_google_googletest//:gtest_main",
+#     ],
+# )
+#
+# copybara:uncomment_end

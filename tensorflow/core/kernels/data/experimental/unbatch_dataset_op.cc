@@ -28,6 +28,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/inlined_vector.h"
 #include "tensorflow/core/platform/status.h"
@@ -72,7 +73,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
           if (batch_size_ < 0 && shape.dim_size(0) >= 0) {
             batch_size_ = shape.dim_size(0);
           }
-          gtl::InlinedVector<int64_t, 4> partial_dim_sizes;
+          absl::InlinedVector<int64_t, 4UL> partial_dim_sizes;
           for (int i = 1; i < shape.dims(); ++i) {
             partial_dim_sizes.push_back(shape.dim_size(i));
           }
@@ -89,7 +90,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
         const std::string& prefix) const override {
       return std::make_unique<Iterator>(
-          Iterator::Params{this, StrCat(prefix, "::Unbatch")});
+          Iterator::Params{this, absl::StrCat(prefix, "::Unbatch")});
     }
 
     const DataTypeVector& output_dtypes() const override {
@@ -216,16 +217,16 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
           if (!*end_of_sequence) {
             for (size_t i = 0; i < tensors_.size(); ++i) {
               if (tensors_[i].dims() == 0) {
-                return errors::InvalidArgument(
+                return absl::InvalidArgumentError(
                     "Input element must have a non-scalar value in each "
                     "component.");
               }
               if (tensors_[i].dim_size(0) != tensors_[0].dim_size(0)) {
-                return errors::InvalidArgument(
+                return absl::InvalidArgumentError(absl::StrCat(
                     "Input element must have the same batch size in each "
                     "component. Component 0 had size ",
                     tensors_[0].dim_size(0), " but component ", i,
-                    " had size, ", tensors_[i].dim_size(0), ".");
+                    " had size, ", tensors_[i].dim_size(0), "."));
               }
               shapes_[i] = tensors_[i].shape();
               shapes_[i].RemoveDim(0);
@@ -268,7 +269,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
             !ctx->symbolic_checkpoint()) {
           for (size_t i = 0; i < tensors_.size(); ++i) {
             TF_RETURN_IF_ERROR(writer->WriteTensor(
-                full_name(StrCat("tensors[", i, "]")), tensors_[i]));
+                full_name(absl::StrCat("tensors[", i, "]")), tensors_[i]));
           }
         }
         return absl::OkStatus();
@@ -309,7 +310,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
                                                   &end_of_sequence));
           input_ckpt_->Merge(input_ctx->checkpoint());
           if (end_of_sequence) {
-            return errors::FailedPrecondition(
+            return absl::FailedPreconditionError(
                 "Unexpected end of sequence while symbolically restoring "
                 " UnbatchDataset. Please verify that the input produces data "
                 " deterministically.");
@@ -317,7 +318,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
         } else {
           for (size_t i = 0; i < tensors_.size(); ++i) {
             TF_RETURN_IF_ERROR(reader->ReadTensor(
-                ctx->flr(), full_name(StrCat("tensors[", i, "]")),
+                ctx->flr(), full_name(absl::StrCat("tensors[", i, "]")),
                 &tensors_[i]));
           }
         }

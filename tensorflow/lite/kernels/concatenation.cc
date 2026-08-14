@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstring>
 #include <limits>
 
+#include "Eigen/Core"  // from @eigen_archive
 #include "tensorflow/lite/core/c/builtin_op_data.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
@@ -87,30 +88,29 @@ TfLiteStatus EvalImpl(TfLiteContext* context, TfLiteNode* node, int axis,
     }                                                             \
   }
 
-  switch (output->type) {  // Already know in/outtypes are same.
-    case kTfLiteFloat32:
-      TF_LITE_CONCATENATION(float);
-      break;
-    case kTfLiteInt32:
-      TF_LITE_CONCATENATION(int32);
-      break;
-    case kTfLiteUInt32:
-      TF_LITE_CONCATENATION(uint32_t);
-      break;
+  switch (output->type) {
     case kTfLiteUInt8:
       TF_LITE_CONCATENATION_QUANTIZED();
+      return kTfLiteOk;
+    case kTfLiteInt4:
+      TF_LITE_CONCATENATION(Int4);
+      return kTfLiteOk;
+    default:
       break;
-    case kTfLiteInt8:
+  }
+
+  switch (TfLiteTypeGetSizeBits(output->type)) {
+    case 8:
       TF_LITE_CONCATENATION(int8_t);
       break;
-    case kTfLiteInt64:
-      TF_LITE_CONCATENATION(int64_t);
-      break;
-    case kTfLiteInt16:
+    case 16:
       TF_LITE_CONCATENATION(int16_t);
       break;
-    case kTfLiteBool:
-      TF_LITE_CONCATENATION(bool);
+    case 32:
+      TF_LITE_CONCATENATION(int32_t);
+      break;
+    case 64:
+      TF_LITE_CONCATENATION(int64_t);
       break;
     default:
       TF_LITE_KERNEL_LOG(context, "Type '%s' is not supported currently.",
@@ -141,11 +141,18 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
                  axis < t0->dims->size || (t0->dims->size == 0 && axis == 0));
 
   TF_LITE_ENSURE_EQ(context, params->activation, kTfLiteActNone);
-  TF_LITE_ENSURE(context,
-                 input_type == kTfLiteFloat32 || input_type == kTfLiteUInt8 ||
-                     input_type == kTfLiteInt8 || input_type == kTfLiteInt16 ||
-                     input_type == kTfLiteInt32 || input_type == kTfLiteInt64 ||
-                     input_type == kTfLiteBool || input_type == kTfLiteUInt32);
+  bool is_supported_type =
+      input_type == kTfLiteFloat32 || input_type == kTfLiteFloat16 ||
+      input_type == kTfLiteBFloat16 || input_type == kTfLiteUInt8 ||
+      input_type == kTfLiteInt8 || input_type == kTfLiteInt16 ||
+      input_type == kTfLiteInt32 || input_type == kTfLiteInt64 ||
+      input_type == kTfLiteBool || input_type == kTfLiteUInt32 ||
+      input_type == kTfLiteInt4;
+#if defined(TFLITE_ENABLE_EXTRA_REFERENCE_KERNELS)
+  is_supported_type = is_supported_type || input_type == kTfLiteFloat8E4M3FN ||
+                      input_type == kTfLiteFloat8E5M2;
+#endif
+  TF_LITE_ENSURE(context, is_supported_type);
 
   // Check to see if we can calculate the output now.
   bool all_inputs_at_prepare = true;
@@ -161,7 +168,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   // will be the sum of inputs
   int sum_axis = t0->dims->size > 0 ? t0->dims->data[axis] : 1;
   // Check if we are concatenating constant scalars.
-  if (all_inputs_at_prepare && t0->dims->size == 0 && axis == 0) {
+  if (all_inputs_at_prepare && t0->dims->size == 0 && axis == 0 &&
+      input_type != kTfLiteInt4) {
     for (int i = 1; i < num_inputs; ++i) {
       const TfLiteTensor* t;
       TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, i, &t));
@@ -185,6 +193,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
     }
     return kTfLiteOk;
   } else {
+    // Scalar concatenation is only supported for constant tensors
+    // (handled above).
+    TF_LITE_ENSURE(context, t0->dims->size > 0);
     for (int i = 1; i < num_inputs; ++i) {
       const TfLiteTensor* t;
       TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, i, &t));

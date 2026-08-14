@@ -15,23 +15,29 @@ limitations under the License.
 
 #include "xla/tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/log/log.h"
+#include "absl/synchronization/mutex.h"
+#include "grpcpp/channel.h"
+#include "grpcpp/completion_queue.h"
+#include "grpcpp/generic/generic_stub.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_channel.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_client_cq_tag.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_state.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_util.h"
-#include "tsl/platform/mutex.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/thread_annotations.h"
-#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 namespace {
@@ -41,6 +47,8 @@ using tensorflow::CancelBarrierRequest;
 using tensorflow::CancelBarrierResponse;
 using tensorflow::DeleteKeyValueRequest;
 using tensorflow::DeleteKeyValueResponse;
+using tensorflow::GetAliveTasksRequest;
+using tensorflow::GetAliveTasksResponse;
 using tensorflow::GetKeyValueDirRequest;
 using tensorflow::GetKeyValueDirResponse;
 using tensorflow::GetKeyValueRequest;
@@ -49,8 +57,12 @@ using tensorflow::GetTaskStateRequest;
 using tensorflow::GetTaskStateResponse;
 using tensorflow::HeartbeatRequest;
 using tensorflow::HeartbeatResponse;
+using tensorflow::IncrementKeyValueRequest;
+using tensorflow::IncrementKeyValueResponse;
 using tensorflow::InsertKeyValueRequest;
 using tensorflow::InsertKeyValueResponse;
+using tensorflow::PollForErrorRequest;
+using tensorflow::PollForErrorResponse;
 using tensorflow::RegisterTaskRequest;
 using tensorflow::RegisterTaskResponse;
 using tensorflow::ReportErrorToServiceRequest;
@@ -65,6 +77,8 @@ using tensorflow::TryGetKeyValueRequest;
 using tensorflow::TryGetKeyValueResponse;
 using tensorflow::WaitForAllTasksRequest;
 using tensorflow::WaitForAllTasksResponse;
+using tensorflow::WatchJobStateRequest;
+using tensorflow::WatchJobStateResponse;
 
 class GrpcCoordinationClientThread {
  public:
@@ -193,6 +207,17 @@ class GrpcCoordinationClient : public CoordinationClient {
         &target_);
   }
 
+  void WatchJobStateAsync(CallOptions* call_opts,
+                          const WatchJobStateRequest* request,
+                          WatchJobStateResponse* response,
+                          StatusCallback done) override {
+    new RPCState<protobuf::Message>(
+        &stub_, cq_, "/tensorflow.CoordinationService/WatchJobState", *request,
+        response, std::move(done), call_opts,
+        /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
+        &target_);
+  }
+
   void InsertKeyValueAsync(const InsertKeyValueRequest* request,
                            InsertKeyValueResponse* response,
                            StatusCallback done) override {
@@ -224,6 +249,16 @@ class GrpcCoordinationClient : public CoordinationClient {
         &target_);
   }
 
+  void IncrementKeyValueAsync(const IncrementKeyValueRequest* request,
+                              IncrementKeyValueResponse* response,
+                              StatusCallback done) override {
+    new RPCState<protobuf::Message>(
+        &stub_, cq_, "/tensorflow.CoordinationService/IncrementKeyValue",
+        *request, response, std::move(done), /*call_opts=*/nullptr,
+        /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
+        &target_);
+  }
+
   void GetKeyValueDirAsync(const GetKeyValueDirRequest* request,
                            GetKeyValueDirResponse* response,
                            StatusCallback done) override {
@@ -244,11 +279,11 @@ class GrpcCoordinationClient : public CoordinationClient {
         &target_);
   }
 
-  void BarrierAsync(const BarrierRequest* request, BarrierResponse* response,
-                    StatusCallback done) override {
+  void BarrierAsync(CallOptions* call_opts, const BarrierRequest* request,
+                    BarrierResponse* response, StatusCallback done) override {
     new RPCState<protobuf::Message>(
         &stub_, cq_, "/tensorflow.CoordinationService/Barrier", *request,
-        response, std::move(done), /*call_opts=*/nullptr,
+        response, std::move(done), call_opts,
         /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
         &target_);
   }
@@ -259,6 +294,27 @@ class GrpcCoordinationClient : public CoordinationClient {
     new RPCState<protobuf::Message>(
         &stub_, cq_, "/tensorflow.CoordinationService/CancelBarrier", *request,
         response, std::move(done), /*call_opts=*/nullptr,
+        /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
+        &target_);
+  }
+
+  void GetAliveTasksAsync(const GetAliveTasksRequest* request,
+                          GetAliveTasksResponse* response,
+                          StatusCallback done) override {
+    new RPCState<protobuf::Message>(
+        &stub_, cq_, "/tensorflow.CoordinationService/GetAliveTasks", *request,
+        response, std::move(done), /*call_opts=*/nullptr,
+        /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
+        &target_);
+  }
+
+  void PollForErrorAsync(CallOptions* call_opts,
+                         const PollForErrorRequest* request,
+                         PollForErrorResponse* response,
+                         StatusCallback done) override {
+    new RPCState<protobuf::Message>(
+        &stub_, cq_, "/tensorflow.CoordinationService/PollForError", *request,
+        response, std::move(done), call_opts,
         /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
         &target_);
   }
@@ -281,7 +337,7 @@ class GrpcCoordinationClientCache : public CoordinationClientCache {
   ~GrpcCoordinationClientCache() override = default;
 
   CoordinationClient* GetClient(const std::string& target) override {
-    mutex_lock l(clients_mu_);
+    absl::MutexLock l(clients_mu_);
     auto it = clients_.find(target);
     if (it == clients_.end()) {
       SharedGrpcChannelPtr channel = channel_cache_->FindWorkerChannel(target);
@@ -306,15 +362,15 @@ class GrpcCoordinationClientCache : public CoordinationClientCache {
   }
 
  private:
-  mutex assignment_mu_;
+  absl::Mutex assignment_mu_;
   std::unordered_map<std::string, size_t> target_assignments_
-      TF_GUARDED_BY(assignment_mu_);
-  size_t next_round_robin_assignment_ TF_GUARDED_BY(assignment_mu_);
+      ABSL_GUARDED_BY(assignment_mu_);
+  size_t next_round_robin_assignment_ ABSL_GUARDED_BY(assignment_mu_);
 
   size_t AssignClientToThread(const std::string& target) {
     // Round-robin target assignment, but keeps the same target on the same
     // polling thread always, as this is important for gRPC performance
-    mutex_lock lock(assignment_mu_);
+    absl::MutexLock l(assignment_mu_);
     auto it = target_assignments_.find(target);
     if (it == target_assignments_.end()) {
       it = target_assignments_
@@ -326,9 +382,9 @@ class GrpcCoordinationClientCache : public CoordinationClientCache {
   }
 
   std::shared_ptr<GrpcChannelCache> channel_cache_;
-  mutable mutex clients_mu_;
+  mutable absl::Mutex clients_mu_;
   std::unordered_map<std::string, std::unique_ptr<CoordinationClient>> clients_
-      TF_GUARDED_BY(clients_mu_);
+      ABSL_GUARDED_BY(clients_mu_);
   std::vector<GrpcCoordinationClientThread> threads_;
 };
 
@@ -341,9 +397,7 @@ CoordinationClientCache* NewGrpcCoordinationClientCache(
 
 CoordinationClient* NewGrpcCoordinationClient(
     std::shared_ptr<::grpc::Channel> channel) {
-  // TODO(hanyangtay): Pass in the logical task name for better logging.
-  return new GrpcCoordinationClient(
-      channel, /*target=*/"unknown_target_for_coordination_leader");
+  return new GrpcCoordinationClient(channel, /*target=*/"coordination_service");
 }
 
 }  // namespace tsl

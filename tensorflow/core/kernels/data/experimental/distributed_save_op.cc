@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
+#include "xla/tsl/lib/io/compression.h"
 #include "tensorflow/core/data/serialization_utils.h"
 #include "tensorflow/core/data/service/common.pb.h"
 #include "tensorflow/core/data/service/dispatcher_client.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "tensorflow/core/framework/dataset.h"
 #include "tensorflow/core/framework/metrics.h"
 #include "tensorflow/core/protobuf/snapshot.pb.h"
-#include "tsl/lib/io/compression.h"
 
 namespace tensorflow {
 namespace data {
@@ -52,20 +52,22 @@ DistributedSaveOp::DistributedSaveOp(OpKernelConstruction* ctx)
 void DistributedSaveOp::Compute(OpKernelContext* ctx) {
   DatasetBase* dataset;
   OP_REQUIRES_OK(ctx, GetDatasetFromVariantTensor(ctx->input(0), &dataset));
-  OP_REQUIRES(
-      ctx, dataset->Cardinality() != kInfiniteCardinality,
-      errors::InvalidArgument("Saving an infinite dataset is not allowed: ",
-                              dataset->DebugString()));
+  OP_REQUIRES(ctx, dataset->Cardinality() != kInfiniteCardinality,
+              absl::InvalidArgumentError(
+                  absl::StrCat("Saving an infinite dataset is not allowed: ",
+                               dataset->DebugString())));
 
   tstring directory;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, kDirectory, &directory));
   OP_REQUIRES(ctx, !directory.empty(),
-              errors::InvalidArgument(kDirectory, " must be nonempty"));
+              absl::InvalidArgumentError(
+                  absl::StrCat(kDirectory, " must be nonempty")));
 
   tstring address;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, kAddress, &address));
-  OP_REQUIRES(ctx, !address.empty(),
-              errors::InvalidArgument(kAddress, " must be nonempty"));
+  OP_REQUIRES(
+      ctx, !address.empty(),
+      absl::InvalidArgumentError(absl::StrCat(kAddress, " must be nonempty")));
 
   bool has_atomic_move = false;
   OP_REQUIRES_OK(ctx, ctx->env()->HasAtomicMove(directory, &has_atomic_move));
@@ -78,25 +80,25 @@ void DistributedSaveOp::Compute(OpKernelContext* ctx) {
   SerializationContext::Params params(ctx);
   SerializationContext serialization_ctx(params);
   DatasetDef dataset_def;
-  Status s = AsGraphDef(dataset, std::move(serialization_ctx),
-                        dataset_def.mutable_graph());
+  absl::Status s = AsGraphDef(dataset, std::move(serialization_ctx),
+                              dataset_def.mutable_graph());
   if (!s.ok()) {
     OP_REQUIRES_OK(
         ctx,
-        errors::FailedPrecondition(
+        absl::FailedPreconditionError(absl::StrCat(
             "Serialization error while trying to save dataset with tf.data "
             "service. The dataset may depend on a resource located on a "
             "different device. To address this, call `distributed_save` from "
             "the device with the resource. Original error: ",
-            s));
+            s)));
   }
 
   experimental::DistributedSnapshotMetadata metadata;
   if (!serialized_metadata_.empty()) {
     OP_REQUIRES(ctx, metadata.ParseFromString(serialized_metadata_),
-                errors::InvalidArgument(
+                absl::InvalidArgumentError(absl::StrCat(
                     "Failed to parse DistributedSnapshotMetadata from string: ",
-                    std::string(serialized_metadata_)));
+                    serialized_metadata_)));
   }
   if (metadata.compression() == "AUTO") {
     metadata.set_compression(tsl::io::compression::kSnappy);
@@ -110,7 +112,7 @@ void DistributedSaveOp::Compute(OpKernelContext* ctx) {
       grpc_util::Retry(
           [&]() { return client.Snapshot(dataset_def, directory, metadata); },
           /*description=*/
-          strings::StrCat("save with tf.data service dispatcher at ", address),
+          absl::StrCat("save with tf.data service dispatcher at ", address),
           deadline_micros));
   metrics::RecordTFDataServiceSnapshotOp(directory, kDistributedSave);
 }

@@ -1,5 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Fuzzing TensorFlow.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//tensorflow/core/platform:build_config.bzl",
     "tf_proto_library",
@@ -21,6 +37,7 @@ tf_cc_fuzz_test(
     deps = [
         ":fuzz_domains",
         "//tensorflow/core/platform:status",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -31,6 +48,7 @@ tf_cc_fuzz_test(
     deps = [
         "//tensorflow/core/platform:str_util",
         "//tensorflow/core/platform:stringpiece",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -42,6 +60,7 @@ tf_cc_fuzz_test(
         "//tensorflow/core/platform:base64",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:stringpiece",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -70,14 +89,13 @@ tf_cc_fuzz_test(
         "//tensorflow/core/framework:types_proto_cc",
         "//tensorflow/core/platform:resource_loader",
         "//tensorflow/core/util:saved_tensor_slice_proto_cc",
-        "@local_tsl//tsl/platform:status",
+        "@xla//xla/tsl/platform:status",
     ],
 )
 
 tf_proto_library(
     name = "checkpoint_reader_fuzz_input_proto",
     srcs = ["checkpoint_reader_fuzz_input.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     protodeps = [
         "//tensorflow/core/util:saved_tensor_slice_proto",
@@ -102,6 +120,7 @@ tf_cc_fuzz_test(
         "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core/platform:str_util",
         "//tensorflow/core/platform:stringpiece",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -122,6 +141,7 @@ tf_cc_fuzz_test(
     deps = [
         ":fuzz_domains",
         "//tensorflow/core/platform:status",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -141,6 +161,7 @@ tf_cc_fuzz_test(
     tags = ["no_oss"],
     deps = [
         "//tensorflow/core/platform:stringprintf",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -151,6 +172,7 @@ tf_cc_fuzz_test(
     deps = [
         "//tensorflow/core/platform:str_util",
         "//tensorflow/core/platform:stringpiece",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -231,8 +253,9 @@ tf_cc_fuzz_test(
         "//tensorflow/security/fuzzing/cc/core/framework:datatype_domains",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_domains",
         "//tensorflow/security/fuzzing/cc/core/framework:tensor_shape_domains",
-        "@local_tsl//tsl/platform:env",
-        "@local_tsl//tsl/platform:status",
+        "@com_google_absl//absl/status",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:status",
     ],
 )
 
@@ -240,8 +263,8 @@ tf_cc_fuzz_test(
     name = "text_literal_reader_fuzz",
     srcs = ["text_literal_reader_fuzz.cc"],
     deps = [
-        "@local_tsl//tsl/platform:env",
-        "@local_xla//xla:text_literal_reader",
-        "@local_xla//xla/service:hlo_parser",
+        "@xla//xla:text_literal_reader",
+        "@xla//xla/hlo/parser:hlo_parser",
+        "@xla//xla/tsl/platform:env",
     ],
 )

@@ -51,11 +51,13 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/translate/import_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
+#include "tensorflow/compiler/mlir/tf2xla/api/v2/graph_to_tf_executor.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/mlrt/import_model.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/update_op_cost_in_tfrt_mlir.h"
 #include "tensorflow/compiler/mlir/tfrt/translate/import_model.h"
 #include "tensorflow/compiler/mlir/tfrt/translate/tfrt_compile_options.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/lib/monitoring/sampler.h"
 #include "tensorflow/core/common_runtime/process_function_library_runtime.h"
 #include "tensorflow/core/common_runtime/rendezvous_mgr.h"
 #include "tensorflow/core/framework/function.h"
@@ -96,7 +98,6 @@ limitations under the License.
 #include "tensorflow/core/tfrt/utils/fallback_tensor.h"
 #include "tensorflow/core/tfrt/utils/tfrt_graph_execution_state.h"
 #include "tensorflow/core/tfrt/utils/utils.h"
-#include "tsl/lib/monitoring/sampler.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/refcount.h"
 #include "tsl/platform/statusor.h"
@@ -141,7 +142,7 @@ auto* graph_executor_mode = monitoring::Gauge<std::string, 2>::New(
 
 }  // namespace
 
-tensorflow::Status RunMlrtFunction(
+absl::Status RunMlrtFunction(
     mlrt::bc::Function function,
     const mlrt::LoadedExecutable& loaded_executable,
     const tsl::RCReference<tfrt::RequestContext>& request_context,
@@ -251,8 +252,9 @@ absl::StatusOr<std::unique_ptr<RequestInfo>> CreateRequestInfo(
   } else {
     request_id = GetNextStepId().id;
     // Otherwise we use the global queue in `runtime`.
-    TF_ASSIGN_OR_RETURN(request_info->request_queue_owner,
-                        runtime.CreateRequestQueue(request_id));
+    TF_ASSIGN_OR_RETURN(
+        request_info->request_queue_owner,
+        runtime.CreateRequestQueue(request_id, run_options.priority));
     request_info->request_queue = request_info->request_queue_owner.get();
   }
   auto* request_queue = request_info->request_queue;
@@ -285,6 +287,10 @@ absl::StatusOr<std::unique_ptr<RequestInfo>> CreateRequestInfo(
   fallback_request_state.set_runtime_config(&options.runtime_config);
   fallback_request_state.set_cancellation_manager(
       &request_info->cancellation_manager);
+  fallback_request_state.set_rpc_deadline_for_batching_task_cancellation(
+      run_options.rpc_deadline_for_batching_task_cancellation);
+  fallback_request_state.set_is_rpc_cancelled_callback(
+      run_options.is_rpc_cancelled_callback);
 
   // Set priority in the builder.
   tfrt::RequestOptions request_options;
@@ -293,15 +299,14 @@ absl::StatusOr<std::unique_ptr<RequestInfo>> CreateRequestInfo(
   // Create the request context with the builder.
   auto expected_req_ctx = std::move(request_context_builder).build();
   if (!expected_req_ctx) {
-    return tensorflow::errors::Internal(
-        tfrt::StrCat(expected_req_ctx.takeError()));
+    return absl::InternalError(tfrt::StrCat(expected_req_ctx.takeError()));
   }
   request_info->tfrt_request_context = std::move(expected_req_ctx.get());
 
   return request_info;
 }
 
-tensorflow::Status GraphExecutionRunOnFunction(
+absl::Status GraphExecutionRunOnFunction(
     const GraphExecutionOptions& options,
     const GraphExecutionRunOptions& run_options,
     absl::string_view signature_name, const SymbolUids& symbol_uids,
@@ -345,10 +350,10 @@ tensorflow::Status GraphExecutionRunOnFunction(
   if (run_options.deadline.has_value()) {
     auto deadline = run_options.deadline.value();
     if (absl::ToChronoTime(absl::Now()) > deadline) {
-      return tensorflow::errors::DeadlineExceeded(kDeadlineExceededMessage);
+      return absl::DeadlineExceededError(kDeadlineExceededMessage);
     }
     if (req_deadline_tracker == nullptr) {
-      return tensorflow::errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "req_deadline_tracker must be non-null");
     }
     req_deadline_tracker->CancelRequestOnDeadline(
@@ -389,7 +394,7 @@ tensorflow::Status GraphExecutionRunOnFunction(
   if (loaded_executable) {
     auto function = loaded_executable->GetFunction(signature_name);
     if (!function) {
-      return errors::InvalidArgument(absl::StrCat(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Function not found in MLRT executable: ", signature_name));
     }
 
@@ -427,7 +432,7 @@ tensorflow::Status GraphExecutionRunOnFunction(
   }
 
   if (arguments.size() != func->argument_types().size())
-    return tensorflow::errors::Internal("incorrect number of inputs.");
+    return absl::InternalError("incorrect number of inputs.");
 
   llvm::SmallVector<tfrt::RCReference<tfrt::AsyncValue>, 4> chain_and_results;
   chain_and_results.resize(func->result_types().size());
@@ -479,7 +484,7 @@ tensorflow::Status GraphExecutionRunOnFunction(
   // TODO(tfrt-devs): report cancellation reason from runtime.
   if (request_info->tfrt_request_context->IsCancelled()) {
     // Currently a request can only be cancelled by an expired timer.
-    return tensorflow::errors::DeadlineExceeded(kDeadlineExceededMessage);
+    return absl::DeadlineExceededError(kDeadlineExceededMessage);
   }
 
   return status_group.as_summary_status();
@@ -490,7 +495,8 @@ GraphExecutor::GraphExecutor(
     std::unique_ptr<tfrt::ResourceContext> resource_context,
     std::unique_ptr<tensorflow::tfrt_stub::TfrtGraphExecutionState>
         graph_execution_state,
-    std::unique_ptr<mlrt::KernelRegistry> kernel_registry)
+    std::unique_ptr<mlrt::KernelRegistry> kernel_registry,
+    tensorflow::tfrt_stub::RuntimeConfig* runtime_config)
     : options_(std::move(options)),
       fallback_state_(std::move(fallback_state)),
       graph_execution_state_(std::move(graph_execution_state)),
@@ -505,9 +511,10 @@ absl::StatusOr<std::unique_ptr<GraphExecutor>> GraphExecutor::Create(
     Options options, std::unique_ptr<FallbackState> fallback_state,
     std::unique_ptr<tfrt::ResourceContext> resource_context,
     tensorflow::GraphDef graph_def,
-    std::unique_ptr<mlrt::KernelRegistry> kernel_registry) {
+    std::unique_ptr<mlrt::KernelRegistry> kernel_registry,
+    tensorflow::tfrt_stub::RuntimeConfig* runtime_config) {
   if (options.runtime == nullptr) {
-    return errors::InvalidArgument("options.runtime must be non-null ");
+    return absl::InvalidArgumentError("options.runtime must be non-null ");
   }
   if (options.enable_online_cost_analysis) {
     // Overrides cost_analysis_options.
@@ -523,21 +530,16 @@ absl::StatusOr<std::unique_ptr<GraphExecutor>> GraphExecutor::Create(
       ->GetCell(options.model_metadata.name(),
                 absl::StrCat(options.model_metadata.version()))
       ->Set(options.enable_mlrt ? "mlrt" : "bef");
-  TF_ASSIGN_OR_RETURN(
-      auto graph_execution_state,
-      TfrtGraphExecutionState::Create(graph_execution_state_options,
-                                      std::move(graph_def), *fallback_state));
+  TF_ASSIGN_OR_RETURN(auto graph_execution_state,
+                      TfrtGraphExecutionState::Create(
+                          graph_execution_state_options, std::move(graph_def),
+                          *fallback_state, runtime_config));
   return std::make_unique<GraphExecutor>(
       std::move(options), std::move(fallback_state),
       std::move(resource_context), std::move(graph_execution_state),
       std::move(kernel_registry));
 }
 
-namespace {
-
-// Sort the strings in `names` and store the results in `sorted_names`. In
-// addition, the original index in `names` for the item `sorted_names[i]` is
-// stored in `original_indices[i]`.
 void CreateSortedNamesAndOriginalIndices(absl::Span<const std::string> names,
                                          std::vector<std::string>& sorted_names,
                                          std::vector<int>& original_indices) {
@@ -560,52 +562,22 @@ void CreateSortedNamesAndOriginalIndices(absl::Span<const std::string> names,
   }
 }
 
-}  // namespace
-
-tensorflow::Status GraphExecutor::Run(
-    const RunOptions& run_options,
+absl::Status GraphExecutor::RunWithSortedInputsOutputs(
+    const RunOptions& run_options, absl::string_view graph_name,
     absl::Span<const std::pair<std::string, tensorflow::Tensor>> inputs,
-    absl::Span<const std::string> output_tensor_names,
-    absl::Span<const std::string> target_tensor_names,
+    absl::Span<const std::string> sorted_input_names,
+    absl::Span<const tensorflow::DataType> sorted_input_dtypes,
+    absl::Span<const std::string> sorted_output_names,
+    absl::Span<const std::string> sorted_target_node_names,
+    absl::Span<const int> input_original_indices,
+    absl::Span<const int> output_original_indices,
     std::vector<tensorflow::Tensor>* outputs) {
-  // TODO(b/192498110): Validate input type.
-
-  // Sort the input/output names to have a stable order, so that the
-  // `joined_name`, which is used as the cache key, will be the same as long as
-  // the same set of inputs/outputs are specified.
-  std::vector<std::string> input_names;
-  input_names.reserve(inputs.size());
-  for (const auto& p : inputs) input_names.push_back(p.first);
-  std::vector<std::string> sorted_input_names;
-  std::vector<int> input_original_indices;
-  CreateSortedNamesAndOriginalIndices(input_names, sorted_input_names,
-                                      input_original_indices);
-  // We also need to create sorted input dtypes as they are needed for the
-  // compilation.
-  std::vector<tensorflow::DataType> sorted_input_dtypes;
-  sorted_input_dtypes.reserve(inputs.size());
-  for (int original_index : input_original_indices) {
-    sorted_input_dtypes.push_back(inputs.at(original_index).second.dtype());
-  }
-
-  std::vector<std::string> sorted_output_names;
-  std::vector<int> output_original_indices;
-  CreateSortedNamesAndOriginalIndices(output_tensor_names, sorted_output_names,
-                                      output_original_indices);
-
-  // For target node names, we only need to sort them. The original indices are
-  // not needed.
-  std::vector<std::string> sorted_target_node_names(target_tensor_names.begin(),
-                                                    target_tensor_names.end());
-  std::sort(sorted_target_node_names.begin(), sorted_target_node_names.end());
-
   // Load the client graph.
-  TF_ASSIGN_OR_RETURN(
-      LoadedClientGraph & loaded_client_graph,
-      GetOrCreateLoadedClientGraph(
-          run_options, sorted_input_names, sorted_input_dtypes,
-          sorted_output_names, sorted_target_node_names, run_options.work_queue,
-          /*graph_name=*/{}, inputs));
+  TF_ASSIGN_OR_RETURN(LoadedClientGraph & loaded_client_graph,
+                      GetOrCreateLoadedClientGraph(
+                          run_options, sorted_input_names, sorted_input_dtypes,
+                          sorted_output_names, sorted_target_node_names,
+                          run_options.work_queue, graph_name, inputs));
 
   // Get a shared_ptr of the executable so that during the current request the
   // executable to use is guaranteed to be alive.
@@ -623,11 +595,9 @@ tensorflow::Status GraphExecutor::Run(
   // Create the actual arguments to the compiled function, which are sorted
   // according to the input tensor names.
   std::vector<tensorflow::Tensor> flat_inputs;
-  if (!loaded_client_graph.is_restore()) {
-    flat_inputs.reserve(inputs.size());
-    for (int original_index : input_original_indices) {
-      flat_inputs.push_back(inputs.at(original_index).second);
-    }
+  flat_inputs.reserve(inputs.size());
+  for (int original_index : input_original_indices) {
+    flat_inputs.push_back(inputs.at(original_index).second);
   }
 
   // Possibly record costs, depending on the particular setting of
@@ -677,7 +647,50 @@ tensorflow::Status GraphExecutor::Run(
   return absl::OkStatus();
 }
 
-tensorflow::Status GraphExecutor::Extend(const GraphDef& graph) {
+absl::Status GraphExecutor::Run(
+    const RunOptions& run_options,
+    absl::Span<const std::pair<std::string, tensorflow::Tensor>> inputs,
+    absl::Span<const std::string> output_tensor_names,
+    absl::Span<const std::string> target_tensor_names,
+    std::vector<tensorflow::Tensor>* outputs) {
+  // TODO(b/192498110): Validate input type.
+
+  // Sort the input/output names to have a stable order, so that the
+  // `joined_name`, which is used as the cache key, will be the same as long as
+  // the same set of inputs/outputs are specified.
+  std::vector<std::string> input_names;
+  input_names.reserve(inputs.size());
+  for (const auto& p : inputs) input_names.push_back(p.first);
+  std::vector<std::string> sorted_input_names;
+  std::vector<int> input_original_indices;
+  CreateSortedNamesAndOriginalIndices(input_names, sorted_input_names,
+                                      input_original_indices);
+  // We also need to create sorted input dtypes as they are needed for the
+  // compilation.
+  std::vector<tensorflow::DataType> sorted_input_dtypes;
+  sorted_input_dtypes.reserve(inputs.size());
+  for (int original_index : input_original_indices) {
+    sorted_input_dtypes.push_back(inputs.at(original_index).second.dtype());
+  }
+
+  std::vector<std::string> sorted_output_names;
+  std::vector<int> output_original_indices;
+  CreateSortedNamesAndOriginalIndices(output_tensor_names, sorted_output_names,
+                                      output_original_indices);
+
+  // For target node names, we only need to sort them. The original indices are
+  // not needed.
+  std::vector<std::string> sorted_target_node_names(target_tensor_names.begin(),
+                                                    target_tensor_names.end());
+  std::sort(sorted_target_node_names.begin(), sorted_target_node_names.end());
+
+  return RunWithSortedInputsOutputs(
+      run_options, /*graph_name=*/"", inputs, sorted_input_names,
+      sorted_input_dtypes, sorted_output_names, sorted_target_node_names,
+      input_original_indices, output_original_indices, outputs);
+}
+
+absl::Status GraphExecutor::Extend(const GraphDef& graph) {
   return graph_execution_state_->Extend(graph);
 }
 
@@ -701,24 +714,6 @@ GraphExecutor::ImportAndCompileClientGraph(
       auto flib_def_and_module,
       ImportClientGraphToMlirModule(client_graph, context.get()));
   auto& [flib_def, module] = flib_def_and_module;
-
-  // If the module contains a Restore op, then there should be one input,
-  // and it should specify the checkpoint for variable restore.
-  std::string checkpoint_path;
-  if (options_.compile_options.backend_compiler &&
-      mlir::tf_saved_model::IsRestoreGraph(module.get())) {
-    if (inputs.size() != 1) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Expected 1 input for restore graph, but got ", inputs.size(), "."));
-    }
-    const tensorflow::Tensor& input = inputs[0].second;
-    if (input.dtype() != tensorflow::DT_STRING) {
-      return absl::InvalidArgumentError(
-          absl::StrCat("Expected string input for restore graph, but got ",
-                       input.dtype(), "."));
-    }
-    checkpoint_path = input.scalar<tstring>()();
-  }
 
   TF_ASSIGN_OR_RETURN(
       auto stream_callback_id,
@@ -746,14 +741,14 @@ GraphExecutor::ImportAndCompileClientGraph(
                                     resource_context_.get());
   // Do not export to flib_def; restore graph may contain non-TF mlir ops.
   // TODO: Make restore graph compatible with flib, remove if statement.
-  if (checkpoint_path.empty()) {
+  if (!options_.compile_options.backend_compiler ||
+      !mlir::tf_saved_model::IsRestoreGraph(module.get())) {
     model_context.set_function_library_definition(&flib_def);
   }
-  model_context.set_checkpoint_path(checkpoint_path);
 
   if (options_.compile_options.compile_to_sync_tfrt_dialect) {
     if (kernel_registry_ == nullptr) {
-      return tensorflow::errors::Internal("Missing kernel registry in MLRT.");
+      return absl::InternalError("Missing kernel registry in MLRT.");
     }
     ASSIGN_OR_RETURN_IN_COMPILE(
         executable_context,
@@ -761,7 +756,7 @@ GraphExecutor::ImportAndCompileClientGraph(
 
   } else if (options_.enable_mlrt) {
     if (kernel_registry_ == nullptr) {
-      return tensorflow::errors::Internal("Missing kernel registry in MLRT.");
+      return absl::InternalError("Missing kernel registry in MLRT.");
     }
 
     ASSIGN_OR_RETURN_IN_COMPILE(
@@ -776,8 +771,9 @@ GraphExecutor::ImportAndCompileClientGraph(
         std::move(bytecode_buffer), std::move(bytecode_executable));
   } else {
     tfrt::BefBuffer bef;
-    TF_RETURN_IF_ERROR(tensorflow::ConvertTfMlirToBef(
-        options_.compile_options, module.get(), &bef, model_context));
+    TF_RETURN_IF_ERROR(
+        tensorflow::ConvertTfMlirToBef(options_.compile_options, module.get(),
+                                       &bef, model_context, &fallback_state()));
     ASSIGN_OR_RETURN_IN_COMPILE(
         auto bef_file, tfrt::CreateBefFileFromBefBuffer(runtime(), bef));
     executable_context = std::make_shared<ExecutableContext>(
@@ -796,8 +792,8 @@ GraphExecutor::ImportAndCompileClientGraph(
   return std::make_unique<LoadedClientGraph>(
       client_graph.name, std::move(symbol_uids), this, std::move(context),
       std::move(module_with_op_keys), std::move(module),
-      std::move(executable_context), stream_callback_id,
-      !checkpoint_path.empty(), std::move(flib_def), latency_sampler);
+      std::move(executable_context), stream_callback_id, std::move(flib_def),
+      latency_sampler);
 }
 
 absl::StatusOr<std::unique_ptr<GraphExecutor::LoadedClientGraph>>
@@ -856,15 +852,15 @@ GraphExecutor::ImportClientGraphToMlirModule(
   // Convert the optimized graph to an MLIR module.
   TF_ASSIGN_OR_RETURN(
       auto module,
-      tensorflow::ConvertGraphToMlir(*optimized_graph.graph, /*debug_info=*/{},
-                                     optimized_graph.graph->flib_def(),
-                                     graph_import_config, context));
+      tensorflow::tf2xla::v2::ConvertGraphToTfExecutor(
+          *optimized_graph.graph, /*debug_info=*/{},
+          optimized_graph.graph->flib_def(), graph_import_config, context));
 
   return std::make_pair(std::move(*optimized_graph.graph->mutable_flib_def()),
                         std::move(module));
 }
 
-tensorflow::Status GraphExecutor::InitBef(
+absl::Status GraphExecutor::InitBef(
     LoadedClientGraph* loaded_client_graph,
     tensorflow::tfrt_stub::WorkQueueInterface* work_queue) {
   auto* bef_file = loaded_client_graph->executable_context()->bef_file.get();
@@ -894,8 +890,7 @@ tensorflow::Status GraphExecutor::InitBef(
   return absl::OkStatus();
 }
 
-tensorflow::Status GraphExecutor::InitBytecode(
-    LoadedClientGraph* loaded_graph) {
+absl::Status GraphExecutor::InitBytecode(LoadedClientGraph* loaded_graph) {
   TF_ASSIGN_OR_RETURN(
       auto request_info,
       CreateRequestInfo(options_, /*run_options=*/{},
@@ -957,7 +952,7 @@ GraphExecutor::GetOrCreateLoadedClientGraph(
   if (iter != loaded_client_graphs_.end()) return {*iter->second};
 
   if (run_options.disable_compilation) {
-    return tensorflow::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         absl::StrCat("GraphExecutor: compilation is disabled in execution but "
                      "the compiled graph is not found for ",
                      joined_name));
@@ -989,20 +984,18 @@ GraphExecutor::GetOrCreateLoadedClientGraph(
   return {*loaded_client_graph_ptr};
 }
 
-tensorflow::Status GraphExecutor::RunWithSyncInterpreter(
+absl::Status GraphExecutor::RunWithSyncInterpreter(
     const std::string& graph_name, absl::Span<mlrt::Value> input_values,
     absl::Span<const std::string> input_names,
     absl::Span<const tensorflow::DataType> input_dtypes,
     absl::Span<const std::string> output_tensor_names,
     absl::Span<const std::string> target_tensor_names,
     absl::Span<mlrt::Value> outputs) {
-  TF_ASSIGN_OR_RETURN(
-      LoadedClientGraph & loaded_client_graph,
-      GetOrCreateLoadedClientGraph(
-          /*run_options=*/{}, input_names, input_dtypes, output_tensor_names,
-          target_tensor_names,
-          /*work_queue=*/nullptr,
-          graph_name.empty() ? output_tensor_names[0] : graph_name));
+  TF_ASSIGN_OR_RETURN(LoadedClientGraph & loaded_client_graph,
+                      GetOrCreateLoadedClientGraph(
+                          /*run_options=*/{}, input_names, input_dtypes,
+                          output_tensor_names, target_tensor_names,
+                          /*work_queue=*/nullptr, graph_name));
 
   // Get a shared_ptr of the executable so that during the current request the
   // executable to use is guaranteed to be alive.
@@ -1057,7 +1050,7 @@ CostRecorder* GraphExecutor::LoadedClientGraph::MaybeGetCostRecorder(
   return nullptr;
 }
 
-Status GraphExecutor::LoadedClientGraph::UpdateCost(
+absl::Status GraphExecutor::LoadedClientGraph::UpdateCost(
     const CostRecorder& cost_recorder, const Runtime& runtime) {
   LOG(INFO) << "TFRT updating op costs of loaded client graph (" << this << ") "
             << name_;
@@ -1091,7 +1084,7 @@ Status GraphExecutor::LoadedClientGraph::UpdateCost(
                                       /*disable_optional_sections=*/true);
     if (bef.empty()) {
       return diag_handler.Combine(
-          tensorflow::errors::Internal("failed to convert MLIR to BEF."));
+          absl::InternalError("failed to convert MLIR to BEF."));
     }
     bef.shrink_to_fit();
     TF_ASSIGN_OR_RETURN(auto bef_file,
@@ -1115,7 +1108,7 @@ GraphExecutor::LoadedClientGraph::LoadedClientGraph(
     mlir::OwningOpRef<mlir::ModuleOp> tf_mlir_with_op_keys,
     mlir::OwningOpRef<mlir::ModuleOp> tfrt_mlir,
     std::shared_ptr<ExecutableContext> executable_context,
-    std::optional<StreamCallbackId> stream_callback_id, bool is_restore,
+    std::optional<StreamCallbackId> stream_callback_id,
     FunctionLibraryDefinition flib_def,
     tsl::monitoring::SamplerCell* latency_sampler)
     : name_(std::move(name)),
@@ -1124,7 +1117,6 @@ GraphExecutor::LoadedClientGraph::LoadedClientGraph(
       mlir_context_(std::move(mlir_context)),
       executable_context_(std::move(executable_context)),
       stream_callback_id_(stream_callback_id),
-      is_restore_(is_restore),
       flib_def_(std::move(flib_def)),
       pflr_(&graph_executor->fallback_state().device_manager(),
             graph_executor->fallback_state().session_options().env,
@@ -1183,7 +1175,7 @@ void GraphExecutor::LoadedClientGraph::UpdateCostAnalysisData(
   }
 }
 
-tensorflow::Status GraphExecutor::CompileGraph(
+absl::Status GraphExecutor::CompileGraph(
     const std::string& graph_name,
     absl::Span<const std::string> input_tensor_names,
     absl::Span<const tensorflow::DataType> input_tensor_dtypes,

@@ -15,18 +15,22 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/iterator_spmd_expander.h"
 
-#include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_attributes.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/dtensor/cc/constants.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
@@ -58,8 +62,8 @@ StatusOr<mlir::Operation*> IteratorGetNextSPMDExpander::ExpandOp(
         local_shape, global_output_type.getElementType());
   }
 
-  auto new_op = builder.create<mlir::TF::IteratorGetNextOp>(
-      DT_LOC(op->getLoc()), local_types, original_op->getOperand(0));
+  auto new_op = mlir::TF::IteratorGetNextOp::create(
+      builder, DT_LOC(op->getLoc()), local_types, original_op->getOperand(0));
 
   for (int i = 0; i < original_op->getNumResults(); ++i) {
     original_op.getResult(i).replaceAllUsesWith(new_op.getResult(i));
@@ -102,7 +106,7 @@ StatusOr<mlir::Operation*> IteratorGetNextAsOptionalSPMDExpander::ExpandOp(
 
   auto array_attr = op->getAttrOfType<mlir::ArrayAttr>(kIteratorOutputShapes);
   if (!array_attr)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         llvm::formatv("Could not find `{0}` attribute of op: {1}",
                       kIteratorOutputShapes, op->getName())
             .str());

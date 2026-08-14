@@ -14,20 +14,26 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
-#include <cmath>
+#include <optional>
 #include <string>
 #include <tuple>
+#include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "tensorflow/cc/framework/grad_op_registry.h"
 #include "tensorflow/cc/framework/gradients.h"
 #include "tensorflow/cc/gradients/grad_helper.h"
 #include "tensorflow/cc/ops/array_ops_internal.h"
 #include "tensorflow/cc/ops/math_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/core/framework/types.pb.h"
 
 namespace tensorflow {
 namespace ops {
@@ -47,21 +53,21 @@ constexpr absl::string_view kEllipsis = "...";
 // Parameters:
 //   subscripts: A string denoting the einsum subscript (e.g. `ab...cd`)
 //   label: The single character axis label.
-absl::optional<int> EinsumGetAxisFromLabel(absl::string_view subscripts,
-                                           char label) {
+std::optional<int> EinsumGetAxisFromLabel(absl::string_view subscripts,
+                                          char label) {
   std::vector<absl::string_view> splits = absl::StrSplit(subscripts, kEllipsis);
   auto index = splits[0].find(label);
   if (index != splits[0].npos) {
     return index;
   }
   if (splits.size() < 2) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   index = splits[1].find(label);
   if (index != splits[1].npos) {
     return index - splits[1].length();
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 // Returns a tuple denoting the slice mapping to ellipsis.
@@ -77,18 +83,18 @@ absl::optional<int> EinsumGetAxisFromLabel(absl::string_view subscripts,
 //   subscripts: A string denoting the einsum subscript.
 //   start: Output for the start index
 //   end: Output for the end index (or nullopt to go to the end).
-std::tuple<int, absl::optional<int>> EinsumGetBcastSubshape(
+std::tuple<int, std::optional<int>> EinsumGetBcastSubshape(
     absl::string_view subscripts) {
   int start = subscripts.find(kEllipsis);
   if (start == subscripts.npos) {
     return std::make_tuple(0, 0);
   }
   int remaining = subscripts.length() - (start + kEllipsis.length());
-  absl::optional<int> end;
+  std::optional<int> end;
   if (remaining > 0) {
     end = -remaining;
   } else {
-    end = absl::nullopt;
+    end = std::nullopt;
   }
   return std::make_tuple(start, end);
 }
@@ -99,7 +105,7 @@ std::tuple<int, absl::optional<int>> EinsumGetBcastSubshape(
 // This attempts to give the same result as tenspr[start:end] would give in
 // Python.
 Output Slice1dHelper(const Scope& scope, Output tensor, int start,
-                     absl::optional<int> end) {
+                     std::optional<int> end) {
   if (end.has_value() && *end > 0) {
     return Slice(scope, tensor, Const(scope, start, TensorShape({1})),
                  Const(scope, *end - start, TensorShape({1})));
@@ -146,7 +152,7 @@ std::tuple<std::string, Output, Output> EinsumGetReducedSubscripts(
     auto axis = EinsumGetAxisFromLabel(subscripts, s);
     if (!axis.has_value()) {
       // Should never happen.
-      scope.UpdateStatus(errors::Internal(
+      scope.UpdateStatus(absl::InternalError(
           absl::StrCat("Missing axis", absl::string_view(&s, 1))));
     } else {
       reduced_axes.push_back(*axis);
@@ -356,11 +362,11 @@ Output EinsumGradWrt(const Scope& scope, Output output_grad,
                                  input_shape, reduced_label_set);
 }
 
-Status EinsumGrad(const Scope& scope, const Operation& op,
-                  const std::vector<Output>& grad_inputs,
-                  std::vector<Output>* grad_outputs) {
+absl::Status EinsumGrad(const Scope& scope, const Operation& op,
+                        const std::vector<Output>& grad_inputs,
+                        std::vector<Output>* grad_outputs) {
   if (grad_inputs.size() != 1) {
-    return errors::InvalidArgument("Expect 1 grad input.");
+    return absl::InvalidArgumentError("Expect 1 grad input.");
   }
   const Output& grad = grad_inputs[0];
 
@@ -369,7 +375,7 @@ Status EinsumGrad(const Scope& scope, const Operation& op,
   std::vector<absl::string_view> equation_split =
       absl::StrSplit(equation, "->");
   if (equation_split.size() != 2) {
-    return errors::InvalidArgument("Equation must contain a single ->");
+    return absl::InvalidArgumentError("Equation must contain a single ->");
   }
 
   const absl::string_view input_subs = equation_split[0];
@@ -403,7 +409,7 @@ Status EinsumGrad(const Scope& scope, const Operation& op,
 
   std::vector<absl::string_view> subs = absl::StrSplit(input_subs, ',');
   if (subs.size() != 2) {
-    return errors::InvalidArgument("Only 2 inputs are supported");
+    return absl::InvalidArgumentError("Only 2 inputs are supported");
   }
   std::string x_subs(subs[0]);
   std::string y_subs(subs[1]);
@@ -450,7 +456,7 @@ Status EinsumGrad(const Scope& scope, const Operation& op,
   // 'ab...c' and shape of rank 10; the range [3:-1] denotes the broadcasted
   // axes.
   int bx_start, by_start;
-  absl::optional<int> bx_end, by_end;
+  std::optional<int> bx_end, by_end;
   std::tie(bx_start, bx_end) = EinsumGetBcastSubshape(x_subs);
   std::tie(by_start, by_end) = EinsumGetBcastSubshape(y_subs);
 

@@ -14,8 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include <stdint.h>
 
+#include <limits>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/schema/schema_generated.h"
@@ -85,8 +87,9 @@ TEST(SegmentSumOpModelTest, Float32Test_Simple) {
                               {1, 2, 3, 4, 4, 3, 2, 1, 5, 6, 7, 8});
   model.PopulateTensor<int>(model.segment_ids(), {0, 0, 1});
   ASSERT_EQ(model.Invoke(), kTfLiteOk);
-  EXPECT_THAT(model.GetOutput(), ElementsAreArray({5.0f, 5.0f, 5.0f, 5.0f, 5.0f,
-                                                   6.0f, 7.0f, 8.0f}));
+  EXPECT_THAT(model.GetOutput(),
+              Pointwise(FloatingPointEq(),
+                        {5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 6.0f, 7.0f, 8.0f}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({2, 4}));
 }
 
@@ -96,7 +99,7 @@ TEST(SegmentSumOpModelTest, Float32Test_OneDimension) {
   model.PopulateTensor<float>(model.data(), {1, 2, 3});
   model.PopulateTensor<int32_t>(model.segment_ids(), {0, 0, 1});
   ASSERT_EQ(model.Invoke(), kTfLiteOk);
-  EXPECT_THAT(model.GetOutput(), ElementsAreArray({3.0f, 3.0f}));
+  EXPECT_THAT(model.GetOutput(), Pointwise(FloatingPointEq(), {3.0f, 3.0f}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({2}));
 }
 
@@ -106,7 +109,8 @@ TEST(SegmentSumOpModelTest, Float32Test_ThreeDimensions) {
   model.PopulateTensor<float>(model.data(), {1, 2, 3, 4, 5, 6});
   model.PopulateTensor<int32_t>(model.segment_ids(), {0, 0, 1});
   ASSERT_EQ(model.Invoke(), kTfLiteOk);
-  EXPECT_THAT(model.GetOutput(), ElementsAreArray({4.0f, 6.0f, 5.0f, 6.0f}));
+  EXPECT_THAT(model.GetOutput(),
+              Pointwise(FloatingPointEq(), {4.0f, 6.0f, 5.0f, 6.0f}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({2, 2, 1}));
 }
 
@@ -140,6 +144,34 @@ TEST(SegmentSumOpModelTest, TestFailIfSegmentsAreNotTheRightCardinality) {
   model.PopulateTensor<int32_t>(model.data(), {1, 2, 3, 4, 5, 6});
   model.PopulateTensor<int32_t>(model.segment_ids(), {0, 1});
   ASSERT_EQ(model.Invoke(), kTfLiteError);
+}
+
+TEST(SegmentSumOpModelTest, Int32OverflowWrapsWithoutUb) {
+  SegmentSumOpModel<int32_t> model({TensorType_INT32, {2}},
+                                   {TensorType_INT32, {2}});
+  model.PopulateTensor<int32_t>(model.data(),
+                                {std::numeric_limits<int32_t>::max(), 1});
+  model.PopulateTensor<int32_t>(model.segment_ids(), {0, 0});
+  ASSERT_EQ(model.Invoke(), kTfLiteOk);
+  EXPECT_THAT(model.GetOutput(),
+              ElementsAreArray({std::numeric_limits<int32_t>::min()}));
+}
+
+TEST(SegmentSumOpModelTest, EmptyDataWithHugeSuffixReturnsOk) {
+  SegmentSumOpModel<int32_t> model(
+      {TensorType_INT32, {0, std::numeric_limits<int>::max()}},
+      {TensorType_INT32, {0}});
+  EXPECT_EQ(model.Invoke(), kTfLiteOk);
+  EXPECT_THAT(model.GetOutputShape(),
+              ElementsAreArray({0, std::numeric_limits<int>::max()}));
+}
+
+TEST(SegmentSumOpModelTest, IntermediateSuffixProductOverflowRejected) {
+  SegmentSumOpModel<int32_t> model(
+      {TensorType_INT32,
+       {0, std::numeric_limits<int>::max(), std::numeric_limits<int>::max()}},
+      {TensorType_INT32, {0}});
+  EXPECT_EQ(model.Invoke(), kTfLiteError);
 }
 
 }  // namespace

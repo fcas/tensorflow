@@ -525,6 +525,15 @@ class TransposeTest(test.TestCase):
       xt = array_ops.transpose(x)
       self.assertAllEqual(xt, x)
 
+  def testScalarConjugateTranspose(self):
+    # Regression test for https://github.com/tensorflow/tensorflow/issues/118345
+    # ConjugateTranspose on a rank-0 tensor previously aborted via a
+    # CHECK_GT in CalculateTFStrides reached through the MKL kernel.
+    with self.cached_session():
+      x = constant_op.constant(42, dtype=dtypes.float32, shape=[])
+      xt = array_ops.transpose(x, conjugate=True)
+      self.assertAllEqual(xt, x)
+
   def _testError(self, x, p, err):
     with self.cached_session():
       with self.assertRaisesOpError(err):
@@ -540,6 +549,17 @@ class TransposeTest(test.TestCase):
       array_ops.transpose(np.arange(0., 30).reshape([2, 3, 5]), [0, 1, 3])
     self._testError(
         np.arange(0., 30).reshape([2, 3, 5]), [0, 1, 1], "2 is missing")
+
+  def testNegativePerm(self):
+    self.assertEqual(
+        [15, 100, 37],
+        array_ops.transpose(
+            constant_op.constant(1, dtype=dtypes.int32, shape=[100, 37, 15]),
+            [-1, -3, -2],
+        )
+        .get_shape()
+        .dims,
+    )
 
 
 if __name__ == "__main__":

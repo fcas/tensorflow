@@ -11,13 +11,35 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/kernels/data/tf_record_dataset_op.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include <gtest/gtest.h>
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
 #include "tensorflow/core/data/dataset_test_base.h"
+#include "tensorflow/core/data/name_utils.h"
+#include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/io/record_reader.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/file_system.h"
+#include "tensorflow/core/platform/status.h"
+#include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/tstring.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 namespace data {
@@ -31,12 +53,12 @@ int64_t GetOffset(const std::string& filename, int64_t index) {
   Env* env_ = Env::Default();
   std::unique_ptr<RandomAccessFile> file_;
   std::unique_ptr<io::SequentialRecordReader> reader;
-  Status s1 = env_->NewRandomAccessFile(filename, &file_);
+  absl::Status s1 = env_->NewRandomAccessFile(filename, &file_);
   TF_CHECK_OK(s1) << s1;
   reader = std::make_unique<io::SequentialRecordReader>(file_.get());
   for (int i = 0; i < index; ++i) {
     tstring record;
-    Status s2 = reader->ReadRecord(&record);
+    absl::Status s2 = reader->ReadRecord(&record);
     TF_CHECK_OK(s2) << s2;
   }
   return reader->TellOffset();
@@ -46,7 +68,8 @@ class TFRecordDatasetParams : public DatasetParams {
  public:
   TFRecordDatasetParams(std::vector<tstring> filenames,
                         CompressionType compression_type, int64_t buffer_size,
-                        std::vector<int64_t> byte_offsets, string node_name)
+                        std::vector<int64_t> byte_offsets,
+                        std::string node_name)
       : DatasetParams({DT_STRING}, {PartialTensorShape({})},
                       std::move(node_name)),
         filenames_(std::move(filenames)),
@@ -66,7 +89,8 @@ class TFRecordDatasetParams : public DatasetParams {
         CreateTensor<int64_t>(TensorShape({num_byte_offsets}), byte_offsets_)};
   }
 
-  Status GetInputNames(std::vector<string>* input_names) const override {
+  absl::Status GetInputNames(
+      std::vector<std::string>* input_names) const override {
     input_names->clear();
     *input_names = {
         TFRecordDatasetOp::kFileNames,
@@ -77,13 +101,13 @@ class TFRecordDatasetParams : public DatasetParams {
     return absl::OkStatus();
   }
 
-  Status GetAttributes(AttributeVector* attr_vector) const override {
+  absl::Status GetAttributes(AttributeVector* attr_vector) const override {
     attr_vector->clear();
     attr_vector->emplace_back("metadata", "");
     return absl::OkStatus();
   }
 
-  string dataset_type() const override {
+  std::string dataset_type() const override {
     return TFRecordDatasetOp::kDatasetType;
   }
 
@@ -96,11 +120,12 @@ class TFRecordDatasetParams : public DatasetParams {
 
 class TFRecordDatasetOpTest : public DatasetOpsTestBase {};
 
-Status CreateTestFiles(const std::vector<tstring>& filenames,
-                       const std::vector<std::vector<string>>& contents,
-                       CompressionType compression_type) {
+absl::Status CreateTestFiles(
+    const std::vector<tstring>& filenames,
+    const std::vector<std::vector<std::string>>& contents,
+    CompressionType compression_type) {
   if (filenames.size() != contents.size()) {
-    return tensorflow::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "The number of files does not match with the contents");
   }
   for (int i = 0; i < filenames.size(); ++i) {
@@ -119,12 +144,12 @@ TFRecordDatasetParams TFRecordDatasetParams1() {
   std::vector<tstring> filenames = {
       absl::StrCat(testing::TmpDir(), "/tf_record_ZLIB_1"),
       absl::StrCat(testing::TmpDir(), "/tf_record_ZLIB_2")};
-  std::vector<std::vector<string>> contents = {{"1", "22", "333"},
-                                               {"a", "bb", "ccc"}};
+  std::vector<std::vector<std::string>> contents = {{"1", "22", "333"},
+                                                    {"a", "bb", "ccc"}};
   CompressionType compression_type = CompressionType::ZLIB;
   if (!CreateTestFiles(filenames, contents, compression_type).ok()) {
-    VLOG(WARNING) << "Failed to create the test files: "
-                  << absl::StrJoin(filenames, ", ");
+    LOG(WARNING) << "Failed to create the test files: "
+                 << absl::StrJoin(filenames, ", ");
   }
   return TFRecordDatasetParams(filenames,
                                /*compression_type=*/compression_type,
@@ -138,12 +163,12 @@ TFRecordDatasetParams TFRecordDatasetParams2() {
   std::vector<tstring> filenames = {
       absl::StrCat(testing::TmpDir(), "/tf_record_GZIP_1"),
       absl::StrCat(testing::TmpDir(), "/tf_record_GZIP_2")};
-  std::vector<std::vector<string>> contents = {{"1", "22", "333"},
-                                               {"a", "bb", "ccc"}};
+  std::vector<std::vector<std::string>> contents = {{"1", "22", "333"},
+                                                    {"a", "bb", "ccc"}};
   CompressionType compression_type = CompressionType::GZIP;
   if (!CreateTestFiles(filenames, contents, compression_type).ok()) {
-    VLOG(WARNING) << "Failed to create the test files: "
-                  << absl::StrJoin(filenames, ", ");
+    LOG(WARNING) << "Failed to create the test files: "
+                 << absl::StrJoin(filenames, ", ");
   }
   return TFRecordDatasetParams(filenames,
                                /*compression_type=*/compression_type,
@@ -157,12 +182,12 @@ TFRecordDatasetParams TFRecordDatasetParams3() {
   std::vector<tstring> filenames = {
       absl::StrCat(testing::TmpDir(), "/tf_record_UNCOMPRESSED_1"),
       absl::StrCat(testing::TmpDir(), "/tf_record_UNCOMPRESSED_2")};
-  std::vector<std::vector<string>> contents = {{"1", "22", "333"},
-                                               {"a", "bb", "ccc"}};
+  std::vector<std::vector<std::string>> contents = {{"1", "22", "333"},
+                                                    {"a", "bb", "ccc"}};
   CompressionType compression_type = CompressionType::UNCOMPRESSED;
   if (!CreateTestFiles(filenames, contents, compression_type).ok()) {
-    VLOG(WARNING) << "Failed to create the test files: "
-                  << absl::StrJoin(filenames, ", ");
+    LOG(WARNING) << "Failed to create the test files: "
+                 << absl::StrJoin(filenames, ", ");
   }
   return TFRecordDatasetParams(filenames,
                                /*compression_type=*/compression_type,
@@ -177,7 +202,7 @@ TFRecordDatasetParams TFRecordDatasetParams4() {
       absl::StrCat(testing::TmpDir(), "/tf_record_UNCOMPRESSED_1"),
       absl::StrCat(testing::TmpDir(), "/tf_record_UNCOMPRESSED_2"),
       absl::StrCat(testing::TmpDir(), "/tf_record_UNCOMPRESSED_3")};
-  std::vector<std::vector<string>> contents = {
+  std::vector<std::vector<std::string>> contents = {
       {"1", "22", "333"}, {"a", "bb", "ccc"}, {"x", "yy", "zzz"}};
   CompressionType compression_type = CompressionType::UNCOMPRESSED;
   absl::Status status = CreateTestFiles(filenames, contents, compression_type);
@@ -197,7 +222,7 @@ TFRecordDatasetParams TFRecordDatasetParams4() {
 TFRecordDatasetParams InvalidByteOffsets() {
   std::vector<tstring> filenames = {
       absl::StrCat(testing::TmpDir(), "/tf_record_UNCOMPRESSED_1")};
-  std::vector<std::vector<string>> contents = {{"1", "22", "333"}};
+  std::vector<std::vector<std::string>> contents = {{"1", "22", "333"}};
   CompressionType compression_type = CompressionType::UNCOMPRESSED;
   absl::Status status = CreateTestFiles(filenames, contents, compression_type);
   TF_CHECK_OK(status) << "Failed to create the test files: "

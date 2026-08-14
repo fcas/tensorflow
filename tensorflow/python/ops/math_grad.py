@@ -54,7 +54,7 @@ def _EuclideanNormGrad(op: ops.Operation, grad):
     output = array_ops.reshape(output, output_shape_kept_dims)
     grad = array_ops.reshape(grad, output_shape_kept_dims)
 
-  return math_ops.truediv(op.inputs[0], output / grad), None
+  return math_ops.div_no_nan(op.inputs[0], output) * grad, None
 
 
 def SmartBroadcastGradientArgs(x, y, grad=None):
@@ -276,7 +276,8 @@ def _MeanGrad(op: ops.Operation, grad):
   else:
     input_shape = array_ops.shape(op.inputs[0])
     input_rank = array_ops.size(input_shape)
-    axes = (op.inputs[1] + input_rank) % input_rank
+    axes = math_ops.cast(op.inputs[1], input_rank.dtype)
+    axes = (axes + input_rank) % input_rank
     factor = math_ops.reduce_prod(array_ops.gather(input_shape, axes))
   return math_ops.truediv(sum_grad, math_ops.cast(factor, sum_grad.dtype)), None
 
@@ -306,10 +307,10 @@ def _ProdGrad(op: ops.Operation, grad):
   # copying back and forth, and since listdiff is CPU only.
   with ops.device("/cpu:0"):
     rank = array_ops.rank(op.inputs[0])
-    reduction_indices = (reduction_indices + rank) % rank
-    reduced = math_ops.cast(reduction_indices, dtypes.int32)
+    reduction_indices = math_ops.cast(reduction_indices, rank.dtype)
+    reduced = (reduction_indices + rank) % rank
     idx = math_ops.range(0, rank)
-    other, _ = gen_array_ops.list_diff(idx, reduced, dtypes.int32)
+    other, _ = gen_array_ops.list_diff(idx, reduced, reduced.dtype)
     perm = array_ops.concat([reduced, other], 0)
     reduced_num = math_ops.reduce_prod(array_ops.gather(input_shape, reduced))
     other_num = math_ops.reduce_prod(array_ops.gather(input_shape, other))
@@ -339,12 +340,12 @@ def _SegmentSumGrad(op: ops.Operation, grad):
 @ops.RegisterGradient("SegmentMean")
 def _SegmentMeanGrad(op: ops.Operation, grad):
   """Gradient for SegmentMean."""
-  input_rank = array_ops.rank(op.inputs[0])
-  ones_shape = array_ops.concat([
-      array_ops.shape(op.inputs[1]),
-      array_ops.ones(
-          array_ops.expand_dims(input_rank - 1, 0), dtype=dtypes.int32)
-  ], 0)
+  data_rank = array_ops.rank(op.inputs[0])
+  segment_ids_shape = array_ops.shape(op.inputs[1])
+  remaining_shape = array_ops.ones(
+      array_ops.expand_dims(data_rank - 1, 0), dtype=segment_ids_shape.dtype
+  )
+  ones_shape = array_ops.concat([segment_ids_shape, remaining_shape], 0)
   ones = array_ops.ones(ones_shape, dtype=grad.dtype)
   scaled_grad = math_ops.divide(grad, math_ops.segment_sum(ones, op.inputs[1]))
   return array_ops.gather(scaled_grad, op.inputs[1]), None
@@ -353,18 +354,16 @@ def _SegmentMeanGrad(op: ops.Operation, grad):
 def _SparseSegmentReduceGradV2(op, grad, norm=None):
   """Sparse gradient for SparseSegment(Sum|Mean|SqrtN)[WithNumSegments]."""
   assert norm is None or norm == "mean" or norm == "sqrtn"
-  data = op.inputs[0]
   indices = op.inputs[1]
   segment_ids = op.inputs[2]
   data_shape = array_ops.shape(op.inputs[0])
   dense_output_dim0 = data_shape[0]
-  grad_fn = (
-      math_ops.sparse_segment_mean_grad_v2
-      if norm == "mean"
-      else math_ops.sparse_segment_sqrt_n_grad_v2
-      if norm == "sqrtn"
-      else math_ops.sparse_segment_sum_grad_v2
-  )
+  if norm == "mean":
+    grad_fn = math_ops.sparse_segment_mean_grad_v2
+  elif norm == "sqrtn":
+    grad_fn = math_ops.sparse_segment_sqrt_n_grad_v2
+  else:
+    grad_fn = math_ops.sparse_segment_sum_grad_v2
   grad_values, sorted_unique_indices = grad_fn(
       grad, indices, segment_ids, dense_output_dim0
   )
@@ -786,9 +785,10 @@ def _XLogyGrad(op: ops.Operation, grad):
   sy = array_ops.shape(y)
   rx, ry = gen_array_ops.broadcast_gradient_args(sx, sy)
   with ops.control_dependencies([grad]):
-    not_zero_x = math_ops.cast(
-        math_ops.not_equal(x, math_ops.cast(0., dtype=x.dtype)), dtype=x.dtype)
-    partial_x = gen_math_ops.xlogy(not_zero_x, y)
+    # The gradient of xlogy w.r.t. x is log(y) for all x (including x=0),
+    # because d/dx x*log(y) = log(y). The zero-mask should only apply to
+    # the forward value, not the derivative w.r.t. x.
+    partial_x = gen_math_ops.log(y)
     partial_y = gen_math_ops.xdivy(x, y)
     return (array_ops.reshape(math_ops.reduce_sum(partial_x * grad, rx), sx),
             array_ops.reshape(math_ops.reduce_sum(partial_y * grad, ry), sy))
@@ -803,9 +803,10 @@ def _XLog1pyGrad(op: ops.Operation, grad):
   sy = array_ops.shape(y)
   rx, ry = gen_array_ops.broadcast_gradient_args(sx, sy)
   with ops.control_dependencies([grad]):
-    not_zero_x = math_ops.cast(
-        math_ops.not_equal(x, math_ops.cast(0., dtype=x.dtype)), dtype=x.dtype)
-    partial_x = gen_math_ops.xlog1py(not_zero_x, y)
+    # The gradient of xlog1py w.r.t. x is log1p(y) for all x (including x=0),
+    # because d/dx x*log1p(y) = log1p(y). The zero-mask should only apply to
+    # the forward value, not the derivative w.r.t. x.
+    partial_x = gen_math_ops.log1p(y)
     partial_y = gen_math_ops.xdivy(x, y + 1.)
     return (array_ops.reshape(math_ops.reduce_sum(partial_x * grad, rx), sx),
             array_ops.reshape(math_ops.reduce_sum(partial_y * grad, ry), sy))
@@ -1020,14 +1021,18 @@ def _BesselI1Grad(op: ops.Operation, grad):
   x = op.inputs[0]
   y = op.outputs[0]
   with ops.control_dependencies([grad]):
-    # For x = 0, the correct gradient is 1.0.
+    # For x = 0, the correct gradient is 0.5.
     # However, the main branch gives NaN because of the division by x, so
     # we impute the gradient manually.
     # An alternative solution is to express the gradient via bessel_i0 and
     # bessel_i2, but the latter is not yet implemented in Eigen.
+    x_is_zero = math_ops.equal(x, 0.0)
+    safe_x = array_ops.where_v2(x_is_zero, math_ops.cast(1.0, x.dtype), x)
     dy_dx = array_ops.where_v2(
-        math_ops.equal(x, 0.), math_ops.cast(1., x.dtype),
-        special_math_ops.bessel_i0(x) - math_ops.div(y, x))
+        x_is_zero,
+        math_ops.cast(0.5, x.dtype),
+        special_math_ops.bessel_i0(x) - math_ops.div(y, safe_x),
+    )
     return grad * dy_dx
 
 
@@ -1042,10 +1047,14 @@ def _BesselI1eGrad(op: ops.Operation, grad):
     # we impute the gradient manually.
     # An alternative solution is to express the gradient via bessel_i0e and
     # bessel_i2e, but the latter is not yet implemented in Eigen.
+    x_is_zero = math_ops.equal(x, 0.0)
+    safe_x = array_ops.where_v2(x_is_zero, math_ops.cast(1.0, x.dtype), x)
     dy_dx = array_ops.where_v2(
-        math_ops.equal(x, 0.), math_ops.cast(0.5, x.dtype),
-        special_math_ops.bessel_i0e(x) - y *
-        (math_ops.sign(x) + math_ops.reciprocal(x)))
+        x_is_zero,
+        math_ops.cast(0.5, x.dtype),
+        special_math_ops.bessel_i0e(x)
+        - y * (math_ops.sign(x) + math_ops.reciprocal(safe_x)),
+    )
     return grad * dy_dx
 
 
@@ -1113,9 +1122,13 @@ def _BesselJ1Grad(op: ops.Operation, grad):
     # we impute the gradient manually.
     # An alternative solution is to express the gradient via bessel_i0e and
     # bessel_i2e, but the latter is not yet implemented in Eigen.
+    x_is_zero = math_ops.equal(x, 0.0)
+    safe_x = array_ops.where_v2(x_is_zero, math_ops.cast(1.0, x.dtype), x)
     dy_dx = array_ops.where_v2(
-        math_ops.equal(x, 0.), math_ops.cast(0.5, x.dtype),
-        special_math_ops.bessel_j0(x) - math_ops.div(y, x))
+        x_is_zero,
+        math_ops.cast(0.5, x.dtype),
+        special_math_ops.bessel_j0(x) - math_ops.div(y, safe_x),
+    )
     return grad * dy_dx
 
 
@@ -1153,8 +1166,12 @@ def _IgammaGrad(op: ops.Operation, grad):
     partial_a = gen_math_ops.igamma_grad_a(a, x)
     # Perform operations in log space before summing, because Gamma(a)
     # and Gamma'(a) can grow large.
-    partial_x = math_ops.exp(-x + (a - 1) * math_ops.log(x) -
-                             math_ops.lgamma(a))
+    # Use xlogy so that the (a - 1) * log(x) term evaluates to 0 (not NaN)
+    # when a == 1 and x == 0. The true derivative there is
+    # d/dx igamma(1, x) = e^-x = 1, so `(a - 1) * log(x)` computing
+    # `0 * -inf = NaN` is incorrect. This mirrors the neighboring Betainc
+    # gradient, which already uses xlogy for the same reason.
+    partial_x = math_ops.exp(-x + math_ops.xlogy(a - 1, x) - math_ops.lgamma(a))
     return (array_ops.reshape(math_ops.reduce_sum(partial_a * grad, ra), sa),
             array_ops.reshape(math_ops.reduce_sum(partial_x * grad, rx), sx))
 
@@ -1992,7 +2009,28 @@ def _CumprodGrad(op: ops.Operation, grad):
   out = math_ops.cumsum(
       prod * grad, axis, exclusive=exclusive, reverse=not reverse
   )
-  return [math_ops.div_no_nan(out, x), None]
+  non_zero_grad = math_ops.div_no_nan(out, x)
+
+  is_zero = math_ops.equal(x, 0)
+  zero_count = math_ops.cumsum(
+      math_ops.cast(is_zero, dtypes.int32),
+      axis,
+      exclusive=exclusive,
+      reverse=reverse,
+  )
+  non_zero_x = array_ops.where_v2(is_zero, math_ops.cast(1, x.dtype), x)
+  non_zero_prod = math_ops.cumprod(
+      non_zero_x, axis, exclusive=exclusive, reverse=reverse
+  )
+  zero_prod_grad = array_ops.where_v2(
+      math_ops.equal(zero_count, 1),
+      non_zero_prod * grad,
+      math_ops.cast(0, grad.dtype),
+  )
+  zero_grad = math_ops.cumsum(
+      zero_prod_grad, axis, exclusive=exclusive, reverse=not reverse
+  )
+  return [array_ops.where_v2(is_zero, zero_grad, non_zero_grad), None]
 
 
 # pylint: disable=missing-function-docstring

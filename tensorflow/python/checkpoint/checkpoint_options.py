@@ -86,14 +86,14 @@ class CheckpointOptions(object):
       enable_async: bool Type. Indicates whether async checkpointing is enabled.
         Default is False, i.e., no async checkpoint.  Async checkpoint moves the
         checkpoint file writing off the main thread, so that the model can
-        continue to train while the checkpoing file writing runs in the
+        continue to train while the checkpoint file writing runs in the
         background. Async checkpoint reduces TPU device idle cycles and speeds
         up model training process, while memory consumption may increase.
       experimental_skip_slot_variables: bool Type. If true, ignores slot
-        variables during restore. Context: TPU Embedding layers
-        for Serving do not properly restore slot variables. This option is
-        a way to omit restoring slot variables which are not required for
-        Serving usecase anyways.(b/315912101)
+        variables during restore. Context: TPU Embedding layers for Serving do
+        not properly restore slot variables. This option is a way to omit
+        restoring slot variables which are not required for Serving usecase
+        anyways.(b/315912101)
       experimental_sharding_callback: `tf.train.experimental.ShardingCallback`.
         A pre-made or custom callback that determines how checkpoints are
         sharded on disk. Pre-made callback options are
@@ -121,7 +121,11 @@ class CheckpointOptions(object):
   def __copy__(self):
     # Only `experimental_write_callbacks` needs special treatment to Ensure that
     # the list is deep-copied, but the callbacks are not deep-copied.
-    result = copy.copy(super())  # First invoke the non-overridden copy method.
+    cls = self.__class__
+    result = cls.__new__(cls)
+    for name in self.__slots__:
+      if hasattr(self, name):
+        setattr(result, name, getattr(self, name))
     result.experimental_write_callbacks = copy.copy(
         self.experimental_write_callbacks
     )

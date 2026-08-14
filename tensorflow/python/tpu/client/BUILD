@@ -1,6 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Cloud TPU Client.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.default.bzl", "tf_py_strict_test")
 
 package(
@@ -11,22 +26,22 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "client",
     srcs = [
         "client.py",
         "version.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["@absl_py//absl/flags"],
 )
 
-py_strict_library(
+py_library(
     name = "client_lib",
     srcs = [
         "__init__.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":client"],
 )
 
@@ -36,7 +51,6 @@ tf_py_strict_test(
     srcs = ["client_test.py"],
     grpc_enabled = True,
     main = "client_test.py",
-    python_version = "PY3",
     deps = [
         ":client",
         "//tensorflow/python/platform:client_testlib",

@@ -44,12 +44,12 @@ class AccumulatorSetGlobalStepOp
     const Tensor* new_global_step_tensor;
     OP_REQUIRES_OK(ctx, ctx->input("new_global_step", &new_global_step_tensor));
     if (!TensorShapeUtils::IsScalar(new_global_step_tensor->shape())) {
-      ctx->CtxFailureWithWarning(errors::InvalidArgument(
+      ctx->CtxFailureWithWarning(absl::InvalidArgumentError(absl::StrCat(
           "Argument num_required must be scalar, but had bad shape ",
-          new_global_step_tensor->shape().DebugString()));
+          new_global_step_tensor->shape().DebugString())));
     }
 
-    Status status =
+    absl::Status status =
         accumulator->SetGlobalStep(new_global_step_tensor->scalar<int64_t>()());
     if (!status.ok()) ctx->CtxFailureWithWarning(status);
   }
@@ -114,7 +114,7 @@ class AccumulatorNumAccumulatedOp
     Tensor* Taccumulator_size = nullptr;
     OP_REQUIRES_OK(
         ctx, ctx->allocate_output(0, TensorShape({}), &Taccumulator_size));
-    Taccumulator_size->flat<int32>().setConstant(
+    Taccumulator_size->flat<int32_t>().setConstant(
         accumulator->num_accumulated());
   }
 

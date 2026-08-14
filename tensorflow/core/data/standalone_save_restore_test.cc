@@ -17,17 +17,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
 #include "tensorflow/core/data/service/common.pb.h"
 #include "tensorflow/core/data/service/test_util.h"
 #include "tensorflow/core/data/standalone.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tensorflow {
 namespace data {
@@ -60,10 +60,10 @@ StatusOr<T> GetNext(Iterator& iterator) {
   bool end_of_sequence = false;
   TF_RETURN_IF_ERROR(iterator.GetNext(&result, &end_of_sequence));
   if (end_of_sequence) {
-    return errors::OutOfRange("iterator has reached the end of sequence.");
+    return absl::OutOfRangeError("iterator has reached the end of sequence.");
   }
   if (result.size() != 1) {
-    return errors::Internal("GetNext result Tensor size should be 1.");
+    return absl::InternalError("GetNext result Tensor size should be 1.");
   }
   return result[0].unaligned_flat<T>().data()[0];
 }
@@ -78,7 +78,7 @@ TEST(TaskRunnerCheckpointTest, SaveAndRestoreFromCheckpoints) {
   for (int64_t i = 0; i < range; ++i) {
     TF_ASSERT_OK_AND_ASSIGN(iterator, dataset.MakeIterator());
     TF_ASSERT_OK(iterator->Restore(saved_iterator));
-    EXPECT_THAT(GetNext<int64_t>(*iterator), IsOkAndHolds(i));
+    EXPECT_THAT(GetNext<int64_t>(*iterator), absl_testing::IsOkAndHolds(i));
     TF_ASSERT_OK_AND_ASSIGN(saved_iterator, iterator->Save());
   }
 }
@@ -91,19 +91,22 @@ TEST(TaskRunnerCheckpointTest, EmptyDataset) {
 
   TF_ASSERT_OK_AND_ASSIGN(iterator, dataset.MakeIterator());
   TF_ASSERT_OK(iterator->Restore(saved_iterator));
-  EXPECT_THAT(GetNext<int64_t>(*iterator), StatusIs(error::OUT_OF_RANGE));
+  EXPECT_THAT(GetNext<int64_t>(*iterator),
+              absl_testing::StatusIs(error::OUT_OF_RANGE));
 }
 
 TEST(TaskRunnerCheckpointTest, EndOfSequenceIterator) {
   TestDataset dataset(testing::RangeDataset(0));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Iterator> iterator,
                           dataset.MakeIterator());
-  EXPECT_THAT(GetNext<int64_t>(*iterator), StatusIs(error::OUT_OF_RANGE));
+  EXPECT_THAT(GetNext<int64_t>(*iterator),
+              absl_testing::StatusIs(error::OUT_OF_RANGE));
 
   TF_ASSERT_OK_AND_ASSIGN(std::vector<Tensor> saved_iterator, iterator->Save());
   TF_ASSERT_OK_AND_ASSIGN(iterator, dataset.MakeIterator());
   TF_ASSERT_OK(iterator->Restore(saved_iterator));
-  EXPECT_THAT(GetNext<int64_t>(*iterator), StatusIs(error::OUT_OF_RANGE));
+  EXPECT_THAT(GetNext<int64_t>(*iterator),
+              absl_testing::StatusIs(error::OUT_OF_RANGE));
 }
 
 }  // namespace

@@ -18,10 +18,16 @@ limitations under the License.
 
 #include <functional>
 
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
-#include "xla/client/lib/prng.h"
-#include "xla/client/xla_builder.h"
+#include "xla/hlo/builder/lib/prng.h"
+#include "xla/hlo/builder/xla_builder.h"
+#include "xla/shape.h"
 #include "xla/xla_data.pb.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -67,7 +73,7 @@ DataType MaybeConvertBF16ToF32(DataType const& dtype);
 // type, in the given low and high range, where low and high are expressed in
 // XLA functions.
 absl::StatusOr<xla::XlaOp> BuildUniformRandoms(
-    XlaOpKernelContext* ctx, DataType dtype, string device_type_string,
+    XlaOpKernelContext* ctx, DataType dtype, std::string device_type_string,
     TensorShape shape,
     std::function<xla::XlaOp(xla::XlaBuilder*, xla::PrimitiveType)> lo,
     std::function<xla::XlaOp(xla::XlaBuilder*, xla::PrimitiveType)> hi);
@@ -76,7 +82,7 @@ absl::StatusOr<xla::XlaOp> BuildUniformRandoms(
 // ops.
 absl::StatusOr<xla::XlaOp> BuildUniformRandoms(XlaOpKernelContext* ctx,
                                                DataType dtype,
-                                               string device_type_string,
+                                               std::string device_type_string,
                                                xla::Shape xla_shape,
                                                xla::XlaOp lo, xla::XlaOp hi);
 }  // namespace tensorflow

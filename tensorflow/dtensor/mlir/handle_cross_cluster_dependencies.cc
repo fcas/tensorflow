@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cassert>
 #include <memory>
 #include <string>
 
@@ -22,17 +23,23 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/UseDefLists.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
+#include "mlir/IR/Visitors.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_attributes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/dtensor_dialect/ir/dialect.h"
+#include "tensorflow/dtensor/mlir/dtensor_dialect/ir/dtensor_attributes.h"
 #include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/spmd_expander_common.h"
@@ -199,8 +206,8 @@ mlir::LogicalResult HandleCopyToMeshWithinCluster(
       }
     }
     mlir::OpBuilder builder(op);
-    auto identity_op = builder.create<mlir::TF::IdentityOp>(
-        op.getLoc(), input.getType(), input);
+    auto identity_op = mlir::TF::IdentityOp::create(builder, op.getLoc(),
+                                                    input.getType(), input);
     op->getResult(0).replaceAllUsesWith(identity_op.getOutput());
     op->erase();
     return mlir::WalkResult::advance();
@@ -239,8 +246,9 @@ mlir::LogicalResult LowerToSendRecv(mlir::TF::CopyToMeshOp copy_to_mesh,
 
   // Create send op that sends data from input cluster to target cluster.
   const Mesh& target_mesh = mesh_or_status.value();
-  builder.create<mlir::TF::DTensorSend>(
-      copy_to_mesh.getLoc(), value_to_send, builder.getStringAttr(op_key),
+  mlir::TF::DTensorSend::create(
+      builder, copy_to_mesh.getLoc(), value_to_send,
+      builder.getStringAttr(op_key),
       mlir::dtensor::MeshAttr::get(context, target_mesh));
 
   // Create recv op that recvs data from send op.
@@ -251,8 +259,8 @@ mlir::LogicalResult LowerToSendRecv(mlir::TF::CopyToMeshOp copy_to_mesh,
         "CopyToMesh op must have static shape.");
 
   builder.setInsertionPoint(copy_to_mesh);
-  auto recv_op = builder.create<mlir::TF::DTensorRecv>(
-      copy_to_mesh.getLoc(), value_to_send.getType(),
+  auto recv_op = mlir::TF::DTensorRecv::create(
+      builder, copy_to_mesh.getLoc(), value_to_send.getType(),
       builder.getStringAttr(op_key),
       mlir::TF::ShapeAttr::get(context, tensor_type),
       mlir::dtensor::MeshAttr::get(context, target_mesh));
@@ -389,8 +397,9 @@ mlir::LogicalResult InsertCopyToMesh(mlir::tf_device::ClusterOp cluster) {
     if (input_mesh == mesh) continue;
     mlir::OpBuilder builder(op);
 
-    auto new_op = builder.create<mlir::TF::CopyToMeshOp>(
-        op->getLoc(), op->getResult(0).getType(), input, mesh.ToString());
+    auto new_op = mlir::TF::CopyToMeshOp::create(builder, op->getLoc(),
+                                                 op->getResult(0).getType(),
+                                                 input, mesh.ToString());
     op->replaceUsesOfWith(input, new_op.getResult());
   }
   return mlir::success();

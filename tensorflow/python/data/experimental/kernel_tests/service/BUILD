@@ -1,7 +1,22 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # tf.data service tests.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
-load("//tensorflow:tensorflow.default.bzl", "tf_py_strict_test")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -103,6 +118,24 @@ tf_py_strict_test(
         "//tensorflow/python/ops:variable_v1",
         "//tensorflow/python/ops:variables",
         "//tensorflow/python/platform:client_testlib",
+        "//tensorflow/python/platform:test",
+        "@absl_py//absl/testing:parameterized",
+    ],
+)
+
+cuda_py_strict_test(
+    name = "gpu_test",
+    srcs = ["gpu_test.py"],
+    deps = [
+        ":test_base",
+        "//tensorflow/python/data/kernel_tests:test_base",
+        "//tensorflow/python/data/ops:options",
+        "//tensorflow/python/framework:combinations",
+        "//tensorflow/python/framework:config",
+        "//tensorflow/python/framework:errors",
+        "//tensorflow/python/framework:ops",
+        "//tensorflow/python/ops:experimental_dataset_ops_gen",
+        "//tensorflow/python/platform:client_testlib",
         "@absl_py//absl/testing:parameterized",
     ],
 )
@@ -114,16 +147,20 @@ tf_py_strict_test(
     shard_count = 16,
     deps = [
         ":test_base",
+        "//tensorflow/core/protobuf:for_core_protos_py_proto",
         "//tensorflow/python/data/experimental/ops:data_service_ops",
+        "//tensorflow/python/data/experimental/service:server_lib",
         "//tensorflow/python/data/kernel_tests:test_base",
         "//tensorflow/python/data/kernel_tests:tf_record_test_base",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:readers",
         "//tensorflow/python/framework:combinations",
+        "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:errors",
         "//tensorflow/python/ops:math_ops",
         "//tensorflow/python/ops:random_ops",
         "//tensorflow/python/platform:client_testlib",
+        "@absl_py//absl/logging",
         "@absl_py//absl/testing:parameterized",
     ],
 )
@@ -143,7 +180,7 @@ tf_py_strict_test(
         "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/platform:client_testlib",
         "@absl_py//absl/testing:parameterized",
-        "@pypi_portpicker//:pkg",
+        "@pypi//portpicker",
     ],
 )
 
@@ -344,10 +381,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "multi_process_cluster",
     srcs = ["multi_process_cluster.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":test_base",
         "//tensorflow/core:protos_all_py",
@@ -379,10 +416,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "test_base",
     srcs = ["test_base.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/data/experimental/ops:data_service_ops",
@@ -402,6 +439,9 @@ tf_py_strict_test(
     size = "medium",
     srcs = ["worker_tags_test.py"],
     shard_count = 32,
+    tags = [
+        "no_oss_py313",  # TODO(b/427743382): Fix the timeout in linux_x86_cpu_wheel_py313_np1
+    ],
     deps = [
         ":multi_process_cluster",
         ":test_base",

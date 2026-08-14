@@ -311,7 +311,7 @@ inline int GetFilterTensorOutputChannelsDimIndex(int num_dims,
 // If 'format' is NCHW_VECT_C and 'dimension' is 'C', returns the index of
 // the outer channel dimension (i.e. 1).
 template <int NUM_SPATIAL_DIMS>
-inline int32 GetTensorDimIndex(TensorFormat format, char dimension) {
+inline int32_t GetTensorDimIndex(TensorFormat format, char dimension) {
   if (format == FORMAT_NHWC || format == FORMAT_NHWC_VECT_W) {
     // clang-format off
     switch (dimension) {
@@ -416,12 +416,12 @@ inline int GetFilterDimIndex(FilterTensorFormat filter_tensor_format,
   // clang-format on
 }
 
-inline int32 GetTensorDimIndex(TensorFormat format, char dimension) {
+inline int32_t GetTensorDimIndex(TensorFormat format, char dimension) {
   return GetTensorDimIndex<2>(format, dimension);
 }
 
-inline int32 GetTensorDimIndex(TensorFormat format, char dimension,
-                               int num_total_dims) {
+inline int32_t GetTensorDimIndex(TensorFormat format, char dimension,
+                                 int num_total_dims) {
   int32_t index = (GetTensorSpatialDims(num_total_dims, format) == 3)
                       ? GetTensorDimIndex<3>(format, dimension)
                       : GetTensorDimIndex<2>(format, dimension);
@@ -520,9 +520,9 @@ std::string GetConvnetDataFormat2D3DAttrString();
 // FORMAT_NCHW:        (N, C, spatial); rank = spatial.size() + 2
 // FORMAT_NCHW_VECT_C: (N, C, spatial, InnerC); rank = spatial.size() + 3
 // FORMAT_NHWC_VECT_W: (N, spatial, C, InnerW); rank = spatial.size() + 3
-inline Status ShapeFromFormatWithStatus(TensorFormat format, int64_t N,
-                                        absl::Span<const int64_t> spatial,
-                                        int64_t C, TensorShape* shape) {
+inline absl::Status ShapeFromFormatWithStatus(TensorFormat format, int64_t N,
+                                              absl::Span<const int64_t> spatial,
+                                              int64_t C, TensorShape* shape) {
   const int dims = GetTensorDimsFromSpatialDims(spatial.size(), format);
   absl::InlinedVector<int64_t, 6UL> dim_sizes(dims);
   dim_sizes[GetTensorBatchDimIndex(dims, format)] = N;
@@ -583,9 +583,9 @@ inline TensorShape ShapeFromFilterTensorFormat(
 }
 
 // Return a tensor shape of the specified 'format', and dimensions.
-inline Status ShapeFromFormatWithStatus(TensorFormat format, int64_t N,
-                                        int64_t H, int64_t W, int64_t C,
-                                        TensorShape* shape) {
+inline absl::Status ShapeFromFormatWithStatus(TensorFormat format, int64_t N,
+                                              int64_t H, int64_t W, int64_t C,
+                                              TensorShape* shape) {
   return ShapeFromFormatWithStatus(format, N, {H, W}, C, shape);
 }
 
@@ -606,10 +606,10 @@ inline TensorShape ShapeFromFilterTensorFormat(FilterTensorFormat format,
 
 // Returns a copy of the specified tensor 'src_shape' converted from
 // 'src_format' to 'dst_format'.
-inline Status ShapeFromFormatWithStatus(TensorFormat dst_format,
-                                        const TensorShape& src_shape,
-                                        TensorFormat src_format,
-                                        TensorShape* shape) {
+inline absl::Status ShapeFromFormatWithStatus(TensorFormat dst_format,
+                                              const TensorShape& src_shape,
+                                              TensorFormat src_format,
+                                              TensorShape* shape) {
   if (src_format == dst_format) {
     *shape = src_shape;
     return absl::OkStatus();

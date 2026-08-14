@@ -22,7 +22,6 @@ limitations under the License.
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/kernels/cpu_backend_context.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
-#include "tensorflow/lite/kernels/internal/kernel_utils.h"
 #include "tensorflow/lite/kernels/internal/tensor_utils.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/lstm_eval.h"
@@ -126,7 +125,7 @@ constexpr int kBwAuxInputToOutputWeightsTensor = 47;  // Optional
 constexpr int kFwOutputTensor = 0;
 constexpr int kBwOutputTensor = 1;  // Ignored if merge_outputs is set.
 
-// LINT.ThenChange(//tensorflow/lite/tools/optimize/quantize_weights.cc)
+// LINT.ThenChange(//tensorflow/compiler/mlir/lite/quantization/lite/toco_legacy/quantize_weights.cc)
 
 // Temporary tensors.
 enum TemporaryTensor {
@@ -320,7 +319,7 @@ TfLiteStatus CheckLstmTensorDimensionsAndTypes(
   const TfLiteTensor* input_gate_bias =
       GetOptionalInputTensor(context, node, input_gate_bias_tensor);
   if (use_cifg) {
-    TF_LITE_ENSURE_EQ(context, input_gate_bias, nullptr);
+    TF_LITE_ENSURE(context, input_gate_bias == nullptr);
   } else {
     TF_LITE_ENSURE_EQ(context, input_gate_bias->dims->size, 1);
     TF_LITE_ENSURE_EQ(context, input_gate_bias->dims->data[0], n_cell);
@@ -543,8 +542,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   // These tensor may be 1D or 2D. It's fine as long as the total size is
   // correct.
   TF_LITE_ENSURE_EQ(context, NumElements(fw_activation_state),
-                    n_batch * n_fw_output);
-  TF_LITE_ENSURE_EQ(context, NumElements(fw_cell_state), n_batch * n_fw_cell);
+                    static_cast<int64_t>(n_batch) * n_fw_output);
+  TF_LITE_ENSURE_EQ(context, NumElements(fw_cell_state),
+                    static_cast<int64_t>(n_batch) * n_fw_cell);
 
   // Resize the output tensors.
   TfLiteIntArray* fw_output_size = TfLiteIntArrayCreate(3);
@@ -626,8 +626,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   // These tensor may be 1D or 2D. It's fine as long as the total size is
   // correct.
   TF_LITE_ENSURE_EQ(context, NumElements(bw_activation_state),
-                    n_batch * n_bw_output);
-  TF_LITE_ENSURE_EQ(context, NumElements(bw_cell_state), n_batch * n_bw_cell);
+                    static_cast<int64_t>(n_batch) * n_bw_output);
+  TF_LITE_ENSURE_EQ(context, NumElements(bw_cell_state),
+                    static_cast<int64_t>(n_batch) * n_bw_cell);
 
   // Create a scratch buffer tensor.
   node->temporaries->data[kBwScratchBuffer] =

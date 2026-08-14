@@ -15,7 +15,6 @@ limitations under the License.
 #include "tensorflow/core/tfrt/mlrt/kernel/kernel.h"
 
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -25,25 +24,44 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
+#include "tensorflow/core/framework/common_shape_fns.h"
 #include "tensorflow/core/framework/device.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/platform/threadpool_interface.h"
+#include "tensorflow/core/platform/tstring.h"
+#include "tensorflow/core/public/session_options.h"
+#include "tensorflow/core/runtime_fallback/kernel/kernel_fallback_compat_request_state.h"
 #include "tensorflow/core/tfrt/fallback/device_with_custom_allocator.h"
 #include "tensorflow/core/tfrt/fallback/fallback_state.h"
+#include "tensorflow/core/tfrt/fallback/op_kernel_runner.h"
+#include "tensorflow/core/tfrt/mlrt/bytecode/bytecode.h"
 #include "tensorflow/core/tfrt/mlrt/bytecode/executable.h"
+#include "tensorflow/core/tfrt/mlrt/interpreter/context.h"
 #include "tensorflow/core/tfrt/mlrt/interpreter/execute.h"
 #include "tensorflow/core/tfrt/mlrt/interpreter/future.h"
 #include "tensorflow/core/tfrt/mlrt/interpreter/interpreter_testutil.h"
-#include "tensorflow/core/tfrt/mlrt/kernel/batch_kernel.h"
+#include "tensorflow/core/tfrt/mlrt/interpreter/value.h"
 #include "tensorflow/core/tfrt/mlrt/kernel/context.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status_matchers.h"
+#include "tensorflow/core/tfrt/utils/fallback_tensor.h"
 #include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 #include "tfrt/host_context/concurrent_work_queue.h"  // from @tf_runtime
 #include "tfrt/host_context/execution_context.h"  // from @tf_runtime
+#include "tfrt/host_context/resource_context.h"  // from @tf_runtime
+#include "tfrt/support/forward_decls.h"  // from @tf_runtime
+#include "tfrt/support/ref_count.h"  // from @tf_runtime
 
 namespace tensorflow {
 namespace tf_mlrt {
@@ -53,6 +71,20 @@ struct TestOp : mlrt::KernelFrame {
   static constexpr char kName[] = "test";
   using KernelFrame::KernelFrame;
   void Invoke() {}
+};
+
+class DummyThreadPool : public tensorflow::thread::ThreadPoolInterface {
+ public:
+  explicit DummyThreadPool(tfrt::ConcurrentWorkQueue* work_queue)
+      : work_queue_(work_queue) {}
+  void Schedule(std::function<void()> fn) override {
+    work_queue_->AddTask(std::move(fn));
+  }
+  int NumThreads() const override { return 4; }
+  int CurrentThreadId() const override { return 0; }
+
+ private:
+  tfrt::ConcurrentWorkQueue* work_queue_;
 };
 
 TEST(KernelTest, OptionalRegistry) {
@@ -399,8 +431,52 @@ TEST(KernelTest, CreateExecuteOpError) {
 
   EXPECT_THAT(
       execution_context.status(),
-      ::tsl::testing::StatusIs(absl::StatusCode::kInternal, "test error"));
+      absl_testing::StatusIs(absl::StatusCode::kInternal,
+                             "test error\n\tError from kernel: TestError"));
 }
+
+REGISTER_OP("TestRaceAsync")
+    .Input("x: T")
+    .Output("y: T")
+    .Attr("T: {int32}")
+    .SetShapeFn(::tensorflow::shape_inference::UnchangedShape);
+
+class TestRaceAsyncKernel : public AsyncOpKernel {
+ public:
+  explicit TestRaceAsyncKernel(OpKernelConstruction* context)
+      : AsyncOpKernel(context) {}
+
+  static absl::Notification* start_notification_;
+  static absl::Notification* done_notification_;
+
+  void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
+    DCHECK(ctx->device()->tensorflow_cpu_worker_threads()->workers);
+    ctx->device()->tensorflow_cpu_worker_threads()->workers->Schedule(
+        [done = std::move(done), ctx]() {
+          if (start_notification_) {
+            start_notification_->WaitForNotification();
+          }
+          // Access device to trigger UAF if it was deleted
+          (void)ctx->device()->name();
+          const Tensor& x = ctx->input(0);
+          ctx->set_output(0, x);
+          done();
+          if (done_notification_) {
+            done_notification_->Notify();
+          }
+        });
+  }
+
+ private:
+  TestRaceAsyncKernel(const TestRaceAsyncKernel&) = delete;
+  void operator=(const TestRaceAsyncKernel&) = delete;
+};
+
+absl::Notification* TestRaceAsyncKernel::start_notification_ = nullptr;
+absl::Notification* TestRaceAsyncKernel::done_notification_ = nullptr;
+
+REGISTER_KERNEL_BUILDER(Name("TestRaceAsync").Device(DEVICE_CPU),
+                        TestRaceAsyncKernel);
 
 REGISTER_OP("TestAsyncIdentity")
     .Input("x: T")
@@ -583,6 +659,171 @@ TEST(KernelTest, CreateAsyncExecuteOp) {
       results[1].Get<tfrt_stub::FallbackTensor>().tensor(), expected);
 }
 
+mlrt::bc::Buffer CreateExecutableForCreateRaceAsyncExecuteOp() {
+  mlrt::bc::Buffer buffer;
+  mlrt::bc::Allocator allocator(&buffer);
+
+  auto executable_ctor = mlrt::bc::New<mlrt::bc::Executable>(&allocator);
+
+  mlrt::testing::SymbolTable kernels;
+
+  std::vector<std::string> kernel_names = {"tf_mlrt.createop",
+                                           "tf_mlrt.async_executeop", "return"};
+
+  executable_ctor.construct_kernel_names(kernel_names.size())
+      .Assign(kernel_names);
+  kernels.Def(kernel_names);
+
+  mlrt::testing::AttributeTable attributes(
+      executable_ctor.construct_attributes(2));
+
+  attributes.Add("node_def_str",
+                 R"pb(name: "TestRaceAsync"
+                      op: "TestRaceAsync"
+                      input: "dummy_arg"
+                      device: "/job:localhost/replica:0/task:0/device:CPU:0"
+                      attr {
+                        key: "T"
+                        value { type: DT_INT32 }
+                      })pb");
+
+  attributes.Add("op_key", 0);
+
+  auto functions_ctor = executable_ctor.construct_functions(1);
+  auto function_ctor = functions_ctor.ConstructAt(0);
+  function_ctor.construct_name("main");
+
+  mlrt::testing::SymbolTable regs;
+
+  function_ctor.construct_input_regs(1).Assign({regs.Def("input")});
+
+  auto kernels_ctor = function_ctor.construct_kernels(3);
+
+  {
+    auto kernel_ctor = kernels_ctor.ConstructAt(0);
+    kernel_ctor.set_code(kernels.Use("tf_mlrt.createop"));
+    kernel_ctor.construct_attributes(2).Assign(
+        {attributes.GetHandle("node_def_str"), attributes.GetHandle("op_key")});
+  }
+
+  {
+    auto kernel_ctor = kernels_ctor.ConstructAt(1);
+    kernel_ctor.set_code(kernels.Use("tf_mlrt.async_executeop"));
+    kernel_ctor.construct_arguments(2).Assign(regs.Use({"input", "input"}));
+    kernel_ctor.construct_results(1).Assign({regs.Def("result_future_0")});
+    kernel_ctor.construct_attributes(2).Assign(
+        {attributes.GetHandle("node_def_str"), attributes.GetHandle("op_key")});
+    kernel_ctor.construct_last_uses(2).Assign({0, 0});
+  }
+
+  {
+    auto kernel_ctor = kernels_ctor.ConstructAt(2);
+    kernel_ctor.set_code(kernels.Use("return"));
+    kernel_ctor.construct_arguments(1).Assign(regs.Use({"result_future_0"}));
+  }
+
+  function_ctor.set_num_regs(regs.size());
+  function_ctor.construct_output_regs(1).Assign(regs.Use({"result_future_0"}));
+
+  return buffer;
+}
+
+TEST(KernelTest, CreateAsyncExecuteOpWithCustomDeviceAndTeardownRace) {
+  auto buffer = CreateExecutableForCreateRaceAsyncExecuteOp();
+
+  mlrt::bc::Executable executable(buffer.data());
+
+  mlrt::KernelRegistry registry;
+  RegisterTfMlrtKernels(registry);
+  mlrt::LoadedExecutable loaded_executable(executable, registry);
+
+  auto work_queue = tfrt::CreateMultiThreadedWorkQueue(
+      /*num_threads=*/4, /*num_blocking_threads=*/4);
+  mlrt::ExecutionContext execution_context(&loaded_executable);
+  execution_context.set_work_queue(work_queue.get());
+
+  tensorflow::SessionOptions session_options;
+  tensorflow::FunctionDefLibrary fdef_lib;
+  TF_ASSERT_OK_AND_ASSIGN(auto fallback_state, tfrt_stub::FallbackState::Create(
+                                                   session_options, fdef_lib));
+
+  std::function<void(std::function<void()>)> runner =
+      [](const std::function<void()>& f) { f(); };
+  tfrt_stub::OpKernelRunnerTable runner_table;
+  tfd::FallbackResourceArray resource_array;
+
+  // We wrap fallback_request_state in a shared_ptr so we can explicitly manage
+  // its lifetime in the test.
+  // Create custom threadpool to trigger RenamedDevice wrapper creation.
+  auto dummy_threadpool = std::make_unique<DummyThreadPool>(work_queue.get());
+
+  auto fallback_request_state =
+      std::make_shared<tfd::KernelFallbackCompatRequestState>(
+          &runner, &fallback_state->device_manager(), /*step_id=*/0,
+          &runner_table, &resource_array, dummy_threadpool.get(),
+          /*model_metadata=*/std::nullopt,
+          &fallback_state->process_function_library_runtime());
+
+  tfrt::ResourceContext resource_context;
+
+  auto tf_context = std::make_unique<Context>(fallback_request_state.get(),
+                                              &resource_context);
+
+  auto& params = tf_context->params();
+  // We use a shared_ptr in the test to simulate RequestContext refcounting.
+  // inc_num_deferred_ops_function will keep a copy of the shared_ptr alive.
+  // dec_num_deferred_ops_function will release it.
+  std::shared_ptr<tfd::KernelFallbackCompatRequestState> async_keep_alive;
+  std::weak_ptr<tfd::KernelFallbackCompatRequestState> weak_state =
+      fallback_request_state;
+  params.inc_num_deferred_ops_function = [&async_keep_alive, weak_state]() {
+    async_keep_alive = weak_state.lock();
+  };
+  params.dec_num_deferred_ops_function = [&async_keep_alive]() {
+    async_keep_alive.reset();
+  };
+
+  execution_context.AddUserContext(std::move(tf_context));
+
+  int32_t input = 100;
+  tensorflow::Tensor input_tensor(input);
+  mlrt::Value arg(tfrt_stub::FallbackTensor(std::move(input_tensor)));
+  std::vector<mlrt::Value> results(1);
+
+  absl::Notification start_notification;
+  absl::Notification done_notification;
+  TestRaceAsyncKernel::start_notification_ = &start_notification;
+  TestRaceAsyncKernel::done_notification_ = &done_notification;
+
+  std::vector<uint8_t> last_uses = {true};
+  execution_context.Call(executable.functions()[0], last_uses,
+                         absl::MakeSpan(&arg, 1), absl::MakeSpan(results));
+
+  // This will launch the async op, but it will immediately block on
+  // start_notification. Since the fix is active, this will also invoke
+  // inc_num_deferred_ops_function(), storing a copy of fallback_request_state
+  // inside async_keep_alive.
+  mlrt::Execute(execution_context);
+
+  // Now, while the async op is still blocked in the background thread,
+  // we release the main reference to the request state.
+  // If the fix worked, it should remain alive because async_keep_alive holds
+  // it. If the fix is disabled, it will be deleted here and crash when
+  // released.
+  fallback_request_state.reset();
+
+  // Now let the background thread proceed. It will try to access the deleted
+  // device.
+  start_notification.Notify();
+
+  // Wait for it to finish. Under ASAN/GWP-ASan, this should crash!
+  done_notification.WaitForNotification();
+
+  // Reset statics
+  TestRaceAsyncKernel::start_notification_ = nullptr;
+  TestRaceAsyncKernel::done_notification_ = nullptr;
+}
+
 TEST(KernelTest, AsyncExecuteOpCanCancell) {
   auto buffer = CreateExecutableForCreateAsyncExecuteOp();
 
@@ -640,7 +881,7 @@ TEST(KernelTest, AsyncExecuteOpCanCancell) {
   notification.WaitForNotification();
 
   EXPECT_THAT(execution_context.status(),
-              ::tsl::testing::StatusIs(absl::StatusCode::kCancelled));
+              absl_testing::StatusIs(absl::StatusCode::kCancelled));
 }
 
 mlrt::bc::Buffer CreateExecutableForSetGetResourceOp() {
@@ -829,8 +1070,8 @@ TEST(KernelTest, Predicate) {
   mlrt::Execute(execution_context);
   EXPECT_THAT(
       execution_context.status(),
-      ::tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument,
-                               "variant cannot be converted to a boolean"));
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             "variant cannot be converted to a boolean"));
 }
 
 mlrt::bc::Buffer CreateExecutableForPromiseAwaitOps() {
@@ -1214,260 +1455,6 @@ TEST(KernelTest, PromiseFutureOp) {
       results[1].Get<tfrt_stub::FallbackTensor>().tensor(), expected);
 }
 
-mlrt::bc::Buffer CreateExecutableForBatchFunctionOp() {
-  mlrt::bc::Buffer buffer;
-  mlrt::bc::Allocator allocator(&buffer);
-
-  auto executable_ctor = mlrt::bc::New<mlrt::bc::Executable>(&allocator);
-
-  mlrt::testing::SymbolTable kernels;
-
-  std::vector<std::string> kernel_names = {
-      "tf_mlrt.createop", "tf_mlrt.executeop", "tf_mlrt.batch_function",
-      "tf_mlrt.await", "return"};
-
-  executable_ctor.construct_kernel_names(kernel_names.size())
-      .Assign(kernel_names);
-  kernels.Def(kernel_names);
-
-  mlrt::testing::AttributeTable attributes(
-      executable_ctor.construct_attributes(5));
-
-  attributes.Add("node_def_str",
-                 R"pb(name: "AddV2"
-                      op: "AddV2"
-                      input: "dummy_arg"
-                      input: "dummy_arg"
-                      device: "/job:localhost/replica:0/task:0/device:CPU:0"
-                      attr {
-                        key: "T"
-                        value { type: DT_INT32 }
-                      })pb");
-
-  attributes.Add("op_key", 0);
-
-  attributes.Add("func_idx", 1);
-
-  // attributes[3] is NodeDef for batch function.
-  attributes.Add("batch_node_def_str",
-                 R"pb(name: "BatchFunction"
-                      op: "MlrtBatchFunction"
-                      input: "dummy_arg"
-                      input: "dummy_arg"
-                      device: "/job:localhost/replica:0/task:0/device:CPU:0"
-                      attr {
-                        key: "num_batch_threads"
-                        value: { i: 16 }
-                      }
-                      attr {
-                        key: "max_batch_size"
-                        value { i: 1 }
-                      }
-                      attr {
-                        key: "allowed_batch_sizes"
-                        value { list { i: 1 } }
-                      }
-                      attr {
-                        key: "batch_timeout_micros"
-                        value { i: 0 }
-                      }
-                      attr {
-                        key: "low_priority_max_batch_size"
-                        value { i: 1 }
-                      }
-                      attr {
-                        key: "low_priority_batch_timeout_micros"
-                        value { i: 0 }
-                      }
-                      attr {
-                        key: "low_priority_allowed_batch_sizes"
-                        value { list { i: 1 } }
-                      }
-                      attr {
-                        key: "low_priority_max_enqueued_batches"
-                        value { i: 1 }
-                      }
-                      attr {
-                        key: "mixed_priority_policy"
-                        value { s: "low_priority_padding_with_max_batch_size" }
-                      }
-                      attr {
-                        key: "container"
-                        value { s: "container" }
-                      }
-                      attr {
-                        key: "shared_name"
-                        value { s: "shared_name" }
-                      }
-                      attr {
-                        key: "batching_queue"
-                        value { s: "batching_queue" }
-                      }
-                      attr {
-                        key: "enable_large_batch_splitting"
-                        value { b: false }
-                      }
-                      attr {
-                        key: "Tin"
-                        value { list { type: DT_INT32 type: DT_INT32 } }
-                      }
-                      attr {
-                        key: "Tcaptured"
-                        value { list {} }
-                      }
-                      attr {
-                        key: "Tout"
-                        value { list { type: DT_INT32 } }
-                      })pb");
-
-  attributes.Add("device", "/device:CPU:0");
-
-  auto functions_ctor = executable_ctor.construct_functions(2);
-
-  {
-    auto function_ctor = functions_ctor.ConstructAt(0);
-    function_ctor.construct_name("main");
-
-    mlrt::testing::SymbolTable regs;
-
-    function_ctor.construct_input_regs(1).Assign({regs.Def("input")});
-
-    auto kernels_ctor = function_ctor.construct_kernels(4);
-
-    {
-      auto kernel_ctor = kernels_ctor.ConstructAt(0);
-      kernel_ctor.set_code(kernels.Use("tf_mlrt.createop"));
-      kernel_ctor.construct_attributes(2).Assign(
-          {attributes.GetHandle("node_def_str"),
-           attributes.GetHandle("op_key")});
-    }
-
-    {
-      auto kernel_ctor = kernels_ctor.ConstructAt(1);
-      kernel_ctor.set_code(kernels.Use("tf_mlrt.batch_function"));
-      kernel_ctor.construct_arguments(2).Assign(regs.Use({"input", "input"}));
-      kernel_ctor.construct_results(1).Assign({regs.Def("result_future")});
-      kernel_ctor.construct_attributes(3).Assign(
-          {attributes.GetHandle("device"), attributes.GetHandle("func_idx"),
-           attributes.GetHandle("batch_node_def_str")});
-      kernel_ctor.construct_last_uses(2).Assign({0, 0});
-    }
-
-    {
-      auto kernel_ctor = kernels_ctor.ConstructAt(2);
-      kernel_ctor.set_code(kernels.Use("tf_mlrt.await"));
-      kernel_ctor.construct_arguments(1).Assign({regs.Use("result_future")});
-      kernel_ctor.construct_last_uses(1).Assign({true});
-      kernel_ctor.construct_results(1).Assign({regs.Def("result")});
-    }
-
-    {
-      auto kernel_ctor = kernels_ctor.ConstructAt(3);
-      kernel_ctor.set_code(kernels.Use("return"));
-      kernel_ctor.construct_arguments(1).Assign({regs.Use("result")});
-    }
-
-    function_ctor.set_num_regs(regs.size());
-    function_ctor.construct_output_regs(1).Assign({regs.Use("result")});
-  }
-
-  {
-    auto function_ctor = functions_ctor.ConstructAt(1);
-    function_ctor.construct_name("batch_function");
-
-    mlrt::testing::SymbolTable regs;
-
-    function_ctor.construct_input_regs(2).Assign(
-        regs.Def(absl::Span<const std::string>{"input_0", "input_1"}));
-
-    auto kernels_ctor = function_ctor.construct_kernels(2);
-
-    {
-      auto kernel_ctor = kernels_ctor.ConstructAt(0);
-      kernel_ctor.set_code(kernels.Use("tf_mlrt.executeop"));
-      kernel_ctor.construct_arguments(2).Assign(
-          regs.Use({"input_0", "input_1"}));
-      kernel_ctor.construct_attributes(2).Assign(
-          {attributes.GetHandle("node_def_str"),
-           attributes.GetHandle("op_key")});
-      kernel_ctor.construct_results(1).Assign({regs.Def("result")});
-      kernel_ctor.construct_last_uses(2).Assign({0, 0});
-    }
-
-    {
-      auto kernel_ctor = kernels_ctor.ConstructAt(1);
-      kernel_ctor.set_code(kernels.Use("return"));
-      kernel_ctor.construct_arguments(1).Assign({regs.Use("result")});
-    }
-
-    function_ctor.set_num_regs(regs.size());
-    function_ctor.construct_output_regs(1).Assign({regs.Use("result")});
-  }
-
-  return buffer;
-}
-
-TEST(KernelTest, BatchFunctionOp) {
-  auto buffer = CreateExecutableForBatchFunctionOp();
-
-  mlrt::bc::Executable executable(buffer.data());
-
-  mlrt::KernelRegistry registry;
-  RegisterTfMlrtKernels(registry);
-  RegisterTfMlrtBatchKernels(registry);
-  mlrt::LoadedExecutable loaded_executable(executable, registry);
-
-  auto work_queue = tfrt::CreateMultiThreadedWorkQueue(
-      /*num_threads=*/4, /*num_blocking_threads=*/4);
-  mlrt::ExecutionContext execution_context(&loaded_executable);
-  execution_context.set_work_queue(work_queue.get());
-
-  tensorflow::SessionOptions session_options;
-  tensorflow::FunctionDefLibrary fdef_lib;
-  TF_ASSERT_OK_AND_ASSIGN(auto fallback_state, tfrt_stub::FallbackState::Create(
-                                                   session_options, fdef_lib));
-
-  std::function<void(std::function<void()>)> runner =
-      [](const std::function<void()>& f) { f(); };
-  tfrt_stub::OpKernelRunnerTable runner_table;
-  tfd::FallbackResourceArray resource_array;
-  tfd::KernelFallbackCompatRequestState fallback_request_state(
-      &runner, &fallback_state->device_manager(), /*step_id=*/0, &runner_table,
-      &resource_array, /*user_intra_op_threadpool=*/nullptr,
-      /*model_metadata=*/std::nullopt,
-      &fallback_state->process_function_library_runtime());
-
-  tfrt::ResourceContext resource_context;
-
-  auto tf_context =
-      std::make_unique<Context>(&fallback_request_state, &resource_context);
-  execution_context.AddUserContext(std::move(tf_context));
-
-  tensorflow::Tensor input_tensor(tensorflow::DT_INT32, {1});
-  input_tensor.flat<int32_t>()(0) = 100;
-  mlrt::Value arg(tfrt_stub::FallbackTensor(std::move(input_tensor)));
-  mlrt::Value result;
-
-  absl::Notification notification;
-  execution_context.set_exit_handler(
-      [&notification]() { notification.Notify(); });
-
-  std::vector<uint8_t> last_uses = {true};
-  execution_context.Call(executable.functions()[0], last_uses,
-                         absl::MakeSpan(&arg, 1), absl::MakeSpan(&result, 1));
-  mlrt::Execute(execution_context);
-
-  notification.WaitForNotification();
-
-  TF_ASSERT_OK(execution_context.status());
-
-  tensorflow::Tensor expected(tensorflow::DT_INT32, {1});
-  expected.flat<int32_t>()(0) = 200;
-
-  tensorflow::test::ExpectEqual(
-      result.Get<tfrt_stub::FallbackTensor>().tensor(), expected);
-}
-
 mlrt::bc::Buffer CreateExecutableForCancelOp() {
   mlrt::bc::Buffer buffer;
   mlrt::bc::Allocator allocator(&buffer);
@@ -1571,7 +1558,7 @@ TEST(KernelTest, CancelCanEarlyReturn) {
   notification.WaitForNotification();
 
   EXPECT_THAT(execution_context.status(),
-              ::tsl::testing::StatusIs(absl::StatusCode::kCancelled));
+              absl_testing::StatusIs(absl::StatusCode::kCancelled));
   EXPECT_EQ(result.HasValue(), false);
 }
 
@@ -1780,12 +1767,12 @@ TEST(KernelTest, CancelInAsyncCanEarlyReturn) {
   notification.WaitForNotification();
 
   EXPECT_THAT(execution_context.status(),
-              ::tsl::testing::StatusIs(absl::StatusCode::kCancelled));
+              absl_testing::StatusIs(absl::StatusCode::kCancelled));
 
   ASSERT_TRUE(future.IsError());
 
   EXPECT_THAT(future.GetError(),
-              ::tsl::testing::StatusIs(absl::StatusCode::kCancelled));
+              absl_testing::StatusIs(absl::StatusCode::kCancelled));
 }
 
 mlrt::bc::Buffer CreateExecutableForTensorToInt32Op() {
@@ -1860,8 +1847,8 @@ TEST(KernelTest, TensorToInt32) {
     mlrt::Execute(execution_context);
     EXPECT_THAT(
         execution_context.status(),
-        ::tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument,
-                                 "variant cannot be converted to a int32"));
+        absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                               "variant cannot be converted to a int32"));
   }
 }
 
@@ -2246,8 +2233,8 @@ TEST(KernelTest, MapFnOpError) {
   notification.WaitForNotification();
 
   EXPECT_THAT(execution_context.status(),
-              ::tsl::testing::StatusIs(absl::StatusCode::kInternal,
-                                       "Test Error. First Error Index=0 of 1"));
+              absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                     "Test Error. First Error Index=0 of 1"));
 }
 
 TEST(KernelTest, MapFnOpErrorWithPromiseSet) {
@@ -2322,7 +2309,7 @@ TEST(KernelTest, MapFnOpErrorWithPromiseSet) {
 
   EXPECT_THAT(
       execution_context.status(),
-      ::tsl::testing::StatusIs(absl::StatusCode::kInternal, "Test Error"));
+      absl_testing::StatusIs(absl::StatusCode::kInternal, "Test Error"));
 }
 
 mlrt::bc::Buffer CreatePromiseReturnExecutable() {
@@ -2405,7 +2392,11 @@ TEST(KernelTest, PromiseReturn) {
 
   mlrt::LoadedExecutable loaded_executable(executable, registry);
 
+  auto work_queue = tfrt::CreateMultiThreadedWorkQueue(
+      /*num_threads=*/1, /*num_blocking_threads=*/1);
+
   mlrt::ExecutionContext consumer_context(&loaded_executable);
+  consumer_context.set_work_queue(work_queue.get());
 
   absl::Notification notification;
   consumer_context.set_exit_handler(
@@ -2439,7 +2430,7 @@ TEST(KernelTest, PromiseReturn) {
     mlrt::Execute(producer_context);
   }
 
-  ASSERT_TRUE(notification.HasBeenNotified());
+  notification.WaitForNotification();
   tensorflow::test::ExpectEqual(
       output.Get<tfrt_stub::FallbackTensor>().tensor(), expected);
 }
@@ -2722,7 +2713,7 @@ TEST(KernelTest, AsyncWhileOpError) {
   notification.WaitForNotification();
   EXPECT_THAT(
       execution_context.status(),
-      ::tsl::testing::StatusIs(absl::StatusCode::kInternal, "Test error"));
+      absl_testing::StatusIs(absl::StatusCode::kInternal, "Test error"));
 }
 
 }  // namespace

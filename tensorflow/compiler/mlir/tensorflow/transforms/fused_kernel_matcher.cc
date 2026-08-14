@@ -13,10 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdio>
-#include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
@@ -228,8 +230,8 @@ class FuseContractionWithBiasAdd : public OpRewritePattern<SrcOpT> {
     auto *bias_add_op = bias_add.getOperation();
     if (bias_add_op) rewriter.setInsertionPoint(bias_add_op);
 
-    Value fused_op = rewriter.create<FusedOpT>(fused_loc, result_type,
-                                               ValueRange(operands), attrs);
+    Value fused_op = FusedOpT::create(rewriter, fused_loc, result_type,
+                                      ValueRange(operands), attrs);
     auto op_to_replace = fuse_activation ? activation : bias_add;
     rewriter.replaceOp(op_to_replace, ValueRange({fused_op}));
     return success();
@@ -360,7 +362,7 @@ void FusedKernelMatcherPass::runOnOperation() {
   auto func = getOperation();
   patterns.add<FuseConv2DBiasAdd, FuseMatMulBiasAdd>(&getContext());
 
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 }
 
 }  // namespace

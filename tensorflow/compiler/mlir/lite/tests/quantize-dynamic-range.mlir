@@ -1,10 +1,24 @@
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range -tfl-quantize="enable-dynamic-range-quantization=true" | FileCheck %s
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range -tfl-quantize="enable-dynamic-range-quantization=true enable-weight-only-quantization=true" | FileCheck --check-prefix=PerChannelWeightOnly %s
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range="enable-dynamic-range-per-channel-quantization=false" -tfl-quantize="enable-dynamic-range-quantization=true" | FileCheck --check-prefix=PerTensor %s
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range="enable-dynamic-range-per-channel-quantization=false" -tfl-quantize="enable-dynamic-range-quantization=true enable-weight-only-quantization=true" | FileCheck --check-prefix=PerTensorWeightOnly %s
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range="enable-dynamic-range-per-channel-quantization=false" -tfl-quantize="enable-dynamic-range-quantization=true ops-blocklist=tfl.conv_2d" | FileCheck --check-prefix=BLOCK %s
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range="enable-custom-op-quantization=CustomTestOp=1" -tfl-quantize="enable-dynamic-range-quantization=true enable-custom-op-weight-only=CustomTestOp=true" | FileCheck --check-prefix=CustomOpWeightOnly %s
-// RUN: tf-opt %s -tfl-prepare-quantize-dynamic-range="enable-custom-op-quantization=CustomTestOp=1" -tfl-quantize="enable-dynamic-range-quantization=true enable-custom-op-weight-only=CustomTestOp=false" | FileCheck --check-prefix=CustomOpNotWeightOnly %s
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range -tfl-quantize="enable-dynamic-range-quantization=true" | FileCheck %s
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range -tfl-quantize="enable-dynamic-range-quantization=true enable-weight-only-quantization=true" | FileCheck --check-prefix=PerChannelWeightOnly %s
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range="enable-dynamic-range-per-channel-quantization=false" -tfl-quantize="enable-dynamic-range-quantization=true" | FileCheck --check-prefix=PerTensor %s
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range="enable-dynamic-range-per-channel-quantization=false" -tfl-quantize="enable-dynamic-range-quantization=true enable-weight-only-quantization=true" | FileCheck --check-prefix=PerTensorWeightOnly %s
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range="enable-dynamic-range-per-channel-quantization=false" -tfl-quantize="enable-dynamic-range-quantization=true ops-blocklist=tfl.conv_2d" | FileCheck --check-prefix=BLOCK %s
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range="enable-custom-op-quantization=CustomTestOp=1" -tfl-quantize="enable-dynamic-range-quantization=true enable-custom-op-weight-only=CustomTestOp=true" | FileCheck --check-prefix=CustomOpWeightOnly %s
+// RUN: litert-opt %s -tfl-prepare-quantize-dynamic-range="enable-custom-op-quantization=CustomTestOp=1" -tfl-quantize="enable-dynamic-range-quantization=true enable-custom-op-weight-only=CustomTestOp=false" | FileCheck --check-prefix=CustomOpNotWeightOnly %s
 
 // CHECK-LABEL: QuantizeConv2D
 // PerTensor-LABEL: QuantizeConv2D
@@ -149,32 +163,28 @@ func.func @QuantizeTransposeConvWeightOnly(%arg0: tensor<32x4x4x128xf32>, %arg1:
 
 // CHECK: %[[b:.*]] = arith.constant dense<0.000000e+00> : tensor<1x32x42x128xf32>
 // CHECK: %[[w:.*]] = "tfl.pseudo_qconst"() <{qtype = tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32:0, {1.000000e+00}>>
-// CHECK: %[[dq_w:.*]] = "tfl.dequantize"(%[[w]]) : (tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32:0, {1.000000e+00}>>) -> tensor<1x32x42x128xf32>
-// CHECK: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[dq_w]], %arg0, %[[b]]) <{
+// CHECK: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[w:.*]], %arg0, %[[b]]) <{
 // CHECK-NOT: asymmetric_quantize_inputs = true
 // CHECK-SAME: padding = "SAME"
 // CHECK: return %[[tconv:.*]]
 
 // PerTensor: %[[b:.*]] = arith.constant dense<0.000000e+00> : tensor<1x32x42x128xf32>
 // PerTensor: %[[w:.*]] = "tfl.pseudo_qconst"() <{qtype = tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32, 1.000000e+00>>
-// PerTensor: %[[dq_w:.*]] = "tfl.dequantize"(%[[w]]) : (tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32, 1.000000e+00>>) -> tensor<1x32x42x128xf32>
-// PerTensor: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[dq_w]], %arg0, %[[b]]) <{
+// PerTensor: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[w:.*]], %arg0, %[[b]]) <{
 // PerTensor-NOT: asymmetric_quantize_inputs = true
 // PerTensor-SAME: padding = "SAME"
 // PerTensor: return %[[tconv:.*]]
 
 // PerChannelWeightOnly: %[[b:.*]] = arith.constant dense<0.000000e+00> : tensor<1x32x42x128xf32>
 // PerChannelWeightOnly: %[[w:.*]] = "tfl.pseudo_qconst"() <{qtype = tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32:0, {1.000000e+00}>>
-// PerChannelWeightOnly: %[[dq_w:.*]] = "tfl.dequantize"(%[[w]]) : (tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32:0, {1.000000e+00}>>) -> tensor<1x32x42x128xf32>
-// PerChannelWeightOnly: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[dq_w]], %arg0, %[[b]]) <{
+// PerChannelWeightOnly: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[w]], %arg0, %[[b]]) <{
 // PerChannelWeightOnly-NOT: asymmetric_quantize_inputs = true
 // PerChannelWeightOnly-SAME: padding = "SAME"
 // PerChannelWeightOnly: return %[[tconv:.*]]
 
 // PerTensorWeightOnly: %[[b:.*]] = arith.constant dense<0.000000e+00> : tensor<1x32x42x128xf32>
 // PerTensorWeightOnly: %[[w:.*]] = "tfl.pseudo_qconst"() <{qtype = tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32, 1.000000e+00>>
-// PerTensorWeightOnly: %[[dq_w:.*]] = "tfl.dequantize"(%[[w]]) : (tensor<1x32x42x128x!quant.uniform<i8<-127:127>:f32, 1.000000e+00>>) -> tensor<1x32x42x128xf32>
-// PerTensorWeightOnly: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[dq_w]], %arg0, %[[b]]) <{
+// PerTensorWeightOnly: %[[tconv:.*]] = "tfl.transpose_conv"(%arg1, %[[w]], %arg0, %[[b]]) <{
 // PerTensorWeightOnly-NOT: asymmetric_quantize_inputs = true
 // PerTensorWeightOnly-SAME: padding = "SAME"
 // PerTensorWeightOnly: return %[[tconv:.*]]

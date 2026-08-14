@@ -1,7 +1,22 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Rules to generate the TensorFlow public API from annotated files."""
 
-# Placeholder: load PyInfo
 load("@bazel_skylib//lib:paths.bzl", "paths")
+load("@rules_python//python:py_info.bzl", "PyInfo")
 load("//tensorflow/python/tools/api/generator:api_init_files.bzl", "TENSORFLOW_API_INIT_FILES")
 load(":apis.bzl", _APIS = "APIS")
 load(":patterns.bzl", "any_match")
@@ -96,6 +111,7 @@ def _api_extractor_impl(target, ctx):
             outputs = [output],
             arguments = [args],
             progress_message = "Extracting " + api + " APIs for %{label} to %{output}.",
+            use_default_shell_env = True,
         )
 
         direct_api.append(output)
@@ -192,7 +208,7 @@ def _generate_api_impl(ctx):
         args.add("--nouse_lazy_loading")
     if ctx.attr.proxy_module_root:
         args.add("--proxy_module_root", ctx.attr.proxy_module_root)
-    args.add_joined("--file_prefixes_to_strip", [ctx.bin_dir.path, ctx.genfiles_dir.path], join_with = ",")
+    args.add_joined("--file_prefixes_to_strip", [ctx.bin_dir.path, ctx.genfiles_dir.path] + ctx.attr.file_prefixes_to_strip, join_with = ",")
     if ctx.attr.root_file_name:
         args.add("--root_file_name", ctx.attr.root_file_name)
 
@@ -219,6 +235,7 @@ def _generate_api_impl(ctx):
         outputs = ctx.outputs.output_files,
         arguments = [args],
         progress_message = "Generating APIs for %{label} to %{output}.",
+        use_default_shell_env = True,
     )
 
     # Convert output_paths to the list of corresponding modules for the further testing
@@ -277,13 +294,16 @@ generate_api = rule(
                   "should include module1/module2/__init__.py and module3/__init__.py.",
         ),
         "use_lazy_loading": attr.bool(
-            doc = "If true, lazy load imports in the generated API rather then imporing them all statically.",
+            doc = "If true, lazy load imports in the generated API rather then importing them all statically.",
         ),
         "packages_to_ignore": attr.string_list(
             doc = "List of packages to ignore tf_exports from.",
         ),
         "root_file_name": attr.string(
             doc = "The file name that should be generated for the top level API.",
+        ),
+        "file_prefixes_to_strip": attr.string_list(
+            doc = "The file prefixes to strip from the import paths. Ex: bazel's bin and genfile",
         ),
         "_generator_bin": attr.label(
             default = Label("//tensorflow/python/tools/api/generator2/generator:main"),
@@ -314,14 +334,15 @@ def generate_apis(
         proxy_module_root = None,
         packages_to_ignore = [],
         root_file_name = None,
-        visibility = ["//visibility:private"]):
+        visibility = ["//visibility:private"],
+        file_prefixes_to_strip = []):
     """Generate TensorFlow APIs for a set of libraries.
 
     Args:
         name: name of generate_api target.
         apis: APIs to extract. See APIS constant for allowed values.
         deps: python_library targets to serve as roots for extracting APIs.
-        output_files: The list of files that the API generator is exected to create.
+        output_files: The list of files that the API generator is expected to create.
         root_init_template: The template for the top level __init__.py file generated.
             "#API IMPORTS PLACEHOLDER" comment will be replaced with imports.
         api_packages_file_name: Name of the file with the list of all API packages. Stores in output_dir.
@@ -388,4 +409,5 @@ def generate_apis(
         output_package = output_package,
         root_file_name = root_file_name,
         api_packages_path = api_packages_path,
+        file_prefixes_to_strip = file_prefixes_to_strip,
     )

@@ -14,7 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/validator.h"
 
-#include <iostream>
+#include <cstdint>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,15 +27,17 @@ limitations under the License.
 #if FLATBUFFERS_LITTLEENDIAN == 0
 #include "tensorflow/lite/core/model_builder.h"
 #endif
+#include "tensorflow/compiler/mlir/lite/schema/mutable/schema_generated.h"
 #include "tensorflow/lite/acceleration/configuration/configuration.pb.h"
 #include "tensorflow/lite/acceleration/configuration/configuration_generated.h"
 #include "tensorflow/lite/acceleration/configuration/proto_to_flatbuffer.h"
+#include "tensorflow/lite/core/acceleration/configuration/delegate_registry.h"
+#include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/embedded_mobilenet_model.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/embedded_mobilenet_validation_model.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_test_helper.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/model_modifier/custom_validation_embedder.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/status_codes.h"
-#include "tensorflow/lite/schema/mutable/schema_generated.h"
 #include "tensorflow/lite/tools/model_loader.h"
 
 // Note that these tests are not meant to be completely exhaustive, but to test
@@ -214,6 +217,72 @@ TEST_F(ValidatorTest, EmptyModelLoader) {
 
   EXPECT_EQ(validation_run.status, kMinibenchmarkModelReadFailed);
   EXPECT_EQ(validation_run.stage, BenchmarkStage_INITIALIZATION);
+}
+
+// Global flag to verify the test ran.
+bool g_mock_deleter_called = false;
+
+TfLiteStatus MockPrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
+  return kTfLiteOk;
+}
+
+class MockGpuModulePlugin : public delegates::DelegatePluginInterface {
+ public:
+  TfLiteDelegate delegate_;
+  MockGpuModulePlugin() {
+    memset(&delegate_, 0, sizeof(delegate_));
+    delegate_.Prepare = MockPrepare;
+    delegate_.flags = 42;  // Set some dummy value to read in deleter
+  }
+  ~MockGpuModulePlugin() override = default;
+
+  static void MockDeleter(TfLiteDelegate* d) {
+    g_mock_deleter_called = true;
+    // Read from the delegate struct.
+    // If MockGpuModulePlugin is already destroyed, this memory is poisoned.
+    // Reading d->flags will trigger MSan.
+    volatile uint64_t flags = d->flags;
+    (void)flags;
+  }
+
+  delegates::TfLiteDelegatePtr Create() override {
+    return delegates::TfLiteDelegatePtr(&delegate_, MockDeleter);
+  }
+
+  int GetDelegateErrno(TfLiteDelegate* from_delegate) override { return 0; }
+};
+
+std::unique_ptr<delegates::DelegatePluginInterface> CreateMockGpuModulePlugin(
+    const TFLiteSettings& settings) {
+  return std::make_unique<MockGpuModulePlugin>();
+}
+
+TEST_F(ValidatorTest, LifetimeSanitizerTest) {
+  // Register the mock plugin, overwriting the default one if it exists.
+  static delegates::DelegatePluginRegistry::Register mock_register(
+      "GpuModulePlugin", CreateMockGpuModulePlugin);
+
+  proto::ComputeSettings settings_proto;
+  settings_proto.mutable_tflite_settings()->set_delegate(proto::GPU);
+  // Trigger the GpuModule path in validator.cc
+  settings_proto.mutable_tflite_settings()
+      ->mutable_stable_delegate_loader_settings()
+      ->set_delegate_path("dummy_path");
+
+  flatbuffers::FlatBufferBuilder fbb;
+  const ComputeSettings* settings = ConvertFromProto(settings_proto, &fbb);
+
+  ASSERT_TRUE(validation_model_loader_->Init());
+  g_mock_deleter_called = false;
+  {
+    Validator validator(std::move(validation_model_loader_), settings);
+    Validator::Results results;
+    // This will initialize the delegate and then run validation.
+    // Even if validation fails, Validator destructor runs at the end.
+    validator.RunValidation(&results);
+  }
+
+  EXPECT_TRUE(g_mock_deleter_called);
 }
 
 }  // namespace

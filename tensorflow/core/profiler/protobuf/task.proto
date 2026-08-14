@@ -1,38 +1,22 @@
-// Describes a task that profiler traced.
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 
-syntax = "proto2";
+// This proto describes the format of the output profile file from
+// the TF-stats tool.
+syntax = "proto3";
 
 package tensorflow.profiler;
 
-option cc_enable_arenas = true;
-
-// 'Task' contains information about a task that profiler traced.
-message Task {
-  // The most recent changelist number from the client that built the binary.
-  optional int64 changelist = 1;
-  // True if the client that built the binary was mint (no local changes).
-  optional bool clean_build = 2;
-  // Build time (in ns relative to the Unix epoch).
-  optional int64 build_time = 3;
-  // Build target for the binary.
-  optional string build_target = 4;
-  // The full command line used to invoke the task.
-  optional string command_line = 5;
-  // Start time of the task (in ns relative to the Unix epoch).
-  optional int64 start_time = 6;
-  // Task address specified by client at time of profiling request.
-  optional string task_address = 7;
-  // Profiling start walltime (in ns).
-  optional uint64 profile_time_ns = 8;
-  // Profiling duration (in ms).
-  optional uint32 profile_duration_ms = 9;
-  // Host trace level.
-  optional uint32 host_trace_level = 10;
-  // Hardware core frequency.
-  optional uint64 tensor_core_freq_hz = 11;
-  optional uint64 sparse_core_freq_hz = 12;
-  optional uint64 gtc_freq_hz = 13;
-  optional uint64 peak_memory_usage = 14;
-  optional double cpu_limit = 15;
-  optional double cpu_usage = 16;
-}
+import public "plugin/xprof/protobuf/task.proto";

@@ -13,15 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
-#include <iterator>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include "absl/memory/memory.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -54,7 +50,6 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "mlir/Transforms/InliningUtils.h"  // from @llvm-project
-#include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tfr/ir/tfr_ops.h"
 #include "tensorflow/compiler/mlir/tfr/ir/tfr_types.h"
@@ -153,7 +148,7 @@ class RewriteTFRCallOp : public OpRewritePattern<CallOp> {
         mlir::cast<TypeAttr>(cast_op.getInputElementType()).getValue();
     if (result_elt_type != original_input_type) {
       UnrankedTensorType result_type = UnrankedTensorType::get(result_elt_type);
-      return rewriter.create<TF::CastOp>(loc, result_type, cast_op.getArg());
+      return TF::CastOp::create(rewriter, loc, result_type, cast_op.getArg());
     }
     return cast_op.getArg();
   }
@@ -172,7 +167,7 @@ class RewriteTFRCallOp : public OpRewritePattern<CallOp> {
       Type current_input_type = mlir::cast<TypeAttr>(input_types[i]).getValue();
       if (current_input_type != target_input_type) {
         input_values[i] =
-            rewriter.create<TF::CastOp>(loc, result_type, input_values[i]);
+            TF::CastOp::create(rewriter, loc, result_type, input_values[i]);
       }
     }
   }
@@ -402,7 +397,7 @@ LogicalResult RewriteTFRCallOp::CreateAndReplaceOp(
     Type res_type = res.value();
     if (mlir::dyn_cast<TFRTensorType>(res_type)) {
       Value new_res = new_op->getResult(res.index());
-      auto casted = rewriter.create<CastOp>(loc, res_type, new_res);
+      auto casted = CastOp::create(rewriter, loc, res_type, new_res);
       new_results.push_back(casted.getOut());
     } else if (auto list_type =
                    mlir::dyn_cast<TFRTensorListType>(res.value())) {
@@ -410,10 +405,10 @@ LogicalResult RewriteTFRCallOp::CreateAndReplaceOp(
       for (int i = res.index(); i < new_op->getNumResults(); i++) {
         Value new_res = new_op->getResult(i);
         auto casted =
-            rewriter.create<CastOp>(loc, unconstrainted_type, new_res);
+            CastOp::create(rewriter, loc, unconstrainted_type, new_res);
         tensor_list.push_back(casted.getOut());
       }
-      auto list_op = rewriter.create<BuildListOp>(loc, res_type, tensor_list);
+      auto list_op = BuildListOp::create(rewriter, loc, res_type, tensor_list);
       new_results.push_back(list_op.getOut());
     }
   }
@@ -508,7 +503,7 @@ void RaiseToTFOpsPass::runOnOperation() {
 
   populateCanonicalizationPatterns(func, patterns);
 
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 }
 }  // namespace
 

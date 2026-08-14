@@ -24,7 +24,7 @@ limitations under the License.
 #include "tensorflow/c/tf_tensor.h"
 #include "xla/c/c_api_decl.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
-#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/tpu/c_api_decl.h"
 
 #define TFNPD_MAJOR 0
 #define TFNPD_MINOR 0
@@ -114,7 +114,7 @@ typedef void TFNPD_InitPluginInternalDeviceStates(TF_Status* status);
 // --------------------------- C API access ------------------------------------
 #define TFNPD_API_STRUCT_FN(fn_type) fn_type* fn_type
 
-typedef struct {
+typedef struct TFNPD_Api {
   size_t struct_size;
   void* priv;
 

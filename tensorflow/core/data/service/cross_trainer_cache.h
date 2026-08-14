@@ -115,7 +115,7 @@ class CrossTrainerCache {
   // Cancels the cache with `status` and notifies the readers. After cancelling,
   // all `Get` calls will return `status`.
   // REQUIRES: !status.ok()
-  void Cancel(Status status);
+  void Cancel(absl::Status status);
 
   // Returns true if the cache has been cancelled.
   bool IsCancelled() const;
@@ -143,7 +143,7 @@ class CrossTrainerCache {
       const std::string& trainer_id);
 
   // Reads a new element and writes it into the cache.
-  Status ExtendCache();
+  absl::Status ExtendCache();
 
   // Frees old elements to keep the cache size below `max_cache_size_bytes_`.
   // `new_element_size_bytes` is the size of the new element being inserted.
@@ -163,7 +163,7 @@ class CrossTrainerCache {
 
   // If `status_` is non-OK, the cache is cancelled, and all method calls will
   // return this status.
-  Status status_ TF_GUARDED_BY(mu_) = absl::OkStatus();
+  absl::Status status_ TF_GUARDED_BY(mu_) = absl::OkStatus();
 
   // `cache_` stores the cached elements.
   std::deque<std::shared_ptr<const ElementType>> cache_ TF_GUARDED_BY(mu_);
@@ -197,7 +197,7 @@ StatusOr<std::shared_ptr<const ElementType>>
 CrossTrainerCache<ElementType>::Get(const std::string& trainer_id)
     TF_LOCKS_EXCLUDED(mu_) {
   if (trainer_id.empty()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "tf.data service cross-trainer cache requires a non-empty trainer ID.");
   }
 
@@ -235,7 +235,7 @@ CrossTrainerCache<ElementType>::GetCacheQueryResult(
     }
 
     if (should_extend_cache) {
-      Status s = ExtendCache();
+      absl::Status s = ExtendCache();
       mutex_lock l(mu_);
       extending_cache_ = false;
       cv_.notify_all();
@@ -256,9 +256,9 @@ CrossTrainerCache<ElementType>::GetElement(const std::string& trainer_id)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
   size_t element_index = GetElementIndex(trainer_id);
   if (element_index >= std::numeric_limits<size_t>::max()) {
-    return errors::Internal(
+    return absl::InternalError(absl::StrCat(
         "tf.data service caching element index exceeds integer limit. Got ",
-        element_index);
+        element_index));
   }
 
   std::shared_ptr<const ElementType> result =
@@ -278,15 +278,16 @@ size_t CrossTrainerCache<ElementType>::GetElementIndex(
 }
 
 template <class ElementType>
-Status CrossTrainerCache<ElementType>::ExtendCache() TF_LOCKS_EXCLUDED(mu_) {
+absl::Status CrossTrainerCache<ElementType>::ExtendCache()
+    TF_LOCKS_EXCLUDED(mu_) {
   TF_ASSIGN_OR_RETURN(ElementType element, cachable_sequence_->GetNext());
   size_t new_element_size_bytes =
       cachable_sequence_->GetElementSizeBytes(element);
   if (new_element_size_bytes > max_cache_size_bytes_) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "tf.data service element size is larger than cache size in bytes. Got ",
         "element size: ", new_element_size_bytes,
-        " and cache size: ", max_cache_size_bytes_);
+        " and cache size: ", max_cache_size_bytes_));
   }
 
   mutex_lock l(mu_);
@@ -317,7 +318,7 @@ void CrossTrainerCache<ElementType>::FreeSpace(size_t new_element_size_bytes)
 }
 
 template <class ElementType>
-void CrossTrainerCache<ElementType>::Cancel(Status status)
+void CrossTrainerCache<ElementType>::Cancel(absl::Status status)
     TF_LOCKS_EXCLUDED(mu_) {
   DCHECK(!status.ok())
       << "Cancelling CrossTrainerCache requires a non-OK status. Got "

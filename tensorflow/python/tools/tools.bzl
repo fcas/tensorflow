@@ -1,5 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Definitions for using tools like saved_model_cli."""
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow:tensorflow.bzl", "clean_dep", "if_xla_available")
 load("//tensorflow:tensorflow.default.bzl", "tfcompile_target_cpu")
 load("//tensorflow/compiler/aot:tfcompile.bzl", "target_llvm_triple")
@@ -98,7 +114,7 @@ def saved_model_compile_aot(
         Note, this increases the set of dependencies for binaries using
         the AOT library at both build and runtime.  For example,
         the resulting object files may have external dependencies on
-        multithreading libraries like nsync.
+        multithreading libraries like Abseil.
       force_without_xla_support_flag: Whether to compile even when
         `--define=with_xla_support=true` is not set.  If `False`, and the
         define is not passed when building, then the created `cc_library`
@@ -129,6 +145,7 @@ def saved_model_compile_aot(
             "{}.h".format(name),
             "{}.o".format(name),
             "{}_metadata.o".format(name),
+            "{}_constants.o".format(name),
             "{}_makefile.inc".format(name),
         ],
         cmd = (
@@ -151,13 +168,13 @@ def saved_model_compile_aot(
             "//tensorflow/python/tools:saved_model_cli",
         ],
     )
-
-    native.cc_library(
+    cc_library(
         name = name,
         srcs = _maybe_force_compile(
             [
                 ":{}.o".format(name),
                 ":{}_metadata.o".format(name),
+                ":{}_constants.o".format(name),
             ],
             force_compile = force_without_xla_support_flag,
         ),

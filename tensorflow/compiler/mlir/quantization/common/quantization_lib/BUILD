@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
@@ -8,10 +23,15 @@ package(
     # By default, these targets should only be used within the quantization library.
     default_visibility = [
         "//learning/brain/mlir/quantization:__subpackages__",
-        "//platforms/darwinn/compiler:__subpackages__",
         "//tensorflow:__subpackages__",
     ],
     licenses = ["notice"],
+)
+
+cc_library(
+    name = "portable_tensor_utils",
+    srcs = ["portable_tensor_utils.cc"],
+    hdrs = ["portable_tensor_utils.h"],
 )
 
 cc_library(
@@ -28,14 +48,13 @@ cc_library(
         "quantization_utils.h",
     ],
     deps = [
+        ":portable_tensor_utils",
         ":quantization_config",
         ":quantization_interfaces_inc_gen",
-        "//tensorflow/compiler/mlir/lite/quantization/ir:QuantOps",
         "//tensorflow/compiler/mlir/quantization/common/ir:QuantOps",
+        "//tensorflow/compiler/mlir/tools/optimize:quantization_utils",
         "//tensorflow/core:lib_proto_parsing",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/lite/kernels/internal:tensor_utils",
-        "//tensorflow/lite/tools/optimize:quantization_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/memory",
@@ -54,10 +73,10 @@ tf_cc_test(
     srcs = ["quantization_driver_test.cc"],
     deps = [
         ":quantization_lib",
-        "//tensorflow/compiler/mlir/lite/quantization/ir:QuantOps",
         "//tensorflow/compiler/mlir/quantization/common:attrs_and_constraints",
         "//tensorflow/compiler/mlir/quantization/common:func",
         "//tensorflow/compiler/mlir/quantization/common:test_base",
+        "//tensorflow/compiler/mlir/quantization/common/ir:QuantOps",
         "//tensorflow/compiler/mlir/tensorflow",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -80,7 +99,6 @@ cc_library(
     ],
     deps = [
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/lite/tools/optimize:reduced_precision_support",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -94,7 +112,7 @@ td_library(
     ],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "//tensorflow/compiler/mlir/lite/quantization/ir:QuantizationOpsTdFiles",
+        "//tensorflow/compiler/mlir/quantization/common/ir:QuantizationOpsTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
     ],
 )
@@ -102,16 +120,10 @@ td_library(
 gentbl_cc_library(
     name = "quantization_interfaces_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            ["-gen-op-interface-decls"],
-            "quantization_interface.h.inc",
-        ),
-        (
-            ["-gen-op-interface-defs"],
-            "quantization_interface.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "quantization_interface.h.inc": ["-gen-op-interface-decls"],
+        "quantization_interface.cc.inc": ["-gen-op-interface-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "quantization.td",
     deps = [

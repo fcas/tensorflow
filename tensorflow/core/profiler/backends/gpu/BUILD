@@ -1,5 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load(
-    "@local_tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "@xla//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load("//tensorflow:tensorflow.default.bzl", "tf_cuda_cc_test")
@@ -42,10 +57,10 @@ tf_cuda_cc_test(
         "//tensorflow/core/profiler/utils:xplane_utils",
         "//tensorflow/core/profiler/utils:xplane_visitor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/profiler/utils:tf_xplane_visitor",
-        "@local_xla//xla/backends/profiler/gpu:cuda_test",
-        "@local_xla//xla/backends/profiler/gpu:cupti_collector",
-        "@local_xla//xla/backends/profiler/gpu:device_tracer",
+        "@xla//xla/backends/profiler/gpu:cuda_test",
+        "@xla//xla/backends/profiler/gpu:cupti_collector",
+        "@xla//xla/backends/profiler/gpu:device_tracer",
+        "@xla//xla/tsl/profiler/utils:tf_xplane_visitor",
     ] + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cupti_headers",

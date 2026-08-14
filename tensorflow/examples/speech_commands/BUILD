@@ -1,4 +1,21 @@
-load("//tensorflow:strict.default.bzl", "py_strict_binary", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "tf_py_strict_test")
 
@@ -10,50 +27,47 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_binary(
+py_binary(
     name = "accuracy_utils_py",
     srcs = ["accuracy_utils.py"],
     main = "accuracy_utils.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow:tensorflow_py",
         "//third_party/py/numpy",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "accuracy_utils_lib",
     srcs = ["accuracy_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow:tensorflow_py",
         "//third_party/py/numpy",
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "recognize_commands_py",
     srcs = ["recognize_commands.py"],
     main = "recognize_commands.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//third_party/py/numpy"],
 )
 
-py_strict_library(
+py_library(
     name = "recognize_commands_lib",
     srcs = ["recognize_commands.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//third_party/py/numpy"],
 )
 
-py_strict_binary(
+py_binary(
     name = "test_streaming_accuracy_py",
     srcs = ["test_streaming_accuracy.py"],
     main = "test_streaming_accuracy.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":accuracy_utils_lib",
         ":recognize_commands_lib",
@@ -63,12 +77,12 @@ py_strict_binary(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "models",
     srcs = [
         "models.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//tensorflow:tensorflow_py"],
 )
 
@@ -84,12 +98,12 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "input_data",
     srcs = [
         "input_data.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow:tensorflow_py",
         "//tensorflow/python/ops:audio_ops_gen",
@@ -116,20 +130,19 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "train",
     srcs = ["train.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":train_main_lib"],
 )
 
-py_strict_library(
+py_library(
     name = "train_main_lib",
     srcs = [
         "train.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":input_data",
         ":models",
@@ -155,18 +168,17 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "freeze",
     srcs = ["freeze.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":freeze_main_lib"],
 )
 
-py_strict_library(
+py_library(
     name = "freeze_main_lib",
     srcs = ["freeze.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":input_data",
         ":models",
@@ -175,12 +187,12 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "freeze_lib",
     srcs = [
         "freeze.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     tags = [
         "no_pip",  # b/131330719
     ],
@@ -208,18 +220,17 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "wav_to_features",
     srcs = ["wav_to_features.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":wav_to_features_main_lib"],
 )
 
-py_strict_library(
+py_library(
     name = "wav_to_features_main_lib",
     srcs = ["wav_to_features.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":input_data",
         ":models",
@@ -228,12 +239,12 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "wav_to_features_lib",
     srcs = [
         "wav_to_features.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":input_data",
         ":models",
@@ -257,18 +268,17 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "generate_streaming_test_wav",
     srcs = ["generate_streaming_test_wav.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":generate_streaming_test_wav_main_lib"],
 )
 
-py_strict_library(
+py_library(
     name = "generate_streaming_test_wav_main_lib",
     srcs = ["generate_streaming_test_wav.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":input_data",
         ":models",
@@ -277,12 +287,12 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "generate_streaming_test_wav_lib",
     srcs = [
         "generate_streaming_test_wav.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":input_data",
         ":models",
@@ -316,34 +326,34 @@ tf_cc_binary(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:tensorflow",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:types",
-        "@local_xla//xla/tsl/util:command_line_flags",
+        "@xla//xla/tsl/platform:status",
+        "@xla//xla/tsl/platform:types",
+        "@xla//xla/tsl/util:command_line_flags",
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "label_wav",
     srcs = ["label_wav.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":label_wav_main_lib"],
 )
 
-py_strict_library(
+py_library(
     name = "label_wav_main_lib",
     srcs = ["label_wav.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//tensorflow:tensorflow_py_no_contrib"],
 )
 
-py_strict_library(
+py_library(
     name = "label_wav_lib",
     srcs = [
         "label_wav.py",
     ],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow:tensorflow_py",
     ],
@@ -414,6 +424,7 @@ cc_library(
         "//tensorflow/core/platform:numbers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -446,14 +457,15 @@ tf_cc_binary(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:types",
+        "@xla//xla/tsl/platform:types",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "test_lib",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":freeze_main_lib",
         ":generate_streaming_test_wav_main_lib",

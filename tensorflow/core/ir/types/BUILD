@@ -1,4 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 
@@ -30,16 +46,10 @@ td_library(
 
 gentbl_cc_library(
     name = "DialectIncGen",
-    tbl_outs = [
-        (
-            ["-gen-dialect-decls"],
-            "dialect.h.inc",
-        ),
-        (
-            ["-gen-dialect-defs"],
-            "dialect.cpp.inc",
-        ),
-    ],
+    tbl_outs = {
+        "dialect.h.inc": ["-gen-dialect-decls"],
+        "dialect.cpp.inc": ["-gen-dialect-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "dialect.td",
     deps = [
@@ -49,24 +59,12 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "AttributesIncGen",
-    tbl_outs = [
-        (
-            ["-gen-attrdef-decls"],
-            "attributes.h.inc",
-        ),
-        (
-            ["-gen-attrdef-defs"],
-            "attributes.cc.inc",
-        ),
-        (
-            ["-gen-enum-decls"],
-            "attributes_enum.h.inc",
-        ),
-        (
-            ["-gen-enum-defs"],
-            "attributes_enum.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "attributes.h.inc": ["-gen-attrdef-decls"],
+        "attributes.cc.inc": ["-gen-attrdef-defs"],
+        "attributes_enum.h.inc": ["-gen-enum-decls"],
+        "attributes_enum.cc.inc": ["-gen-enum-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "attributes.td",
     deps = [":DialectTdFiles"],
@@ -74,16 +72,10 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "TypesIncGen",
-    tbl_outs = [
-        (
-            ["-gen-typedef-decls"],
-            "types.h.inc",
-        ),
-        (
-            ["-gen-typedef-defs"],
-            "types.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "types.h.inc": ["-gen-typedef-decls"],
+        "types.cc.inc": ["-gen-typedef-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "types.td",
     deps = [":DialectTdFiles"],
@@ -98,7 +90,7 @@ cc_library(
     textual_hdrs = [
         "types.def",
     ],
-    visibility = ["//tensorflow:__subpackages__"],
+    visibility = ["//visibility:public"],
     deps = [
         ":AttributesIncGen",
         ":DialectIncGen",
@@ -121,6 +113,7 @@ tf_cc_test(
         ":Dialect",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Support",

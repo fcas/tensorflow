@@ -1,3 +1,19 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -19,8 +35,8 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -47,6 +63,8 @@ cc_library(
 #         "//tensorflow/cc:scope",
 #         "//tensorflow/cc:sendrecv_ops",
 #         "//tensorflow/cc/saved_model:reader",
+#         "@xla//xla/tsl/platform:statusor",
+#         "@xla//xla/tsl/platform:test",
 #         "//tensorflow/core:core_cpu_base",
 #         "//tensorflow/core:portable_gif_internal",
 #         "//tensorflow/core:test",
@@ -59,9 +77,7 @@ cc_library(
 #         "//tensorflow/core/tfrt/saved_model:saved_model_cpu",
 #         "//tensorflow/core/tfrt/saved_model:saved_model_testutil",
 #         "//tensorflow/python/framework:test_ops_kernels",
-#         "@local_tsl//tsl/platform:path",
-#         "@local_tsl//tsl/platform:statusor",
-#         "@local_tsl//tsl/platform:test",
+#         "@tsl//tsl/platform:path",
 #     ],
 # )
 # copybara:uncomment_end

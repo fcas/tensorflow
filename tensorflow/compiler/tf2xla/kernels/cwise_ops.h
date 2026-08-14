@@ -18,13 +18,17 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_TF2XLA_KERNELS_CWISE_OPS_H_
 #define TENSORFLOW_COMPILER_TF2XLA_KERNELS_CWISE_OPS_H_
 
+#include <cstdint>
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/types/span.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
 #include "xla/client/client_library.h"
-#include "xla/client/xla_builder.h"
+#include "xla/hlo/builder/xla_builder.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/util/bcast.h"
 
 namespace tensorflow {
@@ -41,8 +45,9 @@ class XlaBinaryOp : public XlaOpKernel {
   explicit XlaBinaryOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
     const DataType lhs = BaseType(input_type(0));
     const DataType rhs = BaseType(input_type(1));
-    OP_REQUIRES(ctx, lhs == rhs,
-                errors::InvalidArgument("Input types of binary op must match"));
+    OP_REQUIRES(
+        ctx, lhs == rhs,
+        absl::InvalidArgumentError("Input types of binary op must match"));
   }
   ~XlaBinaryOp() override = default;
 

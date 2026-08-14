@@ -12,22 +12,24 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <cstddef>
 #include <memory>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/status.h"
 #include "tensorflow/lite/toco/graph_transformations/graph_transformations.h"
 #include "tensorflow/lite/toco/model.h"
 #include "tensorflow/lite/toco/runtime/types.h"
 #include "tensorflow/lite/toco/tooling_util.h"
-#include "tensorflow/core/platform/logging.h"
 
 namespace toco {
 
-::tensorflow::Status FuseActivationFunctions::Run(Model* model,
-                                                  std::size_t op_index,
-                                                  bool* modified) {
+absl::Status FuseActivationFunctions::Run(Model* model, std::size_t op_index,
+                                          bool* modified) {
   *modified = false;
   const auto ac_it = model->operators.begin() + op_index;
   const auto* ac_op = ac_it->get();
@@ -46,7 +48,7 @@ namespace toco {
   if (CountTrueOutputs(*model, *op) > 1) {
     AddMessageF(
         "Not fusing activation function %s into %s because it has more than "
-        "one  consumed output",
+        "one consumed output",
         LogName(*ac_op), LogName(*op));
     return absl::OkStatus();
   }
@@ -57,8 +59,8 @@ namespace toco {
   DCHECK_GE(count_ops_consuming_output, 1);
   if (count_ops_consuming_output > 1) {
     AddMessageF(
-        "Not fusing activation function into %s because it is consumed by more "
-        "than 1 other operator",
+        "Not fusing activation function %s into %s because it is consumed by "
+        "more than 1 other operator",
         LogName(*ac_op), LogName(*op));
     return absl::OkStatus();
   }

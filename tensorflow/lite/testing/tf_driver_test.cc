@@ -14,12 +14,20 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/testing/tf_driver.h"
 
-#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <memory>
 #include <string>
+#include <vector>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/strings/escaping.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/lite/string_type.h"
 #include "tensorflow/lite/string_util.h"
 
 namespace tflite {

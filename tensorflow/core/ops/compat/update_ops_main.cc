@@ -24,20 +24,20 @@ limitations under the License.
 #include "tensorflow/core/platform/init_main.h"
 #include "tensorflow/core/platform/path.h"
 #include "tensorflow/core/platform/protobuf.h"
-#include "tensorflow/core/public/version.h"
+#include "tensorflow/core/public/release_version.h"
 #include "tsl/platform/protobuf.h"
 
 namespace tensorflow {
 namespace {
 
-void WriteUpdateTo(const string& directory) {
+void WriteUpdateTo(const std::string& directory) {
   OpCompatibilityLib compatibility(
-      directory, strings::StrCat("v", TF_MAJOR_VERSION), nullptr);
+      directory, absl::StrCat("v", TF_MAJOR_VERSION), nullptr);
 
   // Write full copy of all ops to ops.pbtxt.
   Env* env = Env::Default();
   {
-    const string& ops_file = compatibility.ops_file();
+    const std::string& ops_file = compatibility.ops_file();
     printf("Writing ops to %s...\n", ops_file.c_str());
     TF_QCHECK_OK(WriteStringToFile(env, ops_file, compatibility.OpsString()));
   }
@@ -52,12 +52,12 @@ void WriteUpdateTo(const string& directory) {
                                                 &out_op_history));
   printf("%d changed ops\n%d added ops\n", changed_ops, added_ops);
 
-  const string& history_dir = compatibility.op_history_directory();
-  Status status = env->CreateDir(history_dir);
-  if (!errors::IsAlreadyExists(status)) {
+  const std::string& history_dir = compatibility.op_history_directory();
+  absl::Status status = env->CreateDir(history_dir);
+  if (!absl::IsAlreadyExists(status)) {
     TF_QCHECK_OK(status);
   }
-  if (changed_ops + added_ops > 0 || !errors::IsAlreadyExists(status)) {
+  if (changed_ops + added_ops > 0 || !absl::IsAlreadyExists(status)) {
     // Write out new op history.
     printf("Writing updated op history to %s/...\n", history_dir.c_str());
     for (const auto& op_file : out_op_history) {

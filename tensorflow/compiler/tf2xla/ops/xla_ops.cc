@@ -49,7 +49,7 @@ namespace {
 
 // Helper shape function for operators that return an output with the same rank
 // as their first input.
-Status UnchangedRank(shape_inference::InferenceContext* c) {
+absl::Status UnchangedRank(shape_inference::InferenceContext* c) {
   if (c->RankKnown(c->input(0))) {
     c->set_output(0, c->UnknownShapeOfRank(c->Rank(c->input(0))));
   } else {
@@ -215,14 +215,14 @@ preferred_element_type: type of the tensor.
 batch_group_count: number of batch groups or grouped filters.
 )doc");
 
-static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
+static absl::Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
   shape_inference::ShapeHandle lhs_shape_handle = c->input(0);
   shape_inference::ShapeHandle rhs_shape_handle = c->input(1);
   if (!c->RankKnown(lhs_shape_handle) || !c->RankKnown(rhs_shape_handle)) {
     return shape_inference::UnknownShape(c);
   }
 
-  string dimension_numbers_string;
+  std::string dimension_numbers_string;
   TF_RETURN_IF_ERROR(
       c->GetAttr("dimension_numbers", &dimension_numbers_string));
 
@@ -232,11 +232,11 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
   // Check that number of contracting dimensions match.
   if (dimension_numbers.lhs_contracting_dimensions_size() !=
       dimension_numbers.rhs_contracting_dimensions_size())
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Must specify the same number of contracting dimensions for lhs "
         "and rhs. Got: ",
         dimension_numbers.lhs_contracting_dimensions_size(), " and ",
-        dimension_numbers.rhs_contracting_dimensions_size());
+        dimension_numbers.rhs_contracting_dimensions_size()));
 
   // Check that contracting dimension sizes match.
   for (int64_t i = 0; i < dimension_numbers.lhs_contracting_dimensions_size();
@@ -258,11 +258,11 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
   // Check that number of batch dimensions match.
   if (dimension_numbers.lhs_batch_dimensions_size() !=
       dimension_numbers.rhs_batch_dimensions_size())
-    return errors::InvalidArgument(
-        "Must specify the same number of batch dimensions for lhs "
-        "and rhs. Got: ",
-        dimension_numbers.lhs_batch_dimensions_size(), " and ",
-        dimension_numbers.rhs_batch_dimensions_size());
+    return absl::InvalidArgumentError(
+        absl::StrCat("Must specify the same number of batch dimensions for lhs "
+                     "and rhs. Got: ",
+                     dimension_numbers.lhs_batch_dimensions_size(), " and ",
+                     dimension_numbers.rhs_batch_dimensions_size()));
 
   // The ranks of lhs and rhs are decremented by the number of contractions,
   // and added for the rank of the result. When an input tensor
@@ -395,13 +395,13 @@ REGISTER_OP("XlaDynamicSlice")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
-    .SetShapeFn([](shape_inference::InferenceContext* c) -> Status {
+    .SetShapeFn([](shape_inference::InferenceContext* c) -> absl::Status {
       shape_inference::ShapeHandle size_indices_shape = c->input(2);
       if (!c->RankKnown(size_indices_shape)) {
         return UnchangedRank(c);
       }
       if (c->Rank(size_indices_shape) != 1) {
-        return errors::InvalidArgument("size_indices must be a 1D tensor");
+        return absl::InvalidArgumentError("size_indices must be a 1D tensor");
       }
       shape_inference::ShapeHandle size_indices_value;
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &size_indices_value));
@@ -508,9 +508,9 @@ REGISTER_OP("XlaPad")
       shape_inference::ShapeHandle padding_shape_handle = c->input(1);
       if (c->RankKnown(padding_shape_handle) &&
           c->Rank(padding_shape_handle) != 0) {
-        return errors::InvalidArgument(
-            "padding_value input must be scalar, found rank ",
-            c->Rank(padding_shape_handle));
+        return absl::InvalidArgumentError(
+            absl::StrCat("padding_value input must be scalar, found rank ",
+                         c->Rank(padding_shape_handle)));
       }
       const Tensor* padding_low_tensor = c->input_tensor(2);
       const Tensor* padding_high_tensor = c->input_tensor(3);
@@ -522,18 +522,18 @@ REGISTER_OP("XlaPad")
 
       if (padding_low_tensor->shape().dims() != 1 ||
           padding_low_tensor->shape().dim_size(0) != op_rank) {
-        return errors::InvalidArgument(
-            "padding_low must be a 1D tensor of size ", op_rank);
+        return absl::InvalidArgumentError(
+            absl::StrCat("padding_low must be a 1D tensor of size ", op_rank));
       }
       if (padding_high_tensor->shape().dims() != 1 ||
           padding_high_tensor->shape().dim_size(0) != op_rank) {
-        return errors::InvalidArgument(
-            "padding_high must be a 1D tensor of size ", op_rank);
+        return absl::InvalidArgumentError(
+            absl::StrCat("padding_high must be a 1D tensor of size ", op_rank));
       }
       if (padding_interior_tensor->shape().dims() != 1 ||
           padding_interior_tensor->shape().dim_size(0) != op_rank) {
-        return errors::InvalidArgument(
-            "padding_interior must be a 1D tensor of size ", op_rank);
+        return absl::InvalidArgumentError(absl::StrCat(
+            "padding_interior must be a 1D tensor of size ", op_rank));
       }
       std::vector<shape_inference::DimensionHandle> output_dims;
       output_dims.reserve(op_rank);
@@ -545,9 +545,9 @@ REGISTER_OP("XlaPad")
         TF_RETURN_IF_ERROR(
             c->GetScalarFromTensor(padding_interior_tensor, i, &interior));
         if (interior < 0) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(absl::StrCat(
               "padding_interior must contain only non-negative values, found ",
-              interior);
+              interior));
         }
 
         shape_inference::DimensionHandle orig_size_handle =
@@ -559,8 +559,8 @@ REGISTER_OP("XlaPad")
             new_dim += interior * (orig_dim - 1);
           }
           if (new_dim < 0) {
-            return errors::InvalidArgument(
-                "resulting padded dimension has negative size ", new_dim);
+            return absl::InvalidArgumentError(absl::StrCat(
+                "resulting padded dimension has negative size ", new_dim));
           }
           output_dims.emplace_back(c->MakeDim(new_dim));
         } else {
@@ -635,7 +635,7 @@ REGISTER_OP("XlaReduce")
         if (rank < dimensions_to_reduce_size ||
             dims_set.size() != dimensions_to_reduce.size() ||
             !absl::c_all_of(dimensions_to_reduce, dim_in_range)) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Invalid dimensions_to_reduce argument to XlaReduce");
         }
         c->set_output(
@@ -685,7 +685,7 @@ REGISTER_OP("XlaVariadicReduce")
         if (rank < dimensions_to_reduce_size ||
             dims_set.size() != dimensions_to_reduce.size() ||
             !absl::c_all_of(dimensions_to_reduce, dim_in_range)) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Invalid dimensions_to_reduce argument to XlaVariadicReduce");
         }
         for (int i = 0; i < n; i++) {
@@ -728,12 +728,12 @@ REGISTER_OP("XlaVariadicReduceV2")
       TF_RETURN_IF_ERROR(c->input("init_values", &init_values_shapes));
       const int nr_inputs = input_shapes.size();
       if (nr_inputs != init_values_shapes.size()) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "Must specify the same number of inputs and init_values. ", "Got ",
-            nr_inputs, " and ", init_values_shapes.size());
+            nr_inputs, " and ", init_values_shapes.size()));
       }
       if (nr_inputs == 0) {
-        return errors::InvalidArgument("Must specify at least one input");
+        return absl::InvalidArgumentError("Must specify at least one input");
       }
 
       shape_inference::ShapeHandle input_shape = input_shapes[0];
@@ -766,7 +766,7 @@ REGISTER_OP("XlaVariadicReduceV2")
         if (rank < dimensions_to_reduce_size ||
             dims_set.size() != dimensions_to_reduce.size() ||
             !absl::c_all_of(dimensions_to_reduce, dim_in_range)) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Invalid dimensions_to_reduce argument to XlaVariadicReduceV2");
         }
 
@@ -1027,12 +1027,12 @@ REGISTER_OP("XlaEinsum")
     .Attr("equation: string")
     .Attr("T: {complex64, bfloat16, float}")
     .SetShapeFn([](shape_inference::InferenceContext* context) {
-      string equation;
+      std::string equation;
       TF_RETURN_IF_ERROR(context->GetAttr("equation", &equation));
       // XlaEinsum supports only two-input einsum equations.
       if (!absl::StrContains(equation, ",")) {
-        return errors::InvalidArgument("Expected one \",\" in equation. Got: ",
-                                       equation);
+        return absl::InvalidArgumentError(
+            absl::StrCat("Expected one \",\" in equation. Got: ", equation));
       }
       // Use EinsumShape for the rest of the inference now that we know we must
       // have a two-input einsum.
@@ -1057,9 +1057,9 @@ REGISTER_OP("XlaSpmdFullToShardShape")
       if (!c->RankKnown(input_handle)) {
         return shape_inference::UnknownShape(c);
       }
-      string sharding_attr;
+      std::string sharding_attr;
       TF_RETURN_IF_ERROR(c->GetAttr("manual_sharding", &sharding_attr));
-      int32 single_dim;
+      int32_t single_dim;
       TF_RETURN_IF_ERROR(c->GetAttr("dim", &single_dim));
       xla::OpSharding sharding;
       sharding.ParseFromString(sharding_attr);
@@ -1152,8 +1152,7 @@ xla::Shape GetShape(shape_inference::ShapeHandle shape_handle,
   return xla::Shape(
       // Type matters only for indices. S64 is the widest possible type.
       xla::PrimitiveType::S64, dims,
-      absl::InlinedVector<bool, 4>(dynamic_dims.begin(), dynamic_dims.end()),
-      /*tuple_shapes=*/{});
+      absl::InlinedVector<bool, 4>(dynamic_dims.begin(), dynamic_dims.end()));
 }
 
 REGISTER_OP("XlaGather")
@@ -1211,7 +1210,7 @@ REGISTER_OP("XlaGather")
                               input_shape, start_indices_shape,
                               gather_dim_numbers, slice_sizes));
       std::vector<shape_inference::DimensionHandle> dims;
-      for (int64_t i = 0; i < output_shape.rank(); ++i) {
+      for (int64_t i = 0; i < output_shape.dimensions().size(); ++i) {
         if (output_shape.is_unbounded_dynamic_dimension(i)) {
           dims.push_back(c->UnknownDim());
         } else {
@@ -1297,7 +1296,7 @@ scatter_dimension: Dimension to scatter.
 reduce_op: Reduction computation.
 )doc");
 
-Status OptimizationBarrierShape(shape_inference::InferenceContext* c) {
+absl::Status OptimizationBarrierShape(shape_inference::InferenceContext* c) {
   for (int i = 0; i < c->num_inputs(); ++i) {
     c->set_output(i, c->input(i));
   }
@@ -1374,8 +1373,9 @@ REGISTER_OP("XlaCustomCallV2")
       std::vector<TensorShape> shapes;
       TF_RETURN_IF_ERROR(c->GetAttr("result_shapes", &shapes));
       if (shapes.size() != c->num_outputs()) {
-        return errors::InvalidArgument("Unexpected number of result shapes: ",
-                                       shapes.size(), " != ", c->num_outputs());
+        return absl::InvalidArgumentError(
+            absl::StrCat("Unexpected number of result shapes: ", shapes.size(),
+                         " != ", c->num_outputs()));
       }
       for (int i = 0; i < c->num_outputs(); ++i) {
         shape_inference::ShapeHandle shape;
@@ -1417,6 +1417,7 @@ REGISTER_OP("XlaCallModule")
     .Attr("function_list: list(func) = []")
     .Attr("has_token_input_output: bool = false")
     .Attr("disabled_checks: list(string) = []")
+    .Attr("use_shardy_partitioner: bool = false")
     .SetIsStateful()
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       std::vector<shape_inference::ShapeHandle> args_shapes;
@@ -1492,6 +1493,7 @@ disabled_checks: A list of strings describing the safety checks that were
   This list, supplemented with a comma-separate list of directives specified
   using the flag --tf_xla_call_module_disabled_checks,
   is used at module loading time to skip the corresponding checks.
+use_shardy_partitioner: Indicates whether Shardy is used for SPMD partitioning.
 )doc");
 
 }  // namespace

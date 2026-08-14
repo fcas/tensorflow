@@ -23,21 +23,22 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/literal_util.h"
-#include "xla/service/call_graph.h"
-#include "xla/service/hlo_alias_analysis.h"
-#include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/service/tuple_simplifier.h"
 #include "xla/service/while_loop_simplifier.h"
 #include "xla/service/while_loop_unroller.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -45,75 +46,10 @@ limitations under the License.
 namespace xla {
 namespace {
 
-// Check if `instr` is a dynamic index instruction, i.e., dynamic-slice or
-// dynamic-update-slice with the given first operand that operates on the entire
-// shape of the instruction. To satisfy this:
-// 1. All start indices must be constant zero except only a single dimension.
-// 2. The start index of that dimension should be equal to the enclosing loop
-// induction variable.
-// 3. And, the size of that dimension must match the loop trip count.
-bool MatchShapeCoveringDynamicIndexInstruction(HloInstruction* instr,
-                                               HloInstruction* first_operand,
-                                               HloOpcode opcode,
-                                               const WhileLoopConfig& config) {
-  // Based on the instruction type, start indices start from index 1 or 2 of the
-  // operands.
-  int64_t start_indices_offset;
-  if (instr->opcode() == HloOpcode::kDynamicSlice) {
-    start_indices_offset = 1;
-  } else if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
-    start_indices_offset = 2;
-  } else {
-    return false;
-  }
-  HloInstruction* operand = instr->mutable_operand(0);
-  if (operand != first_operand) {
-    return false;
-  }
-
-  int64_t dynamic_index = -1;
-  for (int64_t start_index = start_indices_offset;
-       start_index < instr->operand_count(); ++start_index) {
-    HloInstruction* index = instr->mutable_operand(start_index);
-    // All constants must be zero in order to slice the entire shape.
-    if (Match(index, match::ConstantScalar())) {
-      std::optional<int64_t> offset =
-          LiteralUtil::LiteralAsScalarInt64(index->literal());
-      if (offset.value() != 0) {
-        return false;
-      }
-    }
-
-    // Check that the slice offset is the loop induction variable.
-    if (Match(index, match::GetTupleElement(match::Parameter(),
-                                            config.induction_var_idx))) {
-      // In order to cover the whole shape only a single non-constant index is
-      // allowed.
-      if (dynamic_index != -1) {
-        return false;
-      }
-      dynamic_index = start_index - start_indices_offset;
-    }
-  }
-
-  if (dynamic_index == -1) {
-    return false;
-  }
-
-  // The shape's broadcast_dim must be exactly equal to the loop trip count.
-  if (operand->shape().dimensions(dynamic_index) != config.trip_count) {
-    return false;
-  }
-
-  return true;
-}
-
 // This function checks whether the operand of the loop at the given index is
 // read-only.
-bool LoopIndexIsReadOnly(const HloAliasAnalysis& alias_analysis,
+bool LoopIndexIsReadOnly(const HloDataflowAnalysis& dataflow_analysis,
                          HloInstruction* while_instr, int64_t idx) {
-  const HloDataflowAnalysis& dataflow_analysis =
-      alias_analysis.dataflow_analysis();
   return !(
       dataflow_analysis.GetValueSet(while_instr->while_init(), {idx})
               .values()
@@ -134,7 +70,7 @@ bool LoopIndexIsReadOnly(const HloAliasAnalysis& alias_analysis,
 //  input to the scan loop (next iteration of the outer loop)
 // 4. The input is a shape-covering read-only instruction in the loop body.
 std::vector<std::pair<HloInstruction*, HloInstruction*>>
-FindAccumulatorInputPairs(const HloAliasAnalysis& alias_analysis,
+FindAccumulatorInputPairs(const HloDataflowAnalysis& dataflow_analysis,
                           HloInstruction* while_instr,
                           const WhileLoopConfig& config) {
   HloComputation* computation = while_instr->while_body();
@@ -159,7 +95,8 @@ FindAccumulatorInputPairs(const HloAliasAnalysis& alias_analysis,
       }
       HloInstruction* gte_user = gte->users().at(0);
       if (MatchShapeCoveringDynamicIndexInstruction(
-              gte_user, gte, HloOpcode::kDynamicUpdateSlice, config)) {
+              gte_user, gte, HloOpcode::kDynamicUpdateSlice, config)
+              .has_value()) {
         // The accumulator should be written at the same index
         if (computation->root_instruction()->mutable_operand(param_idx) ==
             gte_user) {
@@ -242,17 +179,24 @@ FindAccumulatorInputPairs(const HloAliasAnalysis& alias_analysis,
     HloInstruction* input_gte_inner =
         find_gte_instr(computation->parameter_instruction(0), input_idx_inner);
 
-    if (!LoopIndexIsReadOnly(alias_analysis, while_instr, input_idx_inner)) {
+    if (!LoopIndexIsReadOnly(dataflow_analysis, while_instr, input_idx_inner)) {
       continue;
     }
     VLOG(3) << "Input parameter scan body = " << input_gte_inner->name()
             << ", index = " << input_gte_inner->tuple_index();
 
+    // Input must have to users, one is the dynamic-slice and the other is the
+    // root of the loop body.
+    if (input_gte_inner->user_count() != 2) {
+      continue;
+    }
+    // Get the first user of the input and check if it is a shape covering
+    // dynamic-slice.
     HloInstruction* gte_user = input_gte_inner->users().at(0);
-    // Check if the input_gte_inner is a shape covering read-only instruction
+    VLOG(3) << "User of the inner loop input = " << gte_user->ToString();
     if (MatchShapeCoveringDynamicIndexInstruction(
-            gte_user, input_gte_inner, HloOpcode::kDynamicUpdateSlice,
-            config)) {
+            gte_user, input_gte_inner, HloOpcode::kDynamicSlice, config)
+            .has_value()) {
       acc_input_pairs.emplace_back(acc, input_gte_inner);
     }
   }
@@ -263,18 +207,10 @@ FindAccumulatorInputPairs(const HloAliasAnalysis& alias_analysis,
 // accumulator/input pairs of nested scan loops and removes the unnecessary
 // accumulator and replace it with the input.
 absl::StatusOr<bool> UnifyAccumulatorWithInput(
-    const HloAliasAnalysis& alias_analysis,
+    const HloDataflowAnalysis& dataflow_analysis,
     std::vector<std::pair<HloInstruction*, WhileLoopConfig>> unrollable_loops) {
-  // TODO(b/333521102): Helper function to check if a computation is a body of a
-  // while call. Currently, IsWhileBodyComputation api call does not work
-  // properly so we check it ourself. We should switch to IsWhileBodyComputation
-  // when it's fixed.
-  std::unique_ptr<CallGraph> call_graph =
-      CallGraph::Build(&alias_analysis.dataflow_analysis().module());
   auto is_while_body = [&](HloComputation* comp) {
-    std::vector<HloInstruction*> callers =
-        call_graph->GetComputationCallers(comp);
-    return !callers.empty() && callers.at(0)->opcode() == HloOpcode::kWhile;
+    return !comp->caller_instructions(HloOpcode::kWhile).empty();
   };
 
   std::vector<HloInstruction*> changed_loops;
@@ -285,8 +221,12 @@ absl::StatusOr<bool> UnifyAccumulatorWithInput(
     if (!is_while_body(while_instr->parent())) {
       continue;
     }
+    // TODO(b/260601110): Properly handle non-flat graphs.
+    if (while_instr->while_body()->caller_instructions().size() > 1) {
+      continue;
+    }
     auto acc_input_pairs =
-        FindAccumulatorInputPairs(alias_analysis, while_instr, loop_config);
+        FindAccumulatorInputPairs(dataflow_analysis, while_instr, loop_config);
     for (const auto& [acc, input] : acc_input_pairs) {
       // We only consider accumulators that are allocated inside the loop.
       // Therefore, we skip accumulators that are passed as the loop input.
@@ -297,12 +237,12 @@ absl::StatusOr<bool> UnifyAccumulatorWithInput(
       VLOG(3) << while_instr->name() << " -> " << "<accumulator_@"
               << acc->tuple_index() << ": " << acc->name() << ", " << "input_@"
               << input->tuple_index() << ": " << input->name() << ">";
-      TF_RETURN_IF_ERROR(input->ReplaceAllUsesWith(acc));
-      TF_RETURN_IF_ERROR(while_instr->while_init()->ReplaceOperandWith(
+      ABSL_RETURN_IF_ERROR(input->ReplaceAllUsesWith(acc));
+      ABSL_RETURN_IF_ERROR(while_instr->while_init()->ReplaceOperandWith(
           acc->tuple_index(),
           while_instr->while_init()->mutable_operand(input->tuple_index())));
       if (input->user_count() == 0) {
-        TF_RETURN_IF_ERROR(while_instr->while_body()->RemoveInstruction(input));
+        ABSL_RETURN_IF_ERROR(while_instr->while_body()->RemoveInstruction(input));
       }
       unified = true;
     }
@@ -312,32 +252,33 @@ absl::StatusOr<bool> UnifyAccumulatorWithInput(
 
 }  // namespace
 
-absl::StatusOr<bool> ScanLoopAccumulatorInputUnification::Run(
+absl::StatusOr<bool> ScanLoopAccumulatorInputUnification::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "HLO module before ScanLoopAccumulatorInputUnification:";
   XLA_VLOG_LINES(2, module->ToString());
 
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                      HloAliasAnalysis::Run(module));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
+                   HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
 
   // This pass can only be applied to unrollable loops since we need to find the
   // accumulators and inputs that are by definition updated and read fully via
   // dynamic-update-slice and dynamic-sliced within a loop.
   std::vector<std::pair<HloInstruction*, WhileLoopConfig>> unrollable_loops =
-      WhileLoopUnroller::GetUnrollableLoops(module, execution_threads);
+      WhileLoopUnroller::GetUnrollableLoops(module, execution_threads,
+                                            /*unroll_config=*/std::nullopt);
 
   // TODO(b/337883537): We might want to simplify compare instructions before
   // this. It helps us identify more inputs and accumulators.
-  TF_ASSIGN_OR_RETURN(bool changed, UnifyAccumulatorWithInput(
-                                        *alias_analysis, unrollable_loops));
+  ABSL_ASSIGN_OR_RETURN(bool changed, UnifyAccumulatorWithInput(*dataflow_analysis,
+                                                           unrollable_loops));
 
   if (changed) {
     for (auto& [while_instr, loop_config] : unrollable_loops) {
-      TF_RETURN_IF_ERROR(TryRemoveDeadWhileParams(while_instr).status());
+      ABSL_RETURN_IF_ERROR(TryRemoveDeadWhileParams(while_instr).status());
     }
-    TF_RETURN_IF_ERROR(TupleSimplifier{}.Run(module).status());
-    TF_RETURN_IF_ERROR(module->RemoveUnusedComputations());
+    ABSL_RETURN_IF_ERROR(TupleSimplifier{}.Run(module).status());
+    ABSL_RETURN_IF_ERROR(module->RemoveUnusedComputations());
 
     VLOG(2) << "HLO module after ScanLoopAccumulatorInputUnification:";
     XLA_VLOG_LINES(2, module->ToString());

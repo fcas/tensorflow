@@ -20,17 +20,17 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 
 namespace tensorflow {
-Status GetWindowedOutputSizeVerbose(int64_t input_size, int64_t filter_size,
-                                    int64_t dilation_rate, int64_t stride,
-                                    Padding padding_type, int64_t* output_size,
-                                    int64_t* padding_before,
-                                    int64_t* padding_after) {
+absl::Status GetWindowedOutputSizeVerbose(
+    int64_t input_size, int64_t filter_size, int64_t dilation_rate,
+    int64_t stride, Padding padding_type, int64_t* output_size,
+    int64_t* padding_before, int64_t* padding_after) {
   if (stride <= 0) {
-    return errors::InvalidArgument("Stride must be > 0, but got ", stride);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Stride must be > 0, but got ", stride));
   }
   if (dilation_rate < 1) {
-    return errors::InvalidArgument("Dilation rate must be >= 1, but got ",
-                                   dilation_rate);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Dilation rate must be >= 1, but got ", dilation_rate));
   }
 
   // See also the parallel implementation in GetWindowedOutputSizeFromDimsV2.
@@ -57,21 +57,20 @@ Status GetWindowedOutputSizeVerbose(int64_t input_size, int64_t filter_size,
       break;
   }
   if (*output_size < 0) {
-    return errors::InvalidArgument(
-        "Computed output size would be negative: ", *output_size,
-        " [input_size: ", input_size,
-        ", effective_filter_size: ", effective_filter_size,
-        ", stride: ", stride, "]");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Computed output size would be negative: ", *output_size,
+                     " [input_size: ", input_size, ", effective_filter_size: ",
+                     effective_filter_size, ", stride: ", stride, "]"));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status GetWindowedOutputSize(int64_t input_size, int64_t filter_size,
-                             int dilation_rate, int64_t stride,
-                             Padding padding_type, int64_t* output_size,
-                             int64_t* padding_size) {
+absl::Status GetWindowedOutputSize(int64_t input_size, int64_t filter_size,
+                                   int dilation_rate, int64_t stride,
+                                   Padding padding_type, int64_t* output_size,
+                                   int64_t* padding_size) {
   if (padding_type == Padding::EXPLICIT) {
-    return errors::Internal(
+    return absl::InternalError(
         "GetWindowedOutputSize does not handle EXPLICIT padding; call "
         "GetWindowedOutputSizeVerbose instead");
   }
@@ -81,18 +80,18 @@ Status GetWindowedOutputSize(int64_t input_size, int64_t filter_size,
                                       padding_size, &padding_after_unused);
 }
 
-Status Get3dOutputSizeV2(const std::array<int64_t, 3>& input,
-                         const std::array<int64_t, 3>& window,
-                         const std::array<int64_t, 3>& dilations,
-                         const std::array<int64_t, 3>& strides,
-                         Padding padding_type,
-                         std::array<int64_t, 3>* output_ptr,
-                         std::array<int64_t, 3>* padding_ptr) {
+absl::Status Get3dOutputSizeV2(const std::array<int64_t, 3>& input,
+                               const std::array<int64_t, 3>& window,
+                               const std::array<int64_t, 3>& dilations,
+                               const std::array<int64_t, 3>& strides,
+                               Padding padding_type,
+                               std::array<int64_t, 3>* output_ptr,
+                               std::array<int64_t, 3>* padding_ptr) {
   for (size_t i = 0; i < input.size(); ++i) {
     TF_RETURN_IF_ERROR(GetWindowedOutputSize(
         input[i], window[i], dilations[i], strides[i], padding_type,
         &(*output_ptr)[i], &(*padding_ptr)[i]));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 }  // namespace tensorflow

@@ -56,7 +56,7 @@ void EvalDequantize(const Tensor& input, const Tensor& scales,
                                         quantization_axis, output);
   } else {
     EvalPerTensorDequantize<Tin, Tout>(input, scales.scalar<float>()(),
-                                       zero_points.scalar<int32>()(), output);
+                                       zero_points.scalar<int32_t>()(), output);
   }
 }
 
@@ -71,10 +71,11 @@ class UniformDequantizeOp : public OpKernel {
                    context->GetAttr("quantization_axis", &quantization_axis_));
 
     OP_REQUIRES(context,
-                (std::is_same<Tin, qint8>() || std::is_same<Tin, qint32>()),
-                InvalidArgument("Unsupported input type."));
+                (std::is_same<Tin, qint8>() || std::is_same<Tin, quint8>() ||
+                 std::is_same<Tin, qint32>()),
+                absl::InvalidArgumentError("Unsupported input type."));
     OP_REQUIRES(context, (std::is_same<Tout, float>()),
-                InvalidArgument("Unsupported output type."));
+                absl::InvalidArgumentError("Unsupported output type."));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -86,7 +87,8 @@ class UniformDequantizeOp : public OpKernel {
                                 input.shape(), scales.shape(),
                                 zero_points.shape(), quantization_axis_));
     OP_REQUIRES(context, AllElementsPositive<float>(scales),
-                InvalidArgument("rhs scales elements must be all positive."));
+                absl::InvalidArgumentError(
+                    "rhs scales elements must be all positive."));
 
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context,
@@ -105,6 +107,12 @@ REGISTER_KERNEL_BUILDER(Name("UniformDequantize")
                             .TypeConstraint<qint8>("Tin")
                             .TypeConstraint<float>("Tout"),
                         UniformDequantizeOp<qint8, float>);
+
+REGISTER_KERNEL_BUILDER(Name("UniformDequantize")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<quint8>("Tin")
+                            .TypeConstraint<float>("Tout"),
+                        UniformDequantizeOp<quint8, float>);
 
 REGISTER_KERNEL_BUILDER(Name("UniformDequantize")
                             .Device(DEVICE_CPU)

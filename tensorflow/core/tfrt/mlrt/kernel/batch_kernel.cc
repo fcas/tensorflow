@@ -24,6 +24,9 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "absl/base/optimization.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/criticality.h"
+#include "tensorflow/core/framework/device.h"
+#include "tensorflow/core/framework/node_def_util.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/kernels/batching_util/batch_resource_base.h"
@@ -32,10 +35,15 @@ limitations under the License.
 #include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/runtime_fallback/runtime/fallback_batch_kernel.h"
 #include "tensorflow/core/tfrt/fallback/op_kernel_runner_cache.h"
+#include "tensorflow/core/tfrt/mlrt/bytecode/span.h"
+#include "tensorflow/core/tfrt/mlrt/interpreter/context.h"
 #include "tensorflow/core/tfrt/mlrt/interpreter/execute.h"
+#include "tensorflow/core/tfrt/mlrt/interpreter/register_span.h"
 #include "tensorflow/core/tfrt/mlrt/kernel/context.h"
 #include "tensorflow/core/tfrt/mlrt/kernel/kernel_runner_utils.h"
 #include "tensorflow/core/tfrt/utils/fallback_tensor.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
 #include "tfrt/concurrency/chain.h"  // from @tf_runtime
 #include "tfrt/host_context/resource_context.h"  // from @tf_runtime
 
@@ -45,44 +53,6 @@ namespace {
 
 constexpr char kMlrtBatchFunctionName[] = "MlrtBatchFunction";
 constexpr char kOpKernelRunnerCacheResourceName[] = "MlrtOpKernelCache";
-
-// The custom KernelFrame for tf_mlrt.batch_function op.
-struct BatchFunctionOp : mlrt::KernelFrame {
-  using KernelFrame::KernelFrame;
-
-  static constexpr char kName[] = "tf_mlrt.batch_function";
-  static constexpr bool kUseCustomDevice = false;
-
-  mlrt::RegisterValueSpan<tfrt_stub::FallbackTensor> args() const {
-    return arguments();
-  }
-
-  absl::string_view device_name() const {
-    return attributes().GetAs<mlrt::bc::String>(0).Get();
-  }
-
-  tensorflow::Device* device() const {
-    return context().fallback_request_state().cpu_device();
-  }
-
-  mlrt::bc::Function f() const {
-    uint32_t func_idx = attributes().GetAs<uint32_t>(1);
-    return execution_context()
-        .loaded_executable()
-        .executable()
-        .functions()[func_idx];
-  }
-
-  absl::string_view node_def_text() const {
-    return attributes().GetAs<mlrt::bc::String>(2).Get();
-  }
-
-  Context& context() const {
-    return execution_context().GetUserContext<Context>();
-  }
-
-  void Invoke();
-};
 
 // A thread local variable for passing the mlrt::ExecutionContext in the same
 // thread.
@@ -118,18 +88,20 @@ class ScopedBatchFunctionMlrtContext {
   mlrt::ExecutionContext* last_context_ = nullptr;
 };
 
-void BatchFunctionOp::Invoke() {
-  ScopedBatchFunctionMlrtContext scoped_context(&execution_context());
+template <typename Frame>
+void BatchFunctionInvokeHelper(Frame& frame) {
+  ScopedBatchFunctionMlrtContext scoped_context(&frame.execution_context());
 
-  const auto& fallback_request_state = context().fallback_request_state();
+  const auto& fallback_request_state = frame.context().fallback_request_state();
 
-  auto* runner_cache = context()
-                           .resource_context()
-                           .GetOrCreateResource<tfrt_stub::OpKernelRunnerCache>(
-                               kOpKernelRunnerCacheResourceName);
+  auto* runner_cache =
+      frame.context()
+          .resource_context()
+          .template GetOrCreateResource<tfrt_stub::OpKernelRunnerCache>(
+              kOpKernelRunnerCacheResourceName);
 
-  auto attr_builder = [node_def_text = node_def_text(),
-                       f = f()](tensorflow::AttrValueMap* attr_value_map) {
+  auto attr_builder = [node_def_text = frame.node_def_text(), f = frame.f()](
+                          tensorflow::AttrValueMap* attr_value_map) {
     tensorflow::NodeDef node_def;
     // TODO(182876485): Remove the conditional selection after protobuf version
     // is bumped up.
@@ -153,21 +125,21 @@ void BatchFunctionOp::Invoke() {
   };
 
   tfrt::Location loc;
-  loc.data = absl::bit_cast<intptr_t>(f());
+  loc.data = absl::bit_cast<intptr_t>(frame.f());
 
   auto kernel_runner = runner_cache->GetOrCreate(
-      loc, kMlrtBatchFunctionName, device_name(), args().size(), attr_builder,
-      fallback_request_state.device_manager(),
+      loc, kMlrtBatchFunctionName, frame.device_name(), frame.args().size(),
+      attr_builder, fallback_request_state.device_manager(),
       fallback_request_state.process_function_library_runtime());
 
   if (ABSL_PREDICT_FALSE(!kernel_runner.ok())) {
-    execution_context().Fail(std::move(kernel_runner).status());
+    frame.execution_context().Fail(std::move(kernel_runner).status());
     return;
   }
 
   DCHECK((*kernel_runner)->IsAsync());
   ExecuteKernelRunner</*IsAsync=*/true>(
-      *this, context(), fallback_request_state, **kernel_runner);
+      frame, frame.context(), fallback_request_state, **kernel_runner);
 }
 
 // A customized BatchResource whose batch function is a mlrt::bc::Function.
@@ -181,6 +153,12 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
 
    private:
     std::unique_ptr<BatchTask> CreateDerivedTask() override {
+#if defined(PLATFORM_GOOGLE)
+      // ScopedCriticality is needed to ensure that the criticality is set
+      // correctly for the derived task.
+      tsl::criticality::ScopedCriticality scoped_criticality(
+          this->criticality());
+#endif
       return std::make_unique<MlrtBatchTask>(this->caller_context);
     }
   };
@@ -196,7 +174,15 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
   // local is used to pass the context.
   static absl::StatusOr<std::unique_ptr<BatchTask>> CreateBatchTask(
       OpKernelContext*) {
-    return {std::make_unique<MlrtBatchTask>(GetBatchFunctionMlrtContext())};
+    // Configure the batch task with params from the fallback request state.
+    const auto& context =
+        GetBatchFunctionMlrtContext()->GetUserContext<Context>();
+    const auto& fallback_request_state = context.fallback_request_state();
+    auto task = std::make_unique<MlrtBatchTask>(GetBatchFunctionMlrtContext());
+    task->rpc_deadline =
+        fallback_request_state.rpc_deadline_for_batching_task_cancellation();
+    task->is_rpc_cancelled = fallback_request_state.is_rpc_cancelled_callback();
+    return task;
   }
 
   // This can only be called in Compute() and ComputeAsync() because thread
@@ -218,13 +204,24 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
     return batch_function.name();
   }
 
-  static Status Create(OpKernelContext* c,
-                       const serving::BatchResourceOptions& options,
-                       mlrt::bc::Function function,
-                       bool enable_large_batch_splitting, bool disable_padding,
-                       std::unique_ptr<MlrtBatchResource>* resource) {
+  static absl::Status Create(OpKernelContext* c,
+                             const serving::BatchResourceOptions& options,
+                             mlrt::bc::Function function,
+                             bool enable_large_batch_splitting,
+                             bool disable_padding,
+                             std::unique_ptr<MlrtBatchResource>* resource) {
     BatcherT::Options batcher_options;
     batcher_options.num_batch_threads = options.num_batch_threads;
+    batcher_options.num_warmup_batch_threads = options.num_warmup_batch_threads;
+    if (options.mixed_priority_batching_policy ==
+        serving::MixedPriorityBatchingPolicy::kPriorityMerge) {
+      batcher_options.use_global_scheduler = true;
+      batcher_options.rank_queues = true;
+    }
+    if (options.enable_priority_aware_batch_scheduler) {
+      batcher_options.use_global_scheduler = true;
+      batcher_options.rank_queues = true;
+    }
     std::shared_ptr<BatcherT> batcher;
     TF_RETURN_IF_ERROR(BatcherT::Create(batcher_options, &batcher));
 
@@ -234,16 +231,21 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
             options.num_batch_threads, options.max_batch_size,
             options.batch_timeout_micros, options.max_enqueued_batches,
             options.allowed_batch_sizes, enable_large_batch_splitting,
-            disable_padding, options.low_priority_max_batch_size,
+            disable_padding,
+            /* batch_padding_policy= */ options.batch_padding_policy,
+            options.low_priority_max_batch_size,
             options.low_priority_batch_timeout_micros,
             options.low_priority_max_enqueued_batches,
             options.low_priority_allowed_batch_sizes,
-            options.mixed_priority_batching_policy),
+            options.mixed_priority_batching_policy,
+            options.enable_priority_aware_batch_scheduler,
+            options.enable_priority_aware_batch_scheduler_resplit,
+            options.enable_batching_task_lazy_cancellation),
         options.allowed_batch_sizes));
     return absl::OkStatus();
   }
 
-  static Status Create(
+  static absl::Status Create(
       OpKernelContext* c,
       AdaptiveBatcherT::Options adaptive_shared_batch_scheduler_options,
       int32_t max_batch_size, int32_t batch_timeout_micros,
@@ -265,7 +267,7 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
     return absl::OkStatus();
   }
 
-  string DebugString() const final { return "MlrtBatchResource"; }
+  std::string DebugString() const final { return "MlrtBatchResource"; }
 
   mlrt::bc::Function batch_function() const { return batch_function_; }
 
@@ -291,7 +293,7 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
   void ProcessFuncBatchImpl(
       const BatchTask& last_task, absl::Span<const Tensor> inputs,
       std::vector<Tensor>* combined_outputs,
-      std::function<void(const Status&)> done) const override;
+      std::function<void(const absl::Status&)> done) const override;
 
   mlrt::bc::Function batch_function_;
 };
@@ -299,7 +301,7 @@ class MlrtBatchResource : public tensorflow::serving::BatchResourceBase {
 void MlrtBatchResource::ProcessFuncBatchImpl(
     const BatchTask& last_task, absl::Span<const Tensor> inputs,
     std::vector<Tensor>* combined_outputs,
-    std::function<void(const Status&)> done) const {
+    std::function<void(const absl::Status&)> done) const {
   std::vector<mlrt::Value> arguments;
   arguments.reserve(inputs.size());
   for (const auto& input : inputs) {
@@ -308,7 +310,7 @@ void MlrtBatchResource::ProcessFuncBatchImpl(
 
   std::vector<mlrt::Value> results(batch_function_.output_regs().size());
 
-  const auto& task = down_cast<const MlrtBatchTask&>(last_task);
+  const auto& task = absl::down_cast<const MlrtBatchTask&>(last_task);
   DCHECK(task.context);
   mlrt::ExecutionContext& caller_context = *task.caller_context;
 
@@ -350,6 +352,7 @@ void MlrtBatchResource::ProcessFuncBatchImpl(
       },
       tsl::profiler::ContextType::kTfrtExecutor, step_id,
       tsl::profiler::TraceMeLevel::kInfo);
+  auto trace_me_context_id = activity.GetContextId();
 
   // Copy the ExecutionContext and its user contexts for async execution.
   auto user_contexts = caller_context.CopyUserContexts();
@@ -371,8 +374,12 @@ void MlrtBatchResource::ProcessFuncBatchImpl(
   execution_context.CallByMove(batch_function_, absl::MakeSpan(arguments),
                                absl::MakeSpan(results));
 
-  work_queue->AddTask(
-      [&execution_context]() { mlrt::Execute(execution_context); });
+  work_queue->AddTask([&execution_context, &trace_me_context_id]() {
+    tsl::profiler::TraceMeConsumer activity(
+        [&] { return "RunMlrtFunction::Execute"; },
+        tsl::profiler::ContextType::kTfrtExecutor, trace_me_context_id);
+    mlrt::Execute(execution_context);
+  });
 
   work_queue->Await(chain.CopyRCRef());
 
@@ -387,6 +394,85 @@ void MlrtBatchResource::ProcessFuncBatchImpl(
   done(execution_context.status());
 }
 
+// The custom KernelFrame for tf_mlrt.batch_function op.
+struct BatchFunctionOp : mlrt::KernelFrame {
+  using KernelFrame::KernelFrame;
+
+  static constexpr char kName[] = "tf_mlrt.batch_function";
+  static constexpr bool kUseCustomDevice = false;
+
+  mlrt::RegisterValueSpan<tfrt_stub::FallbackTensor> args() const {
+    return arguments();
+  }
+
+  absl::string_view device_name() const {
+    return attributes().GetAs<mlrt::bc::String>(0).Get();
+  }
+
+  tensorflow::Device* device() const {
+    return context().fallback_request_state().cpu_device();
+  }
+
+  mlrt::bc::Function f() const {
+    uint32_t func_idx = attributes().GetAs<uint32_t>(1);
+    return execution_context()
+        .loaded_executable()
+        .executable()
+        .functions()[func_idx];
+  }
+
+  absl::string_view node_def_text() const {
+    return attributes().GetAs<mlrt::bc::String>(2).Get();
+  }
+
+  Context& context() const {
+    return execution_context().GetUserContext<Context>();
+  }
+
+  void Invoke() { BatchFunctionInvokeHelper(*this); }
+};
+
+struct BatchFunctionWithDeviceOp : mlrt::KernelFrame {
+  using KernelFrame::KernelFrame;
+
+  static constexpr char kName[] = "tf_mlrt.batch_function.device";
+  static constexpr bool kUseCustomDevice = true;
+
+  // This is NOT the custom device name. Keep this for backwards compatibility.
+  absl::string_view device_name() const {
+    return attributes().GetAs<mlrt::bc::String>(0).Get();
+  }
+
+  mlrt::bc::Function f() const {
+    uint32_t func_idx = attributes().GetAs<uint32_t>(1);
+    return execution_context()
+        .loaded_executable()
+        .executable()
+        .functions()[func_idx];
+  }
+
+  absl::string_view node_def_text() const {
+    return attributes().GetAs<mlrt::bc::String>(2).Get();
+  }
+
+  Context& context() const {
+    return execution_context().GetUserContext<Context>();
+  }
+
+  void Invoke() { BatchFunctionInvokeHelper(*this); }
+  mlrt::RegisterValueSpan<tfrt_stub::FallbackTensor> args() const {
+    return arguments().drop_front();
+  }
+
+  mlrt::bc::Span<uint8_t> last_uses() const {
+    return KernelFrame::last_uses().drop_front();
+  }
+
+  const std::shared_ptr<tensorflow::Device>& device() const {
+    return arguments()[0].Get<std::shared_ptr<tensorflow::Device>>();
+  }
+};
+
 REGISTER_KERNEL_BUILDER(
     Name(kMlrtBatchFunctionName).Device(DEVICE_CPU),
     tfrt_stub::BatchFunctionFallbackKernel<MlrtBatchResource>);
@@ -398,6 +484,7 @@ REGISTER_KERNEL_BUILDER(
     Name(kMlrtBatchFunctionName).Device(DEVICE_GPU),
     tfrt_stub::BatchFunctionFallbackKernel<MlrtBatchResource>);
 
+// LINT.IfChange
 // Identical to BatchFunction except it has 2 extra TFRT attributes and it does
 // not have `f` attribute. Users will not invoke this op directly.
 REGISTER_OP(kMlrtBatchFunctionName)
@@ -412,15 +499,58 @@ REGISTER_OP(kMlrtBatchFunctionName)
     .Attr("container: string = ''")
     .Attr("shared_name: string = ''")
     .Attr("batching_queue: string = ''")
+    // A separate set of batch options for the low priority requests, which is
+    // used for priority queue batching.
+    .Attr("low_priority_max_batch_size: int = 0")
+    .Attr("low_priority_batch_timeout_micros: int = 0")
+    .Attr("low_priority_allowed_batch_sizes: list(int) = []")
+    .Attr("low_priority_max_enqueued_batches: int = 0")
+    // Policy that determines the mixed priority batching behavior when low
+    // priority batch parameters are present.
+    //
+    // low_priority_padding_with_next_allowed_batch_size: If high priority
+    // batches time out without reaching the max batch size, low priority inputs
+    // pad the high priority batches up to the next allowed batch size. A low
+    // priority only batch gets schedule only when the low priority input times
+    // out or reaches the max batch size while there is no high priority input
+    // waiting to be processed.
+    // low_priority_padding_with_max_batch_size: Same as above but pad up to the
+    // max batch size.
+    // priority_isolation: High priority and low priority inputs never share the
+    // same batch, i.e., no low priority input padding high priority batches.
+    // Low priority inputs get scheduled only as part of low priority only
+    // batches as described above.
+    // priority_merge: High and low priority inputs are queued separately but
+    // when a batch needs to be scheduled, the two queues are treated as one
+    // merged flat list of inputs with high priority inputs at the front of the
+    // list of tasks to use for the next batch. If all inputs are of the same
+    // priority, the behavior is the same as disabling prioritization.
+    .Attr(
+        "mixed_priority_policy: "
+        "{'low_priority_padding_with_max_batch_size', "
+        "'low_priority_padding_with_next_allowed_batch_size', "
+        "'priority_isolation', 'priority_merge'} = "
+        "'low_priority_padding_with_max_batch_size'")
+    // See the description of the batch_padding_policy attribute of
+    // BatchFunction in core/ops/batch_ops.cc.
+    .Attr(
+        "batch_padding_policy: "
+        "{'PAD_UP', 'BATCH_DOWN', 'MINIMIZE_TPU_COST_PER_REQUEST'} = 'PAD_UP'")
     .Attr("Tin: list(type)")
     .Attr("Tcaptured: list(type) >= 0")
     .Attr("Tout: list(type)")
     .Attr("enable_large_batch_splitting: bool = false")
     .Attr("disable_padding: bool = false")
+    .Attr("enable_priority_aware_batch_scheduler: bool = false")
+    .Attr("enable_priority_aware_batch_scheduler_resplit: bool = false")
+    .Attr("enable_batching_task_lazy_cancellation: bool = false")
+    .Attr("num_warmup_batch_threads: int = 0")
     // An opaque function handle, which is an int64_t, for passing the batch
     // function.
     .Attr("opaque_function_handle: int")
     .SetShapeFn(shape_inference::UnknownShape);
+
+// LINT.ThenChange(//tensorflow/core/runtime_fallback/runtime/runtime_fallback_batch_tf_opkernels.cc)
 
 }  // namespace
 
@@ -430,6 +560,7 @@ REGISTER_OP(kMlrtBatchFunctionName)
 // this Register function.
 void RegisterTfMlrtBatchKernels(mlrt::KernelRegistry& registry) {
   registry.Register<BatchFunctionOp>();
+  registry.Register<BatchFunctionWithDeviceOp>();
 }
 
 }  // namespace tf_mlrt

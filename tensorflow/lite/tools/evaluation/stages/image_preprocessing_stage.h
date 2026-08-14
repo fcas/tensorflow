@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "xla/tsl/util/stats_calculator.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/lite/c/c_api_types.h"
@@ -52,6 +53,7 @@ class ImagePreprocessingStage : public EvaluationStage {
 
   // Provides preprocessing output.
   void* GetPreprocessedImageData();
+  size_t GetPreprocessedImageBytes();
 
  private:
   std::string* image_path_ = nullptr;

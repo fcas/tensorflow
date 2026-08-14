@@ -1,9 +1,24 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # python/lib/core package
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable", "tf_external_workspace_visible", "tf_python_pybind_extension")
 
 visibility = [
-    "//engedu/ml/tf_from_scratch:__pkg__",
     "//third_party/cloud_tpu/convergence_tools:__subpackages__",
     "//third_party/mlperf:__subpackages__",
     "//tensorflow:internal",
@@ -39,8 +54,8 @@ cc_library(
         "//tensorflow/c:tf_datatype_hdrs",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
-        "@local_xla//xla/tsl/python/lib/core:ml_dtypes_lib",
-        "@local_xla//xla/tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:ml_dtypes_lib",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -52,7 +67,7 @@ cc_library(
         "//tensorflow/c:tf_status_headers",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
-        "//third_party/python_runtime:headers",
+        "@xla//third_party/python_runtime:headers",
     ],
     alwayslink = 1,
 )
@@ -95,8 +110,9 @@ cc_library(
     deps = [
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/common_runtime:core_cpu_headers_lib",
-        "//third_party/python_runtime:headers",
+        "@com_google_absl//absl/status",
         "@pybind11",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
 
@@ -111,6 +127,7 @@ cc_library(
     deps = [
         ":pybind11_status_headers",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -153,6 +170,7 @@ cc_library(
     name = "py_func_lib",
     srcs = ["py_func.cc"],
     hdrs = ["py_func.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":ndarray_tensor",
         ":ndarray_tensor_bridge",
@@ -170,8 +188,8 @@ cc_library(
         "//tensorflow/core/common_runtime/eager:tensor_handle",
         "//tensorflow/python/eager:pywrap_tfe_lib",
         "//third_party/py/numpy:headers",
-        "//third_party/python_runtime:headers",
-        "@local_xla//xla/tsl/python/lib/core:numpy",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
     alwayslink = 1,
 )
@@ -185,8 +203,8 @@ tf_python_pybind_extension(
     ],
     deps = [
         "//tensorflow/python:py_func_headers_lib",
-        "//third_party/python_runtime:headers",
         "@pybind11",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
 
@@ -195,7 +213,7 @@ cc_library(
     srcs = ["safe_pyobject_ptr.cc"],
     hdrs = ["safe_pyobject_ptr.h"],
     deps = [
-        "//third_party/python_runtime:headers",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
 
@@ -213,7 +231,7 @@ cc_library(
         "//tensorflow/c:headers",
         "//tensorflow/c:safe_ptr_hdr",
         "//tensorflow/c/eager:headers",
-        "@local_xla//xla/tsl/python/lib/core:numpy_hdr",
+        "@xla//xla/tsl/python/lib/core:numpy_hdr",
     ],
     features = [
         "-parse_headers",
@@ -227,8 +245,8 @@ cc_library(
         "//tensorflow/core:framework_internal_headers_lib",
         "//tensorflow/core/common_runtime:core_cpu_headers_lib",
         "//third_party/py/numpy:headers",
-        "//third_party/python_runtime:headers",
-        "@local_xla//xla/tsl/python/lib/core:numpy",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -249,8 +267,8 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/python/lib/core:safe_pyobject_ptr",
-        "@local_xla//xla/tsl/python/lib/core:ml_dtypes_lib",
-        "@local_xla//xla/tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:ml_dtypes_lib",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -272,8 +290,8 @@ cc_library(
         "//tensorflow/c/eager:tfe_tensorhandle_internal",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
-        "@local_xla//xla/tsl/python/lib/core:numpy",
+        "@xla//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -285,7 +303,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:script_ops_op_lib",
         "//tensorflow/core/platform:logging",
-        "//third_party/python_runtime:headers",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
 
@@ -302,8 +320,8 @@ cc_library(
 #         "@com_google_absl//absl/log:check",
 #         "@com_google_absl//absl/status",
 #         "//third_party/clif/python:clif",
-#         "//third_party/python_runtime:headers",
-#         "@local_xla//xla/tsl/python/lib/core:numpy",
+#         "@xla//third_party/python_runtime:headers",
+#         "@xla//xla/tsl/python/lib/core:numpy",
 #         "//tensorflow/core:framework",
 #     ],
 # )

@@ -2050,7 +2050,7 @@ class CentralCropTest(test_util.TensorFlowTestCase):
           _ = image_ops.central_crop(x, 1.01)
 
   def testErrorOnInvalidShapes(self):
-    x_shapes = [None, [], [3], [3, 9], [3, 9, 3, 9, 3]]
+    x_shapes = [[], [3], [3, 9], [3, 9, 3, 9, 3]]
     for x_shape in x_shapes:
       x_np = np.ones(x_shape, dtype=np.float32)
       for use_gpu in [True, False]:
@@ -4823,6 +4823,14 @@ class PngTest(test_util.TensorFlowTestCase):
 
       self.assertAllEqual(png_stack.shape, (0, 4))
 
+  def testZeroDimensionImage(self):
+    # Encoding an image with a zero-sized dimension should raise a ValueError
+    # instead of crashing with SIGABRT. See GitHub issue #108916.
+    for shape in [(2, 0, 3), (0, 2, 3), (2, 3, 0)]:
+      with self.assertRaisesRegex(ValueError, "must be > 0"):
+        image = constant_op.constant(np.zeros(shape, dtype=np.uint8))
+        image_ops.encode_png(image)
+
   def testShape(self):
     # Shape function requires placeholders and a graph.
     with ops.Graph().as_default():
@@ -4896,6 +4904,176 @@ class GifTest(test_util.TensorFlowTestCase):
       self.assertAllEqual(image[0], frame0)
       self.assertAllEqual(image[1], frame1)
       self.assertAllEqual(image[2], frame2)
+
+
+class WebpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+
+  def _path(self, name):
+    base = "tensorflow/core/lib/webp/testdata/"
+    return os.path.join(base, name)
+
+  @parameterized.named_parameters([
+      ("_rgbNoise", "RGB_noise_large_pixels_115x115.webp", (1, 115, 115, 3)),
+      ("_lossless", "lossless_raw.webp", (1, 32, 32, 3)),
+      ("_alpha", "lossy_alpha1.webp", (1, 307, 1000, 4)),
+  ])
+  def testRegularFile(self, filename, expected_dimensions):
+    # Read a real WebP image, via both APIs and check they're equal.
+    with self.cached_session():
+      webp = io_ops.read_file(self._path(filename))
+      image0 = image_ops.decode_webp(webp)
+      image1 = image_ops.decode_image(webp)
+      webp, image0, image1 = self.evaluate([webp, image0, image1])
+      self.assertEqual(image0.shape, expected_dimensions)
+      self.assertAllEqual(image0, image1)
+
+  def testAnimation(self):
+    # Read a WebP animation file, via both APIs and check they're equal.
+    with self.cached_session():
+      webp = io_ops.read_file(self._path("bouncy_ball.webp"))
+      expected_dimensions = (15, 450, 450, 4)
+
+      image0 = image_ops.decode_webp(webp)
+      image1 = image_ops.decode_image(webp, expand_animations=True)
+      webp, image0, image1 = self.evaluate([webp, image0, image1])
+      self.assertEqual(image0.shape, expected_dimensions)
+      self.assertAllEqual(image0, image1)
+
+  def testAnimationFrame0(self):
+    # Read a WebP animation file, via both APIs, but drop
+    # animation. Compare frame 0.
+    with self.cached_session():
+      webp = io_ops.read_file(self._path("bouncy_ball.webp"))
+
+      expected_anim_dimensions = (15, 450, 450, 4)
+      expected_still_dimensions = (450, 450, 4)
+
+      # decode_webp will return all the frames, but we should get the
+      # same frame 0 in both cases.
+      image0 = image_ops.decode_webp(webp)
+      image1 = image_ops.decode_image(webp, expand_animations=False)
+      webp, image0, image1 = self.evaluate([webp, image0, image1])
+      self.assertEqual(image0.shape, expected_anim_dimensions)
+      self.assertEqual(image1.shape, expected_still_dimensions)
+
+      # Compare frame0 of image0 to image1.
+      self.assertAllEqual(image0[0, ...], image1)
+
+  def testChannelsArg(self):
+    # Shape function requires placeholders and a graph.
+    with ops.Graph().as_default():
+      with self.cached_session():
+        webp = io_ops.read_file(
+            self._path("RGB_noise_large_pixels_115x115.webp")
+        )
+
+        for channels in 0, 3, 4:
+          image = image_ops.decode_webp(webp, channels=channels)
+          self.assertEqual(
+              image.get_shape().as_list(), [None, None, None, channels or None]
+          )
+
+  def testInvalidChannels(self):
+    with self.cached_session():
+      webp = io_ops.read_file(self._path("RGB_noise_large_pixels_115x115.webp"))
+
+      # DecodeImage supports grayscale, but WebP does not.
+      message = "WebP only supports 3 or 4 channels"
+      with self.assertRaisesRegex(
+          (errors.InvalidArgumentError, ValueError), message
+      ):
+        op = image_ops.decode_webp(webp, channels=1)
+        self.evaluate(op)
+
+  @parameterized.named_parameters(
+      [("_int8", np.int8), ("_int16", np.int16), ("_float32", np.float32)]
+  )
+  def testUnsupportedDtypes(self, dtype):
+    with self.cached_session():
+      webp = io_ops.read_file(self._path("RGB_noise_large_pixels_115x115.webp"))
+
+      message = "WebP only supports uint8"
+      with self.assertRaisesRegex(
+          (errors.InvalidArgumentError, ValueError), message
+      ):
+        # Note: we're testing with decode_image, since decode_webp
+        # *statically* does not support anything other than uint8.
+        op = image_ops.decode_image(webp, dtype=dtype)
+        self.evaluate(op)
+
+
+class JxlTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+
+  def _path(self, name):
+    base = "tensorflow/core/lib/jxl/testdata/"
+    return os.path.join(base, name)
+
+  @parameterized.named_parameters([
+      ("_rgb", "random_128x96_rbg.png", "random_128x96_rbg_q100.jxl"),
+      ("_rgba", "random_128x96_rbga.png", "random_128x96_rbga_q100.jxl"),
+      ("_gray", "random_128x96_gray.png", "random_128x96_gray_q100.jxl"),
+  ])
+  def testDecodeLossless(self, png_filename, jxl_filename):
+    with self.cached_session():
+      png_file = io_ops.read_file(self._path(png_filename))
+      png_image = self.evaluate(image_ops.decode_image(png_file))
+      jxl_file = io_ops.read_file(self._path(jxl_filename))
+      jxl_image0 = self.evaluate(image_ops.decode_image(jxl_file))
+      jxl_image1 = self.evaluate(image_ops.decode_jxl(jxl_file))
+      self.assertAllEqual(jxl_image0, png_image)
+      self.assertAllEqual(jxl_image1, png_image)
+
+  @parameterized.named_parameters([
+      ("_rgb", "random_128x96_rbg_q50.jxl", (96, 128, 3)),
+      ("_rgba", "random_128x96_rbga_q50.jxl", (96, 128, 4)),
+      ("_gray", "random_128x96_gray_q50.jxl", (96, 128, 1)),
+  ])
+  def testDecodeLossy(self, jxl_filename, expected_jxl_shape):
+    with self.cached_session():
+      jxl_file = io_ops.read_file(self._path(jxl_filename))
+      jxl_image0 = self.evaluate(image_ops.decode_image(jxl_file))
+      jxl_image1 = self.evaluate(image_ops.decode_jxl(jxl_file))
+      self.assertEqual(jxl_image0.shape, expected_jxl_shape)
+      self.assertEqual(jxl_image1.shape, expected_jxl_shape)
+
+  @parameterized.named_parameters([
+      ("_rgb_q50", "random_128x96_rbg_q50.jxl", 3),
+      ("_rgba_q50", "random_128x96_rbga_q50.jxl", 4),
+      ("_gray_q50", "random_128x96_gray_q50.jxl", 1),
+      ("_rgb_q100", "random_128x96_rbg_q100.jxl", 3),
+      ("_rgba_q100", "random_128x96_rbga_q100.jxl", 4),
+      ("_gray_q100", "random_128x96_gray_q100.jxl", 1),
+  ])
+  def testChannelsArgument(self, jxl_filename, jxl_channels):
+    with self.cached_session():
+      jxl_file = io_ops.read_file(self._path(jxl_filename))
+      for channels in (0, 1, 3, 4):
+        if channels not in (0, jxl_channels):
+          message = "Number of channels requested does not match input"
+          with self.assertRaisesRegex(
+              (errors.InvalidArgumentError, ValueError), message
+          ):
+            self.evaluate(
+                image_ops.decode_jxl(jxl_file, channels=channels)
+            )
+          continue
+        else:
+          image = self.evaluate(
+              image_ops.decode_jxl(jxl_file, channels=channels))
+          self.assertEqual(image.shape, (96, 128, channels or jxl_channels))
+
+  @parameterized.named_parameters(
+      [("_int8", np.int8), ("_int16", np.int16), ("_float32", np.float32)]
+  )
+  def testUnsupportedDtypeArgument(self, dtype):
+    with self.cached_session():
+      jxl_file = io_ops.read_file(self._path("random_128x96_rbga_q50.jxl"))
+      message = "JXL only supports uint8 for dtype"
+      with self.assertRaisesRegex(
+          (errors.InvalidArgumentError, ValueError), message
+      ):
+        # decode_jxl statically does not support anything other than uint8.
+        self.evaluate(image_ops.decode_image(jxl_file, dtype=dtype))
 
 
 class ConvertImageTest(test_util.TensorFlowTestCase):
@@ -6220,6 +6398,26 @@ class DecodeImageTest(test_util.TensorFlowTestCase, parameterized.TestCase):
       (2525, 1, 1),  # future behavior
   ]
 
+  def _top_down_bmp(self):
+    width = 1
+    height = -1
+    bits_per_pixel = 24
+    row_size = 4
+    header_size = 54
+    file_size = header_size + row_size
+    bmp = bytearray(file_size)
+    bmp[0:2] = b"BM"
+    bmp[2:6] = file_size.to_bytes(4, "little")
+    bmp[10:14] = header_size.to_bytes(4, "little")
+    bmp[14:18] = (40).to_bytes(4, "little")
+    bmp[18:22] = width.to_bytes(4, "little", signed=True)
+    bmp[22:26] = height.to_bytes(4, "little", signed=True)
+    bmp[26:28] = (1).to_bytes(2, "little")
+    bmp[28:30] = bits_per_pixel.to_bytes(2, "little")
+    bmp[34:38] = row_size.to_bytes(4, "little")
+    bmp[54:58] = bytes([10, 20, 30, 0])
+    return bytes(bmp)
+
   def testBmpChannels(self):
     for horizon in self._FORWARD_COMPATIBILITY_HORIZONS:
       with compat.forward_compatibility_horizon(*horizon):
@@ -6377,6 +6575,23 @@ class DecodeImageTest(test_util.TensorFlowTestCase, parameterized.TestCase):
           image0, image1 = self.evaluate([image0, image1])
           self.assertAllEqual(image0, image1)
 
+  @parameterized.named_parameters(
+      ("_uint16", dtypes.uint16),
+      ("_float32", dtypes.float32),
+  )
+  def testBmpTopDownNonUint8(self, dtype):
+    for horizon in self._FORWARD_COMPATIBILITY_HORIZONS:
+      with compat.forward_compatibility_horizon(*horizon):
+        with self.cached_session():
+          bmp = constant_op.constant(self._top_down_bmp())
+          image0 = image_ops.decode_image(bmp, dtype=dtype)
+          image1 = image_ops.convert_image_dtype(
+              image_ops.decode_bmp(bmp), dtype
+          )
+          image0, image1 = self.evaluate([image0, image1])
+          self.assertAllEqual(image0, image1)
+          self.assertAllEqual(list(image0.shape), [1, 1, 3])
+
   def testExpandAnimations(self):
     for horizon in self._FORWARD_COMPATIBILITY_HORIZONS:
       with compat.forward_compatibility_horizon(*horizon):
@@ -6516,6 +6731,116 @@ class DecodeImageTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     image1_0 = array_ops.gather(image1, 0)
     image0, image1_0 = self.evaluate([image0, image1_0])
     self.assertAllEqual(image0, image1_0)
+
+  def testDecodeImageShapeInferenceInDataPipeline(self):
+    """Test that decode_image sets proper shape inference in tf.data pipelines.
+
+    This test verifies the fix for the issue where tf.image.decode_image
+    followed by tf.image.resize would fail with "ValueError: 'images' contains
+    no shape" when used in tf.data.Dataset.map() operations.
+
+    The fix ensures that when expand_animations=False, the output tensor shape
+    is properly set to [None, None, channels] for known channel counts or
+    [None, None, None] for unknown channel counts, enabling proper shape
+    inference for subsequent operations like resize.
+    """
+    # Create 2x2 RGB test image.
+    test_image = constant_op.constant(
+        [[[255, 0, 0], [0, 255, 0]], [[0, 0, 255], [255, 255, 0]]],
+        dtype=dtypes.uint8,
+    )
+    jpeg_bytes = gen_image_ops.encode_jpeg(test_image)
+
+    def process_image_fixed(image_bytes):
+      """Process function using expand_animations=False for shape inference."""
+      decoded = image_ops.decode_image(
+          image_bytes, channels=3, expand_animations=False
+      )
+      resized = image_ops.resize_images(decoded, [224, 224])
+      return resized
+
+    with self.cached_session():
+      # Test tf.data pipeline with decode_image + resize.
+      dataset_fixed = dataset_ops.Dataset.from_tensor_slices([jpeg_bytes])
+      dataset_fixed = dataset_fixed.map(process_image_fixed)
+
+      # Use get_single_element for graph mode compatibility.
+      processed_image = get_single_element.get_single_element(dataset_fixed)
+      processed_image_val = self.evaluate(processed_image)
+      self.assertEqual(processed_image_val.shape, (224, 224, 3))
+
+      # Verify shape inference with expand_animations=False.
+      decoded_fixed = image_ops.decode_image(
+          jpeg_bytes, channels=3, expand_animations=False
+      )
+      self.assertEqual(decoded_fixed.shape.rank, 3)
+
+      # Check shape compatibility in both graph and eager modes.
+      shape_list = decoded_fixed.get_shape().as_list()
+      self.assertEqual(shape_list[2], 3)
+      self.assertTrue(shape_list[0] is None or shape_list[0] == 2)
+      self.assertTrue(shape_list[1] is None or shape_list[1] == 2)
+
+      # Test different channel configurations.
+      # Note: decode_image only supports channels 0, 1, 3, 4 (not 2).
+      for channels in [0, 1, 3, 4]:
+        if channels == 0:
+          # Use auto-detection with RGB JPEG.
+          test_bytes = jpeg_bytes
+        elif channels == 1:
+          # Create grayscale test image.
+          gray_image = constant_op.constant(
+              [[128, 64], [192, 32]], dtype=dtypes.uint8
+          )
+          gray_image = array_ops.expand_dims(gray_image, -1)
+          test_bytes = gen_image_ops.encode_png(gray_image)
+        elif channels == 4:
+          # Create RGBA test image using PNG (JPEG doesn't support 4 channels).
+          rgba_image = constant_op.constant(
+              [
+                  [[255, 0, 0, 255], [0, 255, 0, 128]],
+                  [[0, 0, 255, 64], [255, 255, 0, 192]],
+              ],
+              dtype=dtypes.uint8,
+          )
+          test_bytes = gen_image_ops.encode_png(rgba_image)
+        else:
+          # Use RGB JPEG for 3-channel tests.
+          test_bytes = jpeg_bytes
+
+        decoded = image_ops.decode_image(
+            test_bytes, channels=channels, expand_animations=False
+        )
+        self.assertEqual(decoded.shape.rank, 3)
+
+        if channels == 0:
+          # Auto-detection case - shape depends on the image format used.
+          expected_shape = [None, None, None]
+        elif channels <= 4:
+          expected_shape = [None, None, channels]
+        else:
+          expected_shape = [None, None, None]
+
+        # Shape must be compatible for resize operations.
+        self.assertTrue(decoded.shape.is_compatible_with(expected_shape))
+
+      # Test automatic channel detection.
+      decoded_unknown = image_ops.decode_image(
+          jpeg_bytes, expand_animations=False
+      )
+      self.assertEqual(decoded_unknown.shape.rank, 3)
+
+      # Check shape compatibility with automatic channel detection.
+      shape_list_unknown = decoded_unknown.get_shape().as_list()
+      self.assertTrue(
+          shape_list_unknown[0] is None or shape_list_unknown[0] == 2
+      )
+      self.assertTrue(
+          shape_list_unknown[1] is None or shape_list_unknown[1] == 2
+      )
+      self.assertTrue(
+          shape_list_unknown[2] is None or shape_list_unknown[2] == 3
+      )
 
 
 if __name__ == "__main__":

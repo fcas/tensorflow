@@ -14,10 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/core/experimental/acceleration/mini_benchmark/c/c_api.h"
 
-#include <algorithm>
+#include <cstdarg>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -25,9 +25,9 @@ limitations under the License.
 #include "flatbuffers/verifier.h"  // from @flatbuffers
 #include "tensorflow/lite/acceleration/configuration/c/delegate_plugin.h"
 #include "tensorflow/lite/acceleration/configuration/configuration_generated.h"
+#include "tensorflow/lite/core/experimental/acceleration/mini_benchmark/c/c_api_types.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/benchmark_result_evaluator.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/blocking_validator_runner.h"
-#include "tensorflow/lite/core/experimental/acceleration/mini_benchmark/c/c_api_types.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/status_codes.h"
 #include "tensorflow/lite/experimental/acceleration/mini_benchmark/validator_runner_options.h"
 
@@ -157,8 +157,10 @@ void TfLiteBlockingValidatorRunnerTriggerValidationImpl(
   }
 
   std::vector<const tflite::TFLiteSettings*> tflite_settings;
-  for (auto tflite_setting : *minibenchmark_settings->settings_to_test()) {
-    tflite_settings.push_back(tflite_setting);
+  if (minibenchmark_settings->settings_to_test()) {
+    for (auto tflite_setting : *minibenchmark_settings->settings_to_test()) {
+      tflite_settings.push_back(tflite_setting);
+    }
   }
 
   CreateData(runner.TriggerValidation(tflite_settings), result);
@@ -211,7 +213,7 @@ TfLiteMiniBenchmarkSettingsCustomValidationInfo(
 }
 
 void TfLiteMiniBenchmarkSettingsSetFlatBufferData(
-    TfLiteMiniBenchmarkSettings* settings, uint8_t* flatbuffer_data,
+    TfLiteMiniBenchmarkSettings* settings, const uint8_t* flatbuffer_data,
     size_t flatbuffer_data_size) {
   settings->flatbuffer_data = flatbuffer_data;
   settings->flatbuffer_data_size = flatbuffer_data_size;

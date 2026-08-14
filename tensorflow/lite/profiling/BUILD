@@ -1,3 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("//tensorflow:tensorflow.bzl", "clean_dep")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load("//tensorflow/lite:build_def.bzl", "tflite_copts", "tflite_copts_warnings")
@@ -8,7 +26,7 @@ load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite_combined
 # copybara:uncomment_end
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )
@@ -34,7 +52,9 @@ cc_test(
     name = "profiler_test",
     srcs = ["profiler_test.cc"],
     deps = [
+        ":profile_buffer",
         ":profiler",
+        "//tensorflow/lite/core/api",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -170,6 +190,7 @@ cc_library(
     deps = [
         ":memory_info",
         "//tensorflow/lite:minimal_logging",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
     ],
@@ -181,8 +202,22 @@ cc_test(
     deps = [
         ":memory_info",
         ":memory_usage_monitor",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "memory_latency_logger",
+    srcs = ["memory_latency_logger.cc"],
+    hdrs = ["memory_latency_logger.h"],
+    deps = [
+        ":memory_usage_monitor",
+        "//tensorflow/lite:framework_stable",
+        "//tensorflow/lite/tools:logging",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -194,6 +229,8 @@ cc_library(
     copts = common_copts,
     deps = [
         "//tensorflow/core/util:stats_calculator_portable",
+        "//tensorflow/lite/profiling/proto:profiling_info_cc",
+        "//tensorflow/lite/tools:logging",
     ],
 )
 
@@ -202,6 +239,8 @@ cc_test(
     srcs = ["profile_summary_formatter_test.cc"],
     deps = [
         ":profile_summary_formatter",
+        "//tensorflow/core/util:stats_calculator_portable",
+        "//tensorflow/lite/profiling/proto:profiling_info_cc",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
@@ -219,8 +258,9 @@ cc_library(
         ":profile_summary_formatter",
         "//tensorflow/core/util:stats_calculator_portable",
         "//tensorflow/lite:framework",
+        "//tensorflow/lite/c:common",
         "//tensorflow/lite/core:framework_stable",
-        "//tensorflow/lite/schema:schema_fbs",
+        "//tensorflow/lite/core/api",
     ],
 )
 
@@ -253,7 +293,44 @@ cc_library(
         "//tensorflow/lite/core:subgraph",
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/c:common",
-        "@local_tsl//tsl/platform:path",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+cc_library(
+    name = "model_runtime_info",
+    srcs = ["model_runtime_info.cc"],
+    hdrs = ["model_runtime_info.h"],
+    copts = common_copts,
+    deps = [
+        "//tensorflow/lite:framework_stable",
+        "//tensorflow/lite:optional_debug_tools",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/core:cc_api_stable",
+        "//tensorflow/lite/core:subgraph",
+        "//tensorflow/lite/profiling/proto:model_runtime_info_cc",
+        "//tensorflow/lite/schema:schema_fbs",
+        "//tensorflow/lite/tools:logging",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_test(
+    name = "model_runtime_info_test",
+    srcs = ["model_runtime_info_test.cc"],
+    deps = [
+        ":model_runtime_info",
+        ":profiler",
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/core/api",
+        "//tensorflow/lite/delegates/xnnpack:xnnpack_delegate_hdrs_only",
+        "//tensorflow/lite/kernels:test_util",
+        "//tensorflow/lite/profiling/proto:model_runtime_info_cc",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -262,6 +339,8 @@ cc_test(
     srcs = ["subgraph_tensor_profiler_test.cc"],
     deps = [
         ":subgraph_tensor_profiler",
+        "//tensorflow/lite/core:subgraph",
+        "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/kernels:subgraph_test_util",
         "@com_google_googletest//:gtest_main",
@@ -276,11 +355,13 @@ cc_test(
         ":profile_summarizer",
         ":profiler",
         "//tensorflow/lite:framework",
-        "//tensorflow/lite:schema_fbs_version",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/c:common",
         "//tensorflow/lite/core:framework",
         "//tensorflow/lite/kernels:kernel_util",
         "//tensorflow/lite/kernels:subgraph_test_util",
         "//tensorflow/lite/kernels:test_util",
+        "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest_main",
     ],
 )

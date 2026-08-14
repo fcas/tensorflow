@@ -16,14 +16,15 @@ limitations under the License.
 #include "xla/service/gpu/cublas_padding_requirements.h"
 
 #include <cstdint>
-#include <variant>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/variant_visitor.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -32,26 +33,24 @@ namespace {
 
 bool DimensionRequiresPadding(const int64_t size, const PrimitiveType data_type,
                               const se::GpuComputeCapability& gpu_cc) {
-  return std::visit(
-      VariantVisitor{
-          [&](const se::CudaComputeCapability& cc) {
-            for (const auto& req : CublasPaddingRequirements) {
-              if (cc.IsAtLeast(req.min_compute_capability) &&
-                  data_type == req.data_type && size % req.multiple_of != 0) {
-                return true;
-              }
-            }
-            return false;
-          },
-          [&](const se::RocmComputeCapability& cc) {
-            for (const auto& req : HipblasPaddingRequirements) {
-              if (data_type == req.data_type && size % req.multiple_of != 0) {
-                return true;
-              }
-            }
-            return false;
-          }},
-      gpu_cc);
+  if (const se::CudaComputeCapability* cc = gpu_cc.cuda_compute_capability()) {
+    for (const auto& req : CublasPaddingRequirements) {
+      if (cc->SupportsAllFeaturesOf(req.min_compute_capability) &&
+          data_type == req.data_type && size % req.multiple_of != 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (const se::RocmComputeCapability* cc = gpu_cc.rocm_compute_capability()) {
+    for (const auto& req : HipblasPaddingRequirements) {
+      if (data_type == req.data_type && size % req.multiple_of != 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
 }
 
 bool ShapeRequiresPadding(const Shape& shape, int batch_dimensions_size,
@@ -59,7 +58,7 @@ bool ShapeRequiresPadding(const Shape& shape, int batch_dimensions_size,
   // Non-batch dimensions requiring potential padding are placed at higher
   // indices than batch dimensions. This is because dots are canonicalized prior
   // to padding.
-  for (int i = batch_dimensions_size; i < shape.rank(); i++) {
+  for (int i = batch_dimensions_size; i < shape.dimensions().size(); i++) {
     if (DimensionRequiresPadding(shape.dimensions(i), shape.element_type(),
                                  cc)) {
       return true;

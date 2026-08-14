@@ -18,13 +18,19 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "llvm/ADT/DenseMap.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/IRMapping.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
-#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/proto/layout.pb.h"
 
 namespace tensorflow {
@@ -47,13 +53,13 @@ StatusOr<mlir::Operation*> TopKSPMDExpander::ExpandOp(mlir::Operation* op) {
   TF_ASSIGN_OR_RETURN(auto input_layout, ExtractLayoutFromOperand(input));
 
   if (!input_layout)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "layout of TopKV2Op must be known before SPMD expansion.");
 
   TF_ASSIGN_OR_RETURN(auto layouts, ExtractLayoutFromOp(op));
   for (const auto& layout : layouts) {
     if (layout.has_value() && !layout->IsLastDimReplicated()) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "The last dimensions of TopKV2Op outputs should be UNSHARDED.");
     }
   }

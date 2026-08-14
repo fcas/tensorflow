@@ -23,6 +23,8 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/base/nullability.h"
+
 namespace tsl {
 
 namespace internal {
@@ -120,19 +122,23 @@ class ReferenceCounted {
 // This is a smart pointer that keeps the specified reference counted value
 // around.
 template <typename T>
-class RCReference {
+class ABSL_NULLABILITY_COMPATIBLE RCReference {
  public:
+  using element_type = T;  // cf. `unique_ptr::element_type`
+
   RCReference() : pointer_(nullptr) {}
 
-  RCReference(RCReference&& other) : pointer_(other.pointer_) {
+  RCReference(RCReference&& other) noexcept : pointer_(other.pointer_) {
     other.pointer_ = nullptr;
   }
 
   RCReference(const RCReference& other) : pointer_(other.pointer_) {
-    if (pointer_) pointer_->AddRef();
+    if (pointer_) {
+      pointer_->AddRef();
+    }
   }
 
-  RCReference& operator=(RCReference&& other) {
+  RCReference& operator=(RCReference&& other) noexcept {
     reset(other.pointer_);
     other.pointer_ = nullptr;
     return *this;
@@ -140,7 +146,9 @@ class RCReference {
 
   RCReference& operator=(const RCReference& other) {
     reset(other.pointer_);
-    if (pointer_) pointer_->AddRef();
+    if (pointer_) {
+      pointer_->AddRef();
+    }
     return *this;
   }
 
@@ -151,15 +159,21 @@ class RCReference {
   }
   template <typename Derived, internal::DerivedFrom<Derived, T>* = nullptr>
   RCReference(const RCReference<Derived>& u) : pointer_(u.pointer_) {  // NOLINT
-    if (pointer_) pointer_->AddRef();
+    if (pointer_) {
+      pointer_->AddRef();
+    }
   }
 
   ~RCReference() {
-    if (pointer_ != nullptr) pointer_->DropRef();
+    if (pointer_ != nullptr) {
+      pointer_->DropRef();
+    }
   }
 
   void reset(T* pointer = nullptr) {
-    if (pointer_ != nullptr) pointer_->DropRef();
+    if (pointer_ != nullptr) {
+      pointer_->DropRef();
+    }
     pointer_ = pointer;
   }
 
@@ -187,7 +201,7 @@ class RCReference {
 
   explicit operator bool() const { return pointer_ != nullptr; }
 
-  void swap(RCReference& other) {
+  void swap(RCReference& other) noexcept {
     using std::swap;
     swap(pointer_, other.pointer_);
   }
@@ -244,7 +258,9 @@ RCReference<T> TakeRef(T* pointer) {
 
 template <typename T>
 RCReference<T> RCReference<T>::CopyRef() const {
-  if (!pointer_) return RCReference();
+  if (!pointer_) {
+    return RCReference();
+  }
   return FormRef(get());
 }
 
@@ -256,7 +272,7 @@ RCReference<T> MakeRef(Args&&... args) {
 }
 // For ADL style swap.
 template <typename T>
-void swap(RCReference<T>& a, RCReference<T>& b) {
+void swap(RCReference<T>& a, RCReference<T>& b) noexcept {
   a.swap(b);
 }
 

@@ -16,11 +16,15 @@ limitations under the License.
 #ifndef TENSORFLOW_CC_FRAMEWORK_CC_OP_GEN_UTIL_H_
 #define TENSORFLOW_CC_FRAMEWORK_CC_OP_GEN_UTIL_H_
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "tensorflow/core/framework/api_def.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/attr_value_util.h"
@@ -28,6 +32,7 @@ limitations under the License.
 #include "tensorflow/core/framework/op_gen_lib.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
+#include "tensorflow/core/platform/numbers.h"
 #include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
@@ -35,84 +40,85 @@ namespace cc_op {
 
 absl::StatusOr<ApiDefMap> LoadOpsAndApiDefs(
     OpList& ops, bool include_internal,
-    const std::vector<string>& api_def_dirs);
+    const std::vector<std::string>& api_def_dirs);
 
 // Converts:
 //   bazel-out/.../(bin|genfiles)/(external/YYY/)?XX
 // to: XX.
-string GetPath(StringPiece dot_h_fname);
+std::string GetPath(absl::string_view dot_h_fname);
 
 // Converts: some/path/to/file.xx
 // to: file
 // (note that suffix is removed)
-string GetFilename(StringPiece path);
+std::string GetFilename(absl::string_view path);
 
 // Converts:
 //   cc/ops/gen_foo_ops.h
 // to:
 //   CC_OPS_GEN_FOO_OPS_H_
-string ToGuard(StringPiece path);
+std::string ToGuard(absl::string_view path);
 
 // Converts: some_name_xyz
 // to: Some Name Xyz
-string ToTitle(StringPiece name);
+std::string ToTitle(absl::string_view name);
 
 // Change:     Into:
 //   ABC         /// ABC
 //               ///
 //   DEF         /// DEF
-string MakeComment(StringPiece text, StringPiece indent);
+std::string MakeComment(absl::string_view text, absl::string_view indent);
 
-string PrintString(StringPiece str);
+std::string PrintString(absl::string_view str);
 
-string PrintTensorShape(const TensorShapeProto& shape_proto);
+std::string PrintTensorShape(const TensorShapeProto& shape_proto);
 
 template <typename T>
-string PrintArray(int64_t num_elts, const T* array) {
-  string ret;
+std::string PrintArray(int64_t num_elts, const T* array) {
+  std::string ret;
   for (int64_t i = 0; i < num_elts; ++i) {
-    if (i > 0) strings::StrAppend(&ret, ", ");
-    strings::StrAppend(&ret, array[i]);
+    if (i > 0) absl::StrAppend(&ret, ", ");
+    absl::StrAppend(&ret, strings::LegacyPrecision(array[i]));
   }
   return ret;
 }
 
-string PrintTensor(const TensorProto& tensor_proto);
+std::string PrintTensor(const TensorProto& tensor_proto);
 
-string PrintTensorProto(const TensorProto& proto);
+std::string PrintTensorProto(const TensorProto& proto);
 
-string PrintAttrValue(StringPiece, const AttrValue& attr_value);
+std::string PrintAttrValue(absl::string_view, const AttrValue& attr_value);
 
 bool IsEmptyList(const AttrValue::ListValue& list);
 
-string ToCamelCase(StringPiece str);
+std::string ToCamelCase(absl::string_view str);
 
-string SeparateNamespaces(StringPiece str);
+std::string SeparateNamespaces(absl::string_view str);
 
 // Returns a <string, bool> pair. The string is the C++ type name to be used for
 // attr_type when defining an object of that type. The bool is a flag to
 // indicate whether to treat the type as const when accepting the C++ type as an
 // argument to a function.
-std::pair<StringPiece, bool> AttrTypeName(StringPiece attr_type);
+std::pair<absl::string_view, bool> AttrTypeName(absl::string_view attr_type);
 
-StringPiece ListElementTypeName(StringPiece attr_type);
+absl::string_view ListElementTypeName(absl::string_view attr_type);
 
-bool IsCPPKeyword(StringPiece name);
+bool IsCPPKeyword(absl::string_view name);
 
-string AvoidCPPKeywords(StringPiece name);
+std::string AvoidCPPKeywords(absl::string_view name);
 
-void InferArgAttributes(const OpDef::ArgDef& arg,
-                        std::unordered_map<string, string>* inferred_attrs);
+void InferArgAttributes(
+    const OpDef::ArgDef& arg,
+    std::unordered_map<std::string, std::string>* inferred_attrs);
 
 void InferOpAttributes(
     const OpDef& op_def,
-    std::unordered_map<string, string>* inferred_input_attrs);
+    std::unordered_map<std::string, std::string>* inferred_input_attrs);
 
 bool ArgIsList(const OpDef::ArgDef& arg);
 
 bool HasOptionalAttrs(
     const ApiDef& api_def,
-    const std::unordered_map<string, string>& inferred_input_attrs);
+    const std::unordered_map<std::string, std::string>& inferred_input_attrs);
 
 struct OpInfo {
   // graph_op_def: The OpDef used by the runtime, has the names that
@@ -120,26 +126,26 @@ struct OpInfo {
   // interface_op_def: The OpDef used in the interface in the generated
   //   code, with possibly overridden names and defaults.
   OpInfo(const OpDef& graph_op_def, const ApiDef& api_def,
-         const std::vector<string>& aliases);
+         const std::vector<std::string>& aliases);
   OpInfo(const OpDef& graph_op_def, const ApiDef& api_def);
-  string GetOpAttrStruct() const;
-  string GetConstructorDecl(StringPiece op_name_prefix,
-                            bool include_attr) const;
+  std::string GetOpAttrStruct() const;
+  std::string GetConstructorDecl(absl::string_view op_name_prefix,
+                                 bool include_attr) const;
 
-  string op_name;
-  std::vector<string> arg_types;
-  std::vector<string> arg_names;
-  std::vector<string> output_types;
-  std::vector<string> output_names;
+  std::string op_name;
+  std::vector<std::string> arg_types;
+  std::vector<std::string> arg_names;
+  std::vector<std::string> output_types;
+  std::vector<std::string> output_names;
   std::vector<bool> is_list_output;
   bool has_optional_attrs;
-  string comment;
+  std::string comment;
 
   const OpDef& graph_op_def;
   const ApiDef& api_def;
-  const std::vector<string>& aliases;
+  const std::vector<std::string>& aliases;
   // Map from type attribute to corresponding original argument name.
-  std::unordered_map<string, string> inferred_input_attrs;
+  std::unordered_map<std::string, std::string> inferred_input_attrs;
 };
 
 }  // namespace cc_op

@@ -59,26 +59,26 @@ bool LogMemoryTypeMismatch(bool use_host_memory, const FullTypeDef& ft) {
   return true;
 }
 
-Status CheckMemoryType(bool use_host_memory, const FullTypeDef& ft) {
+absl::Status CheckMemoryType(bool use_host_memory, const FullTypeDef& ft) {
   FullTypeId id = ft.type_id();
   MemoryType mt_from_ft = MemoryTypeFromFullTypeId(id);
   if (id == TFT_PRODUCT) {
-    return errors::Internal(
+    return absl::InternalError(absl::StrCat(
         "Unexpected full type information for tensor, which should not start "
         "with TFT_PRODUCT\n",
-        ft.DebugString());
+        ft.DebugString()));
   }
   if (use_host_memory != (mt_from_ft == HOST_MEMORY)) {
-    return errors::Internal("use_host_memory=", use_host_memory,
-                            " but full type information is\n",
-                            ft.DebugString());
+    return absl::InternalError(absl::StrCat("use_host_memory=", use_host_memory,
+                                            " but full type information is\n",
+                                            ft.DebugString()));
   }
   return absl::OkStatus();
 }
 
 // Note that ints_on_device is only true for single device functions
 // (i.e. for cases where Placer is not run).
-static Status SetMemoryTypeForNode(
+static absl::Status SetMemoryTypeForNode(
     const Node* node, const DataType dtype, bool is_arg, bool weak_flag,
     bool ints_on_device, MemoryTypeVector* memory_types,
     std::vector<AllocatorAttributes>* alloc_attrs) {
@@ -124,11 +124,11 @@ static Status SetMemoryTypeForNode(
                   << "\n"
                   << n->def().DebugString();
         } else {
-          return errors::Internal(
+          return absl::InternalError(absl::StrCat(
               "node=", n->name(), " (op=", n->def().op(),
               ") has an int32 output with unexpected full type information ",
               "with ints_on_device=", ints_on_device, "\n",
-              n->def().DebugString());
+              n->def().DebugString()));
         }
       }
     } else if (mt_from_dtype == HOST_MEMORY) {
@@ -137,10 +137,10 @@ static Status SetMemoryTypeForNode(
                 << ") has a HOST_MEMORY int32 output but does not have "
                 << "(TFT_SHAPE_TENSOR) full type information.";
       } else {
-        return errors::Internal(
-            "node=", n->name(), " (op=", n->def().op(),
-            ")  has a HOST_MEMORY int32 output but does not have "
-            "(TFT_SHAPE_TENSOR) full type information.");
+        return absl::InternalError(
+            absl::StrCat("node=", n->name(), " (op=", n->def().op(),
+                         ")  has a HOST_MEMORY int32 output but does not have "
+                         "(TFT_SHAPE_TENSOR) full type information."));
       }
     }
   }
@@ -156,8 +156,8 @@ static Status SetMemoryTypeForNode(
 }
 
 // This helper function takes a list of nodes.
-static Status SetMemoryTypeHelper(
-    const gtl::InlinedVector<Node*, 4>& nodes, const DataTypeVector& dtypes,
+static absl::Status SetMemoryTypeHelper(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
     bool is_arg, bool weak_flag, MemoryTypeVector* memory_types,
     std::vector<AllocatorAttributes>* alloc_attrs) {
   DCHECK_EQ(nodes.size(), dtypes.size());
@@ -176,7 +176,7 @@ static Status SetMemoryTypeHelper(
 // Note that ints_on_device is only true for single device functions
 // (i.e. for cases where Placer is not run). The DataType specified by the "T"
 // attr of input nodes is used.
-static Status SetMemoryTypeHelper(
+static absl::Status SetMemoryTypeHelper(
     const std::vector<std::pair<Node*, FunctionArgIndex>> arg_nodes,
     bool weak_flag, bool ints_on_device,
     std::vector<AllocatorAttributes>* alloc_attrs) {
@@ -185,7 +185,7 @@ static Status SetMemoryTypeHelper(
   for (const auto& arg : arg_nodes) {
     const AttrValue* attr_value = arg.first->attrs().Find("T");
     if (attr_value == nullptr) {
-      return errors::Internal("Arg node missing T attribute");
+      return absl::InternalError("Arg node missing T attribute");
     }
     DataType dtype = attr_value->type();
     TF_RETURN_IF_ERROR(SetMemoryTypeForNode(
@@ -199,7 +199,7 @@ static Status SetMemoryTypeHelper(
 // Note that ints_on_device is only true for single device functions
 // (i.e. for cases where Placer is not run). The DataType specified by the "T"
 // attr of input nodes is used.
-static Status SetMemoryTypeHelper(
+static absl::Status SetMemoryTypeHelper(
     const std::vector<std::pair<Node*, int>> ret_nodes, bool weak_flag,
     bool ints_on_device, std::vector<AllocatorAttributes>* alloc_attrs) {
   DCHECK(alloc_attrs != nullptr);
@@ -207,7 +207,7 @@ static Status SetMemoryTypeHelper(
   for (const auto& ret : ret_nodes) {
     const AttrValue* attr_value = ret.first->attrs().Find("T");
     if (attr_value == nullptr) {
-      return errors::Internal("Ret node missing T attribute");
+      return absl::InternalError("Ret node missing T attribute");
     }
     DataType dtype = attr_value->type();
     TF_RETURN_IF_ERROR(SetMemoryTypeForNode(
@@ -217,9 +217,9 @@ static Status SetMemoryTypeHelper(
   return absl::OkStatus();
 }
 
-Status SetMemoryTypeForArgs(const gtl::InlinedVector<Node*, 4>& nodes,
-                            const DataTypeVector& dtypes,
-                            MemoryTypeVector& memory_types) {
+absl::Status SetMemoryTypeForArgs(const absl::InlinedVector<Node*, 4UL>& nodes,
+                                  const DataTypeVector& dtypes,
+                                  MemoryTypeVector& memory_types) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/true,
                              /*weak_flag=*/false, &memory_types, nullptr);
 }
@@ -227,77 +227,77 @@ Status SetMemoryTypeForArgs(const gtl::InlinedVector<Node*, 4>& nodes,
 // TODO(b/258849883) Delete the `Weak...` versions of these functions once
 // everything is working with the version without `Weak`.
 
-Status WeakSetMemoryTypeForArgs(const gtl::InlinedVector<Node*, 4>& nodes,
-                                const DataTypeVector& dtypes,
-                                MemoryTypeVector& memory_types) {
+absl::Status WeakSetMemoryTypeForArgs(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
+    MemoryTypeVector& memory_types) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/true,
                              /*weak_flag=*/true, &memory_types, nullptr);
 }
 
-Status SetMemoryTypeForRets(const gtl::InlinedVector<Node*, 4>& nodes,
-                            const DataTypeVector& dtypes,
-                            MemoryTypeVector& memory_types) {
+absl::Status SetMemoryTypeForRets(const absl::InlinedVector<Node*, 4UL>& nodes,
+                                  const DataTypeVector& dtypes,
+                                  MemoryTypeVector& memory_types) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/false,
                              /*weak_flag=*/false, &memory_types, nullptr);
 }
 
-Status WeakSetMemoryTypeForRets(const gtl::InlinedVector<Node*, 4>& nodes,
-                                const DataTypeVector& dtypes,
-                                MemoryTypeVector& memory_types) {
+absl::Status WeakSetMemoryTypeForRets(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
+    MemoryTypeVector& memory_types) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/false,
                              /*weak_flag=*/true, &memory_types, nullptr);
 }
 
-Status SetAllocAttrsForArgs(const gtl::InlinedVector<Node*, 4>& nodes,
-                            const DataTypeVector& dtypes,
-                            std::vector<AllocatorAttributes>& alloc_attrs) {
+absl::Status SetAllocAttrsForArgs(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
+    std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/true,
                              /*weak_flag=*/false, nullptr, &alloc_attrs);
 }
 
-Status WeakSetAllocAttrsForArgs(const gtl::InlinedVector<Node*, 4>& nodes,
-                                const DataTypeVector& dtypes,
-                                std::vector<AllocatorAttributes>& alloc_attrs) {
+absl::Status WeakSetAllocAttrsForArgs(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
+    std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/true,
                              /*weak_flag=*/true, nullptr, &alloc_attrs);
 }
 
-Status SetAllocAttrsForRets(const gtl::InlinedVector<Node*, 4>& nodes,
-                            const DataTypeVector& dtypes,
-                            std::vector<AllocatorAttributes>& alloc_attrs) {
+absl::Status SetAllocAttrsForRets(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
+    std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/false,
                              /*weak_flag=*/false, nullptr, &alloc_attrs);
 }
 
-Status WeakSetAllocAttrsForRets(const gtl::InlinedVector<Node*, 4>& nodes,
-                                const DataTypeVector& dtypes,
-                                std::vector<AllocatorAttributes>& alloc_attrs) {
+absl::Status WeakSetAllocAttrsForRets(
+    const absl::InlinedVector<Node*, 4UL>& nodes, const DataTypeVector& dtypes,
+    std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(nodes, dtypes, /*is_arg=*/false,
                              /*weak_flag=*/true, nullptr, &alloc_attrs);
 }
 
-Status SingleDeviceSetAllocAttrsForArgs(
+absl::Status SingleDeviceSetAllocAttrsForArgs(
     std::vector<std::pair<Node*, FunctionArgIndex>> arg_nodes,
     bool ints_on_device, std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(arg_nodes, /*weak_flag=*/false, ints_on_device,
                              &alloc_attrs);
 }
 
-Status WeakSingleDeviceSetAllocAttrsForArgs(
+absl::Status WeakSingleDeviceSetAllocAttrsForArgs(
     std::vector<std::pair<Node*, FunctionArgIndex>> arg_nodes,
     bool ints_on_device, std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(arg_nodes, /*weak_flag=*/true, ints_on_device,
                              &alloc_attrs);
 }
 
-Status SingleDeviceSetAllocAttrsForRets(
+absl::Status SingleDeviceSetAllocAttrsForRets(
     const std::vector<std::pair<Node*, int>> ret_nodes, bool ints_on_device,
     std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(ret_nodes, /*weak_flag=*/false, ints_on_device,
                              &alloc_attrs);
 }
 
-Status WeakSingleDeviceSetAllocAttrsForRets(
+absl::Status WeakSingleDeviceSetAllocAttrsForRets(
     const std::vector<std::pair<Node*, int>> ret_nodes, bool ints_on_device,
     std::vector<AllocatorAttributes>& alloc_attrs) {
   return SetMemoryTypeHelper(ret_nodes, /*weak_flag=*/true, ints_on_device,

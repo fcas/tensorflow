@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef XLA_TSL_UTIL_BYTE_SWAP_ARRAY_H_
 #define XLA_TSL_UTIL_BYTE_SWAP_ARRAY_H_
 
-#include "tsl/platform/byte_order.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
+#include "xla/tsl/platform/byte_order.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
 
 // Define basic byte swapping operations.
 // These operations must be macros to use compiler intrinsics.
@@ -95,7 +95,7 @@ namespace tsl {
 //  bytes_per_elem: Number of bytes in each element of the array
 //  array_len: Number of elements in the array
 //
-// Returns: OkStatus() on success, -1 otherwise
+// Returns: absl::OkStatus() on success, -1 otherwise
 //
 absl::Status ByteSwapArray(char *array, size_t bytes_per_elem, int array_len);
 

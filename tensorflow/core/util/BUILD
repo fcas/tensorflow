@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
@@ -45,6 +60,8 @@ package(
 # List of exported source files.
 exports_files(
     srcs = [
+        "bad_indices_policy.cc",
+        "bad_indices_policy.h",
         "event.proto",
         "example_proto_fast_parsing_test.proto",
         "image_resizer_state.h",
@@ -61,78 +78,94 @@ exports_files(
 filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
-        "overflow.h",
         "padding.cc",
-        "padding.h",
         "tensor_format.cc",
+        "@xla//xla/tsl/util:mobile_srcs_no_runtime",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_no_runtime",
+    srcs = [
+        "overflow.h",
+        "padding.h",
         "tensor_format.h",
-        "@local_xla//xla/tsl/util:mobile_srcs_no_runtime",
+        "@xla//xla/tsl/util:mobile_hdrs_no_runtime",
     ],
 )
 
 filegroup(
     name = "mobile_srcs_only_runtime",
     srcs = [
-        "activation_mode.h",
         "batch_util.cc",
-        "batch_util.h",
         "bcast.cc",
+        "debug_data_dumper.cc",
+        "dump_graph.cc",
+        "einsum_op_util.cc",
+        "equal_graph_def.cc",
+        "example_proto_fast_parsing.cc",
+        "example_proto_helper.cc",
+        "guarded_philox_random.cc",
+        "matmul_autotune.cc",
+        "mirror_pad_mode.cc",
+        "port.cc",
+        "ragged_to_dense_util.cc",
+        "saved_tensor_slice_util.cc",
+        "stat_summarizer.cc",
+        "strided_slice_op.cc",
+        "tensor_slice_reader.cc",
+        "tensor_slice_reader_cache.cc",
+        "tensor_slice_set.cc",
+        "tensor_slice_writer.cc",
+        "util.cc",
+        "work_sharder.cc",
+        "//tensorflow/core/config:mobile_srcs_only_runtime",
+        "//tensorflow/core/util/quantization:mobile_srcs_only_runtime",
+        "@xla//xla/tsl/util:mobile_srcs_only_runtime",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_only_runtime",
+    srcs = [
+        "activation_mode.h",
+        "batch_util.h",
         "bcast.h",
         "command_line_flags.h",
-        "debug_data_dumper.cc",
         "debug_data_dumper.h",
         "determinism.h",
         "device_name_utils.h",
-        "dump_graph.cc",
         "dump_graph.h",
-        "einsum_op_util.cc",
         "einsum_op_util.h",
         "env_var.h",
-        "equal_graph_def.cc",
         "equal_graph_def.h",
-        "example_proto_fast_parsing.cc",
         "example_proto_fast_parsing.h",
-        "example_proto_helper.cc",
         "example_proto_helper.h",
-        "guarded_philox_random.cc",
         "guarded_philox_random.h",
         "managed_stack_trace.h",
-        "matmul_autotune.cc",
         "matmul_autotune.h",
         "matmul_bcast.h",
-        "mirror_pad_mode.cc",
         "mirror_pad_mode.h",
-        "port.cc",
         "port.h",
         "presized_cuckoo_map.h",
-        "ragged_to_dense_util.cc",
         "ragged_to_dense_util.h",
         "ragged_to_dense_util_common.h",
         "reffed_status_callback.h",
-        "saved_tensor_slice_util.cc",
         "saved_tensor_slice_util.h",
-        "stat_summarizer.cc",
         "stat_summarizer.h",
-        "strided_slice_op.cc",
         "strided_slice_op.h",
         "tensor_ops_util.h",
-        "tensor_slice_reader.cc",
         "tensor_slice_reader.h",
-        "tensor_slice_reader_cache.cc",
         "tensor_slice_reader_cache.h",
-        "tensor_slice_set.cc",
         "tensor_slice_set.h",
         "tensor_slice_util.h",
-        "tensor_slice_writer.cc",
         "tensor_slice_writer.h",
         "use_cudnn.h",
-        "util.cc",
         "util.h",
-        "work_sharder.cc",
         "work_sharder.h",
-        "//tensorflow/core/config:mobile_srcs_only_runtime",
-        "//tensorflow/core/util/quantization:mobile_srcs_only_runtime",
-        "@local_xla//xla/tsl/util:mobile_srcs_only_runtime",
+        "//tensorflow/core/config:mobile_hdrs_only_runtime",
+        "//tensorflow/core/util/quantization:mobile_hdrs_only_runtime",
+        "@xla//xla/tsl/util:mobile_hdrs_only_runtime",
     ],
 )
 
@@ -189,7 +222,7 @@ filegroup(
         "util.h",
         "work_sharder.h",
         "xla_config_registry.h",
-        "@local_xla//xla/tsl/util:framework_internal_private_hdrs",
+        "@xla//xla/tsl/util:framework_internal_private_hdrs",
     ],
 )
 
@@ -231,7 +264,7 @@ filegroup(
         "util.cc",
         "work_sharder.cc",
         "xla_config_registry.cc",
-        "@local_xla//xla/tsl/util:framework_internal_impl_srcs",
+        "@xla//xla/tsl/util:framework_internal_impl_srcs",
     ],
 )
 
@@ -240,7 +273,7 @@ filegroup(
     srcs = [
         "env_var.h",
         "use_cudnn.h",
-        "@local_xla//xla/tsl/util:lib_internal_public_hdrs",
+        "@xla//xla/tsl/util:lib_internal_public_hdrs",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -276,7 +309,6 @@ filegroup(
     ],
     visibility = [
         "//tensorflow/core:__pkg__",
-        "//tensorflow/python:__pkg__",
         "//tensorflow/python/util:__pkg__",
     ],
 )
@@ -286,7 +318,7 @@ filegroup(
     testonly = 1,
     srcs = [
         "reporter.h",
-        "@local_xla//xla/tsl/util:test_hdrs",
+        "@xla//xla/tsl/util:test_hdrs",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -297,7 +329,8 @@ filegroup(
         "mkl_heuristics.h",
         "mkl_util.h",
         "onednn_env_vars.h",
-        "@local_xla//xla/tsl/util:onednn_util_hdrs",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@xla//xla/tsl/util:onednn_util_hdrs",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -316,7 +349,7 @@ filegroup(
     testonly = 1,
     srcs = [
         "reporter.h",
-        "@local_xla//xla/tsl/util:android_test_hdrs",
+        "@xla//xla/tsl/util:android_test_hdrs",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -326,7 +359,7 @@ filegroup(
     testonly = 1,
     srcs = [
         ":android_test_hdrs",
-        "@local_xla//xla/tsl/util:android_test_srcs",
+        "@xla//xla/tsl/util:android_test_srcs",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
 )
@@ -367,7 +400,7 @@ filegroup(
         "use_cudnn.h",
         "util.h",
         "work_sharder.h",
-        "@local_xla//xla/tsl/util:framework_srcs",
+        "@xla//xla/tsl/util:framework_srcs",
     ],
 )
 
@@ -418,11 +451,9 @@ cc_library(
         "stats_calculator.h",
     ],
     copts = tf_copts(),
-    visibility = [
-        "//tensorflow:internal",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
-        "@local_xla//xla/tsl/util:stats_calculator_portable",
+        "@xla//xla/tsl/util:stats_calculator_portable",
     ],
 )
 
@@ -510,7 +541,7 @@ cc_library(
         "//tensorflow/core/platform:mutex",
         "//tensorflow/core/platform:str_util",
         "//tensorflow/core/platform:types",
-        "@local_xla//xla/tsl/util:reporter",
+        "@xla//xla/tsl/util:reporter",
     ],
 )
 
@@ -542,8 +573,6 @@ cc_library(
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/common_runtime/eager:__pkg__",
         "//tensorflow/core/framework:__pkg__",
-        "//tensorflow/core/platform:__pkg__",
-        "//tensorflow/python:__pkg__",
         "//tensorflow/python/eager:__pkg__",
         "//tensorflow/python/util:__pkg__",
     ],
@@ -641,7 +670,7 @@ cc_library(
         "//tensorflow/core/platform:strcat",
         "//tensorflow/core/platform:stringpiece",
         "//tensorflow/core/platform:types",
-        "@local_xla//xla/tsl/util:env_var",
+        "@xla//xla/tsl/util:env_var",
     ],
 )
 
@@ -649,7 +678,7 @@ cc_library(
     name = "incremental_barrier",
     srcs = ["incremental_barrier.cc"],
     hdrs = ["incremental_barrier.h"],
-    visibility = default_package_visibility + ["//tensorflow_serving:__subpackages__"],
+    visibility = default_package_visibility,
     deps = [
         "//tensorflow/core:lib",
         "@com_google_absl//absl/functional:bind_front",
@@ -666,7 +695,7 @@ cc_library(
     deps = [
         ":env_var",
         "//tensorflow/core/platform:mutex",
-        "@local_xla//xla/tsl/util:determinism",
+        "@xla//xla/tsl/util:determinism",
     ],
     alwayslink = 1,
 )
@@ -675,7 +704,7 @@ filegroup(
     name = "determinism_hdr",
     srcs = [
         "determinism.h",
-        "@local_xla//xla/tsl/util:determinism_hdr",
+        "@xla//xla/tsl/util:determinism_hdr",
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = ["//tensorflow:__subpackages__"],
@@ -688,7 +717,7 @@ cc_library(
     # TODO(b/298501506): narrow this in a way that won't break TFRT
     visibility = ["//visibility:public"],
     deps = [
-        "@local_xla//xla/tsl/util:determinism_hdr_lib",
+        "@xla//xla/tsl/util:determinism_hdr_lib",
     ],
 )
 
@@ -730,8 +759,8 @@ tf_kernel_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
-        "@local_xla//xla/stream_executor/cuda:cublas_plugin",
-        "@local_xla//xla/tsl/cuda:cusolver",
+        "@xla//xla/stream_executor/cuda:cublas_plugin",
+        "@xla//xla/tsl/cuda:cusolver",
     ],
 )
 
@@ -745,12 +774,11 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",
-        "@local_xla//xla/stream_executor/platform:dso_loader",
-        "@local_xla//xla/stream_executor/rocm:hipsolver_wrapper",
-        "@local_xla//xla/stream_executor/rocm:rocblas_plugin",
-        "@local_xla//xla/stream_executor/rocm:rocblas_wrapper",
-        "@local_xla//xla/stream_executor/rocm:rocm_executor",
-        "@local_xla//xla/stream_executor/rocm:rocsolver_wrapper",
+        "@xla//xla/stream_executor/rocm:hipsolver_wrapper",
+        "@xla//xla/stream_executor/rocm:rocblas_plugin",
+        "@xla//xla/stream_executor/rocm:rocblas_wrapper",
+        "@xla//xla/stream_executor/rocm:rocm_executor",
+        "@xla//xla/stream_executor/rocm:rocsolver_wrapper",
     ] + if_rocm([
         "@local_config_rocm//rocm:rocprim",
     ]),
@@ -770,14 +798,14 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
     ] + if_cuda([
-        "@local_xla//xla/stream_executor/cuda:cuda_blas_utils",
-        "@local_xla//xla/stream_executor",
-        "@local_xla//xla/tsl/cuda:cusparse",
+        "@xla//xla/stream_executor/cuda:cuda_blas_utils",
+        "@xla//xla/stream_executor:dnn",
+        "@xla//xla/tsl/cuda:cusparse",
         "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
-        "@local_xla//xla/stream_executor/rocm:rocsolver_wrapper",
-        "@local_xla//xla/stream_executor/rocm:hipsolver_wrapper",
-        "@local_xla//xla/stream_executor/rocm:hipsparse_wrapper",
+        "@xla//xla/stream_executor/rocm:rocsolver_wrapper",
+        "@xla//xla/stream_executor/rocm:hipsolver_wrapper",
+        "@xla//xla/stream_executor/rocm:hipsparse_wrapper",
     ]),
 )
 
@@ -894,6 +922,7 @@ tf_cc_tests(
         "//tensorflow/core/kernels:ops_util",
         "//tensorflow/core/platform:regexp",
         "//tensorflow/core/platform:status_matchers",
+        "//tensorflow/core/public:release_version",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/memory",
@@ -955,41 +984,39 @@ tf_proto_library(
     name = "test_log_proto",
     srcs = ["test_log.proto"],
     make_default_target_header_only = True,
-    protodeps = ["@local_tsl//tsl/protobuf:test_log_proto"],
     # Not to be used outside of tensorflow/core.
     visibility = ["//tensorflow/core:__pkg__"],
-    exports = ["@local_tsl//tsl/protobuf:test_log_proto"],
+    exports = ["@xla//xla/tsl/protobuf:test_log_proto"],
+    deps = ["@xla//xla/tsl/protobuf:test_log_proto"],
 )
 
 tf_proto_library(
     name = "protos_test",
     srcs = ["example_proto_fast_parsing_test.proto"],
-    cc_api_version = 2,
-    protodeps = ["//tensorflow/core:protos_all"],
     visibility = ["//visibility:public"],
+    deps = ["//tensorflow/core:protos_all"],
 )
 
 tf_proto_library(
     name = "event_proto",
     srcs = ["event.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
-    protodeps = [
-        "//tensorflow/core/framework:summary_proto",
+    visibility = ["//visibility:public"],
+    deps = [
         "//tensorflow/core/framework:resource_handle_proto",
+        "//tensorflow/core/framework:summary_proto",
         "//tensorflow/core/framework:tensor_proto",
         "//tensorflow/core/framework:tensor_shape_proto",
         "//tensorflow/core/framework:types_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "saved_tensor_slice_proto",
     srcs = ["saved_tensor_slice.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
         "//tensorflow/core/framework:resource_handle_proto",
         "//tensorflow/core/framework:tensor_proto",
         "//tensorflow/core/framework:tensor_shape_proto",
@@ -997,32 +1024,52 @@ tf_proto_library(
         "//tensorflow/core/framework:types_proto",
         "//tensorflow/core/framework:versions_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "memmapped_file_system_proto",
     srcs = ["memmapped_file_system.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "protos_all",
-    cc_api_version = 2,
     make_default_target_header_only = True,
-    protodeps = [
-        ":event_proto",
-        ":saved_tensor_slice_proto",
-        ":memmapped_file_system_proto",
-        "//tensorflow/core/util/quantization:uniform_quant_ops_attr_proto",
-    ],
     tags = [
         "alt_dep=//third_party/tensorflow/core:protos_all",
     ],
-    visibility = [
-        "//tensorflow/core:__subpackages__",
-        "@local_tsl//tsl:__subpackages__",
+    visibility = ["//tensorflow/core:__subpackages__"],
+    deps = [
+        ":event_proto",
+        ":memmapped_file_system_proto",
+        ":saved_tensor_slice_proto",
+        "//tensorflow/core/util/quantization:uniform_quant_ops_attr_proto",
+    ],
+)
+
+cc_library(
+    name = "bad_indices_policy",
+    srcs = ["bad_indices_policy.cc"],
+    hdrs = ["bad_indices_policy.h"],
+    deps = [
+        "//tensorflow/core/platform:errors",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+tf_cc_test(
+    name = "bad_indices_policy_test",
+    srcs = ["bad_indices_policy_test.cc"],
+    deps = [
+        ":bad_indices_policy",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )

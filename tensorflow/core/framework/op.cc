@@ -20,6 +20,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "tensorflow/core/framework/full_type.pb.h"
 #include "tensorflow/core/framework/op_def_builder.h"
 #include "tensorflow/core/framework/op_def_util.h"
@@ -32,20 +34,20 @@ limitations under the License.
 
 namespace tensorflow {
 
-Status DefaultValidator(const OpRegistryInterface& op_registry) {
+absl::Status DefaultValidator(const OpRegistryInterface& op_registry) {
   LOG(WARNING) << "No kernel validator registered with OpRegistry.";
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // OpRegistry -----------------------------------------------------------------
 
-Status OpRegistryInterface::LookUpOpDef(const string& op_type_name,
-                                        const OpDef** op_def) const {
+absl::Status OpRegistryInterface::LookUpOpDef(const std::string& op_type_name,
+                                              const OpDef** op_def) const {
   *op_def = nullptr;
   const OpRegistrationData* op_reg_data = nullptr;
   TF_RETURN_IF_ERROR(LookUp(op_type_name, &op_reg_data));
   *op_def = &op_reg_data->op_def;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 OpRegistry::OpRegistry()
@@ -62,27 +64,28 @@ void OpRegistry::Register(const OpRegistrationDataFactory& op_data_factory) {
 
 namespace {
 // Helper function that returns Status message for failed LookUp.
-Status OpNotFound(const string& op_type_name) {
-  Status status = errors::NotFound(
+absl::Status OpNotFound(const std::string& op_type_name) {
+  absl::Status status = absl::NotFoundError(absl::StrCat(
       "Op type not registered '", op_type_name, "' in binary running on ",
       port::Hostname(), ". ",
       "Make sure the Op and Kernel are registered in the binary running in "
       "this process. Note that if you are loading a saved graph which used ops "
       "from tf.contrib (e.g. `tf.contrib.resampler`), accessing should be done "
       "before importing the graph, as contrib ops are lazily registered when "
-      "the module is first accessed.");
+      "the module is first accessed."));
   VLOG(1) << status.ToString();
   return status;
 }
 }  // namespace
 
-Status OpRegistry::LookUp(const string& op_type_name,
-                          const OpRegistrationData** op_reg_data) const {
-  if ((*op_reg_data = LookUp(op_type_name))) return OkStatus();
+absl::Status OpRegistry::LookUp(const std::string& op_type_name,
+                                const OpRegistrationData** op_reg_data) const {
+  if ((*op_reg_data = LookUp(op_type_name))) return absl::OkStatus();
   return OpNotFound(op_type_name);
 }
 
-const OpRegistrationData* OpRegistry::LookUp(const string& op_type_name) const {
+const OpRegistrationData* OpRegistry::LookUp(
+    const std::string& op_type_name) const {
   {
     tf_shared_lock l(mu_);
     if (initialized_) {
@@ -96,7 +99,7 @@ const OpRegistrationData* OpRegistry::LookUp(const string& op_type_name) const {
 }
 
 const OpRegistrationData* OpRegistry::LookUpSlow(
-    const string& op_type_name) const {
+    const std::string& op_type_name) const {
   const OpRegistrationData* res = nullptr;
 
   bool first_call = false;
@@ -148,21 +151,21 @@ void OpRegistry::GetOpRegistrationData(
   }
 }
 
-Status OpRegistry::SetWatcher(const Watcher& watcher) {
+absl::Status OpRegistry::SetWatcher(const Watcher& watcher) {
   mutex_lock lock(mu_);
   if (watcher_ && watcher) {
-    return errors::AlreadyExists(
+    return absl::AlreadyExistsError(
         "Cannot over-write a valid watcher with another.");
   }
   watcher_ = watcher;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 void OpRegistry::Export(bool include_internal, OpList* ops) const {
   mutex_lock lock(mu_);
   MustCallDeferred();
 
-  std::vector<std::pair<StringPiece, const OpRegistrationData*>> sorted;
+  std::vector<std::pair<absl::string_view, const OpRegistrationData*>> sorted;
   sorted.reserve(registry_.size());
   for (const auto& item : registry_) {
     sorted.emplace_back(item.first, item.second.get());
@@ -190,17 +193,17 @@ void OpRegistry::ClearDeferredRegistrations() {
   deferred_.clear();
 }
 
-Status OpRegistry::ProcessRegistrations() const {
+absl::Status OpRegistry::ProcessRegistrations() const {
   mutex_lock lock(mu_);
   return CallDeferred();
 }
 
-string OpRegistry::DebugString(bool include_internal) const {
+std::string OpRegistry::DebugString(bool include_internal) const {
   OpList op_list;
   Export(include_internal, &op_list);
-  string ret;
+  std::string ret;
   for (const auto& op : op_list.op()) {
-    strings::StrAppend(&ret, SummarizeOpDef(op), "\n");
+    absl::StrAppend(&ret, SummarizeOpDef(op), "\n");
   }
   return ret;
 }
@@ -216,34 +219,35 @@ bool OpRegistry::MustCallDeferred() const {
   return true;
 }
 
-Status OpRegistry::CallDeferred() const {
-  if (initialized_) return OkStatus();
+absl::Status OpRegistry::CallDeferred() const {
+  if (initialized_) return absl::OkStatus();
   initialized_ = true;
   registry_.reserve(registry_.size() + deferred_.size());
   for (const auto& op_data_factory : deferred_) {
-    Status s = RegisterAlreadyLocked(op_data_factory);
+    absl::Status s = RegisterAlreadyLocked(op_data_factory);
     if (!s.ok()) {
       return s;
     }
   }
   deferred_.clear();
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status OpRegistry::RegisterAlreadyLocked(
+absl::Status OpRegistry::RegisterAlreadyLocked(
     const OpRegistrationDataFactory& op_data_factory) const {
   auto op_reg_data = std::make_unique<OpRegistrationData>();
   const auto* op_reg_data_raw = op_reg_data.get();
-  Status s = op_data_factory(op_reg_data.get());
+  absl::Status s = op_data_factory(op_reg_data.get());
   if (s.ok()) {
     s = ValidateOpDef(op_reg_data->op_def);
   }
   if (s.ok() &&
       !registry_.try_emplace(op_reg_data->op_def.name(), std::move(op_reg_data))
            .second) {
-    s = errors::AlreadyExists("Op with name ", op_reg_data->op_def.name());
+    s = absl::AlreadyExistsError(
+        absl::StrCat("Op with name ", op_reg_data->op_def.name()));
   }
-  Status watcher_status = s;
+  absl::Status watcher_status = s;
   if (watcher_) {
     watcher_status = watcher_(s, op_reg_data_raw->op_def);
   }
@@ -268,7 +272,7 @@ OpListOpRegistry::OpListOpRegistry(const OpList* op_list) {
 }
 
 const OpRegistrationData* OpListOpRegistry::LookUp(
-    const string& op_type_name) const {
+    const std::string& op_type_name) const {
   auto iter = index_.find(op_type_name);
   if (iter == index_.end()) {
     return nullptr;
@@ -276,9 +280,10 @@ const OpRegistrationData* OpListOpRegistry::LookUp(
   return iter->second.get();
 }
 
-Status OpListOpRegistry::LookUp(const string& op_type_name,
-                                const OpRegistrationData** op_reg_data) const {
-  if ((*op_reg_data = LookUp(op_type_name))) return OkStatus();
+absl::Status OpListOpRegistry::LookUp(
+    const std::string& op_type_name,
+    const OpRegistrationData** op_reg_data) const {
+  if ((*op_reg_data = LookUp(op_type_name))) return absl::OkStatus();
   return OpNotFound(op_type_name);
 }
 
@@ -286,10 +291,8 @@ namespace register_op {
 
 InitOnStartupMarker OpDefBuilderWrapper::operator()() {
   OpRegistry::Global()->Register(
-      [builder =
-           std::move(builder_)](OpRegistrationData* op_reg_data) -> Status {
-        return builder.Finalize(op_reg_data);
-      });
+      [builder = std::move(builder_)](OpRegistrationData* op_reg_data)
+          -> absl::Status { return builder.Finalize(op_reg_data); });
   return {};
 }
 

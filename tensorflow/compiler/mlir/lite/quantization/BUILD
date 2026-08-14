@@ -1,13 +1,34 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:tensorflow.bzl", "tf_cc_test", "tf_native_cc_binary")
 load("//tensorflow/core/platform:build_config.bzl", "tf_proto_library")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
+    # copybara:uncomment_begin(google-only)
+    # default_visibility = [
+    # ":friends",
+    # "//tensorflow:__pkg__",
+    # ],
+    # copybara:uncomment_end_and_comment_begin
     default_visibility = [
-        ":friends",
-        "//tensorflow:__pkg__",
+        "//visibility:public",
     ],
+    # copybara:comment_end
     licenses = ["notice"],
 )
 
@@ -25,7 +46,6 @@ tf_proto_library(
     srcs = [
         "quantization_info.proto",
     ],
-    cc_api_version = 2,
 )
 
 cc_library(
@@ -75,8 +95,8 @@ tf_native_cc_binary(
         "@llvm-project//llvm:TableGen",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:TableGen",
-        "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:regexp",
+        "@tsl//tsl/platform:regexp",
+        "@xla//xla/tsl/platform:logging",
     ],
 )
 
@@ -110,8 +130,8 @@ cc_library(
     hdrs = ["quantization_context.h"],
     deps = [
         ":device_target",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib",
         "//tensorflow/compiler/mlir/lite/quantization/ir:QuantOps",
-        "//tensorflow/compiler/mlir/quantization/common/quantization_lib",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",

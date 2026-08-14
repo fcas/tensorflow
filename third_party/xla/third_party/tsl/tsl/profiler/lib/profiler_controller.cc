@@ -14,12 +14,13 @@ limitations under the License.
 ==============================================================================*/
 #include "tsl/profiler/lib/profiler_controller.h"
 
+#include <any>
 #include <memory>
 #include <utility>
 
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
+#include "absl/status/status.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
@@ -84,6 +85,21 @@ absl::Status ProfilerController::CollectData(
   }
   if (!status.ok()) LOG(ERROR) << status;
   return status;
+}
+
+absl::StatusOr<ConsumeResult> ProfilerController::Consume() {
+  if (state_ != ProfilerState::kStart && state_ != ProfilerState::kStop) {
+    return absl::AbortedError("Consume called in the wrong order.");
+  }
+  if (!status_.ok()) {
+    return absl::AbortedError("Previous call returned an error.");
+  }
+  return profiler_->Consume();
+}
+
+absl::Status ProfilerController::Serialize(
+    std::any data, tensorflow::profiler::XSpace* space) {
+  return profiler_->Serialize(std::move(data), space);
 }
 
 }  // namespace profiler

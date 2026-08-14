@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -37,6 +52,7 @@ cc_library(
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/common_runtime/eager:context",
         "//tensorflow/core/common_runtime/eager:eager_operation",
@@ -100,6 +116,7 @@ cc_library(
         ":cluster_function_library_runtime",
         ":remote_mgr",
         ":remote_tensor_handle",
+        "//tensorflow/c/eager:abstract_tensor_handle",
         "//tensorflow/c/eager:immediate_execution_distributed_manager",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
@@ -123,7 +140,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
-        "@local_xla//xla/tsl/distributed_runtime/preemption:preemption_notifier",
+        "@xla//xla/tsl/distributed_runtime/preemption:preemption_notifier",
     ] + tf_grpc_cc_dependencies(),
 )
 
@@ -152,6 +169,7 @@ tf_cc_test(
         "//tensorflow/core/distributed_runtime/rpc:rpc_rendezvous_mgr",
         "//tensorflow/core/protobuf:eager_service_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:variant",
     ],
@@ -230,6 +248,7 @@ cc_library(
         "//tensorflow/core/common_runtime/eager:eager_executor",
         "//tensorflow/core/common_runtime/eager:eager_operation",
         "//tensorflow/core/common_runtime/eager:tensor_handle",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
     ],
 )

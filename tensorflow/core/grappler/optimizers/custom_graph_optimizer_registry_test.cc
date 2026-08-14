@@ -33,14 +33,14 @@ static const char* kTestPluginOptimizerName = "TestPlugin";
 
 class TestGraphOptimizer : public CustomGraphOptimizer {
  public:
-  Status Init(
+  absl::Status Init(
       const tensorflow::RewriterConfig_CustomGraphOptimizer* config) override {
     return absl::OkStatus();
   }
-  string name() const override { return kTestOptimizerName; }
+  std::string name() const override { return kTestOptimizerName; }
   bool UsesFunctionLibrary() const override { return false; }
-  Status Optimize(Cluster* cluster, const GrapplerItem& item,
-                  GraphDef* optimized_graph) override {
+  absl::Status Optimize(Cluster* cluster, const GrapplerItem& item,
+                        GraphDef* optimized_graph) override {
     return absl::OkStatus();
   }
 };
@@ -48,7 +48,7 @@ class TestGraphOptimizer : public CustomGraphOptimizer {
 REGISTER_GRAPH_OPTIMIZER_AS(TestGraphOptimizer, "StaticRegister");
 
 TEST(CustomGraphOptimizerRegistryTest, DynamicRegistration) {
-  std::vector<string> optimizers =
+  std::vector<std::string> optimizers =
       CustomGraphOptimizerRegistry::GetRegisteredOptimizers();
   std::unique_ptr<const CustomGraphOptimizer> test_optimizer;
   ASSERT_EQ(
@@ -68,7 +68,7 @@ TEST(CustomGraphOptimizerRegistryTest, DynamicRegistration) {
 }
 
 TEST(CustomGraphOptimizerRegistryTest, StaticRegistration) {
-  const std::vector<string> optimizers =
+  const std::vector<std::string> optimizers =
       CustomGraphOptimizerRegistry::GetRegisteredOptimizers();
   EXPECT_EQ(1,
             std::count(optimizers.begin(), optimizers.end(), "StaticRegister"));
@@ -87,14 +87,14 @@ TEST(GraphOptimizerRegistryTest, CrashesOnDuplicateRegistration) {
 
 class TestPluginGraphOptimizer : public CustomGraphOptimizer {
  public:
-  Status Init(
+  absl::Status Init(
       const tensorflow::RewriterConfig_CustomGraphOptimizer* config) override {
     return absl::OkStatus();
   }
-  string name() const override { return kTestPluginOptimizerName; }
+  std::string name() const override { return kTestPluginOptimizerName; }
   bool UsesFunctionLibrary() const override { return false; }
-  Status Optimize(Cluster* cluster, const GrapplerItem& item,
-                  GraphDef* optimized_graph) override {
+  absl::Status Optimize(Cluster* cluster, const GrapplerItem& item,
+                        GraphDef* optimized_graph) override {
     return absl::OkStatus();
   }
 };

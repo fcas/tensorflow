@@ -159,12 +159,15 @@ Computes the %(combination)s along segments of a RaggedTensor.
 """
 
 
-def _ragged_segment_aggregate(unsorted_segment_op,
-                              data,
-                              segment_ids,
-                              num_segments,
-                              separator=None,
-                              name=None):
+def _ragged_segment_aggregate(
+    unsorted_segment_op,
+    data,
+    segment_ids,
+    num_segments,
+    separator=None,
+    name=None,
+    is_top_level_dense=True,
+):  # pylint: disable=g-doc-args
   """Aggregates along segments of a RaggedTensor using `unsorted_segment_op`.
 
   Returns a RaggedTensor `output` with `num_segments` rows, where the row
@@ -224,9 +227,19 @@ def _ragged_segment_aggregate(unsorted_segment_op,
           data.row_splits,
           message='segment_ids.shape must be a prefix of data.shape')
       with ops.control_dependencies([check_splits]):
-        return _ragged_segment_aggregate(unsorted_segment_op, data.values,
-                                         segment_ids.values, num_segments,
-                                         separator)
+        return _ragged_segment_aggregate(
+            unsorted_segment_op,
+            data.values,
+            segment_ids.values,
+            num_segments,
+            separator,
+            is_top_level_dense=is_top_level_dense,
+        )
+    if is_top_level_dense:
+      num_segments = math_ops.cast(num_segments, segment_ids.dtype)
+      is_negative = math_ops.cast(segment_ids < 0, segment_ids.dtype)
+      segment_ids = segment_ids * (1 - is_negative) + num_segments * is_negative
+      num_segments = num_segments + 1
 
     # Find the length of each row in data.  (shape=[data_nrows])
     data_row_lengths = data.row_splits[1:] - data.row_splits[:-1]
@@ -257,11 +270,20 @@ def _ragged_segment_aggregate(unsorted_segment_op,
                                       data_row_to_out_row_limit).values
 
     # Recursively aggregate the values.
-    output_values = _ragged_segment_aggregate(unsorted_segment_op, data.values,
-                                              data_val_to_out_val_index,
-                                              output_splits[-1], separator)
-    return ragged_tensor.RaggedTensor.from_row_splits(
-        output_values, output_splits, validate=False)
+    output_values = _ragged_segment_aggregate(
+        unsorted_segment_op,
+        data.values,
+        data_val_to_out_val_index,
+        output_splits[-1],
+        separator,
+        is_top_level_dense=False,
+    )
+    output = ragged_tensor.RaggedTensor.from_row_splits(
+        output_values, output_splits, validate=False
+    )
+    if is_top_level_dense:
+      output = output[: num_segments - 1]
+    return output
 
 
 @dispatch.dispatch_for_api(math_ops.unsorted_segment_sum)
@@ -400,7 +422,7 @@ Computes the %(combination)s of elements across dimensions of a `RaggedTensor`.
     A `RaggedTensor` containing the %(combined)s values.  The returned tensor
     has the same dtype as `data`, and its shape is given by removing the
     dimensions specified in `axis` from `input_tensor.shape`.  The `ragged_rank`
-    of the returned tensor is given by substracting any ragged dimensions
+    of the returned tensor is given by subtracting any ragged dimensions
     specified in `axis` from `input_tensor.ragged_rank`.
   Raises:
     ValueError: If `axis` contains a `Tensor` whose value is not constant.
@@ -514,7 +536,7 @@ def ragged_reduce_aggregate(reduce_op,
     A `RaggedTensor` containing the reduced values.  The returned tensor
     has the same dtype as `data`, and its shape is given by removing the
     dimensions specified in `axis` from `rt_input.shape`.  The `ragged_rank`
-    of the returned tensor is given by substracting any ragged dimensions
+    of the returned tensor is given by subtracting any ragged dimensions
     specified in `axis` from `rt_input.ragged_rank`.
   Raises:
     ValueError: If `axis` contains a `Tensor` whose value is not constant.
@@ -1164,7 +1186,7 @@ def tensor_equals(self: ragged_tensor.RaggedOrDense,
     try:
       return math_ops.equal(self, other)
     except (errors.InvalidArgumentError, ValueError):
-      return False  # values are not broadcast-compatbile.
+      return False  # values are not broadcast-compatible.
 
 
 @dispatch.dispatch_for_api(math_ops.tensor_not_equals)
@@ -1179,7 +1201,7 @@ def tensor_not_equals(self: ragged_tensor.RaggedOrDense,
     try:
       return math_ops.not_equal(self, other)
     except (errors.InvalidArgumentError, ValueError):
-      return True  # values are not broadcast-compatbile.
+      return True  # values are not broadcast-compatible.
 
 
 def _use_legacy_mode_for_tensor_equality(self):

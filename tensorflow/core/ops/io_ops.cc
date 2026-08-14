@@ -26,7 +26,7 @@ using shape_inference::ShapeHandle;
 
 namespace {
 
-Status ScalarInputsAndOutputs(InferenceContext* c) {
+absl::Status ScalarInputsAndOutputs(InferenceContext* c) {
   ShapeHandle unused;
   for (int i = 0; i < c->num_inputs(); ++i) {
     TF_RETURN_IF_ERROR(c->WithRank(c->input(i), 0, &unused));
@@ -37,7 +37,7 @@ Status ScalarInputsAndOutputs(InferenceContext* c) {
   return absl::OkStatus();
 }
 
-Status TwoElementVectorAndScalarOutputs(InferenceContext* c) {
+absl::Status TwoElementVectorAndScalarOutputs(InferenceContext* c) {
   ShapeHandle handle;
   DimensionHandle unused_handle;
   for (int i = 0; i < c->num_inputs(); ++i) {
@@ -50,7 +50,7 @@ Status TwoElementVectorAndScalarOutputs(InferenceContext* c) {
   return absl::OkStatus();
 }
 
-Status TwoElementOutput(InferenceContext* c) {
+absl::Status TwoElementOutput(InferenceContext* c) {
   c->set_output(0, c->Vector(2));
   return absl::OkStatus();
 }
@@ -101,18 +101,18 @@ REGISTER_OP("RestoreV2")
       const Tensor* shape_and_slices_tensor = c->input_tensor(2);
       if (shape_and_slices_tensor) {
         if (shape_and_slices_tensor->dtype() != DT_STRING) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Expected an input tensor of type string.");
         }
 
         const auto& shape_and_slices_flat =
             shape_and_slices_tensor->flat<tstring>();
         if (shape_and_slices_flat.size() != c->num_outputs()) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "The number of shape_and_slice doesn't match tensor outputs.");
         }
         for (int i = 0; i < shape_and_slices_flat.size(); ++i) {
-          const string& shape_and_slice = shape_and_slices_flat(i);
+          const std::string& shape_and_slice = shape_and_slices_flat(i);
           if (shape_and_slice.empty()) {
             c->set_output(i, c->UnknownShape());
             continue;

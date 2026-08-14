@@ -1,3 +1,17 @@
+// Copyright 2026 The OpenXLA Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: ifrt-opt %s -split-input-file -verify-diagnostics
 
 func.func @good(
@@ -145,7 +159,7 @@ func.func @io_aliases_should_only_alias_input_once(
     %arg0: !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<1x1 to [0] on 2>,
                        [0,1]>)
     attributes {ifrt.function} {
-  // expected-error@+1 {{'ifrt.CallLoadedExecutable' op can't alias input #0 more than once}}
+  // expected-error@+1 {{'ifrt.CallLoadedExecutable' op can't alias or donate input #0 more than once}}
   %0, %1, %ctrl_0 = ifrt.CallLoadedExecutable @callee(%arg0)
     {io_aliases=[array<i32: 0, 0>, array<i32: 0, 1>]}
     : (!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<1x1 to [0] on 2>,
@@ -215,7 +229,8 @@ func.func @io_aliases_should_have_same_type(
     %arg0: !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<1x1 to [0] on 2>,
                        [0,1]>)
     attributes {ifrt.function} {
-  // expected-error@+1 {{'ifrt.CallLoadedExecutable' op can't alias input #0 to output #0 with different types: '!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<1x1 to [0] on 2>, [0, 1]>' vs '!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>, [0, 1]>'}}
+  // expected-error@+2 {{'ifrt.CallLoadedExecutable' op Arrays have different per-shard shapes:}}
+  // expected-error@+1 {{'ifrt.CallLoadedExecutable' op can't alias input #0 to output #0}}
   %0, %ctrl_0 = ifrt.CallLoadedExecutable @callee(%arg0)
     {io_aliases=[array<i32: 0, 0>]}
     : (!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<1x1 to [0] on 2>,
@@ -230,3 +245,47 @@ ifrt.LoadedExecutable @callee on devices [0,1]
                    [0,1]>)
     -> !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                    [0,1]>
+
+
+// -----
+
+!array = !ifrt.array<tensor<2x2xi32>,
+                     #ifrt.sharding_param<1x1 to [0] on 2>, [0,1]>
+func.func @donate_one_arg_and_alias_another_arg(%arg0: !array, %arg1: !array)
+    attributes {ifrt.function} {
+  %0, %ctrl_0 = ifrt.CallLoadedExecutable @callee(%arg0, %arg1)
+    {donated_input_indices=array<i32: 0>, io_aliases=[array<i32: 1, 0>]}
+    : (!array, !array) -> !array
+  return
+}
+
+ifrt.LoadedExecutable @callee on devices [0,1] : (!array, !array) -> !array
+
+// -----
+
+!array = !ifrt.array<tensor<2x2xi32>,
+                     #ifrt.sharding_param<1x1 to [0] on 2>, [0,1]>
+func.func @should_only_donate_once(%arg0: !array, %arg1: !array)
+    attributes {ifrt.function} {
+  // expected-error@+1 {{'ifrt.CallLoadedExecutable' op can't donate input #0 more than once}}
+  %0, %ctrl_0 = ifrt.CallLoadedExecutable @callee(%arg0, %arg1)
+    {donated_input_indices=array<i32: 0, 0>} : (!array, !array) -> !array
+  return
+}
+
+ifrt.LoadedExecutable @callee on devices [0,1] : (!array, !array) -> !array
+
+// -----
+
+!array = !ifrt.array<tensor<2x2xi32>,
+                     #ifrt.sharding_param<1x1 to [0] on 2>, [0,1]>
+func.func @should_not_both_donate_and_alias_the_same_arg(
+    %arg0: !array, %arg1: !array) attributes {ifrt.function} {
+  // expected-error@+1 {{'ifrt.CallLoadedExecutable' op can't alias or donate input #0 more than once}}
+  %0, %ctrl_0 = ifrt.CallLoadedExecutable @callee(%arg0, %arg1)
+    {donated_input_indices=array<i32: 0>, io_aliases=[array<i32: 0, 0>]}
+    : (!array, !array) -> !array
+  return
+}
+
+ifrt.LoadedExecutable @callee on devices [0,1] : (!array, !array) -> !array

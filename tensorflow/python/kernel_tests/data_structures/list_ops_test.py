@@ -720,7 +720,11 @@ class ListOpsTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     e0 = gen_list_ops.tensor_list_get_item(
         l, 0, element_shape=[], element_dtype=dtypes.float32)
     e1 = gen_list_ops.tensor_list_get_item(
-        l, 1, element_shape=[2, 3], element_dtype=dtypes.float32)
+        l,
+        1,
+        element_shape=constant_op.constant([2, 3], dtype=dtypes.int64),
+        element_dtype=dtypes.float32,
+    )
     self.assertEqual(e0.shape.as_list(), [])
     self.assertEqual(e1.shape.as_list(), [2, 3])
     self.assertEqual(self.evaluate(e0), 0.)
@@ -1009,6 +1013,33 @@ class ListOpsTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     l = list_ops.tensor_list_from_tensor(c, element_shape=[])
     with self.assertRaises(errors.InvalidArgumentError):
       self.evaluate(list_ops.tensor_list_set_item(l, 20, 3.0))
+
+  @test_util.run_deprecated_v1
+  def testSetItemWithOutOfRangeIndexFails(self):
+    # Regression test for #105302: a negative index used to segfault instead
+    # of raising, even with resize_if_index_out_of_bounds=True.
+    l = list_ops.empty_tensor_list(
+        element_dtype=dtypes.float32, element_shape=[], max_num_elements=5
+    )
+    with self.assertRaises(errors.InvalidArgumentError):
+      self.evaluate(
+          gen_list_ops.tensor_list_set_item(
+              input_handle=l,
+              index=-1,
+              item=constant_op.constant(1.0),
+              resize_if_index_out_of_bounds=True,
+          )
+      )
+    # An index >= max_num_elements must not resize past capacity.
+    with self.assertRaises(errors.InvalidArgumentError):
+      self.evaluate(
+          gen_list_ops.tensor_list_set_item(
+              input_handle=l,
+              index=5,
+              item=constant_op.constant(1.0),
+              resize_if_index_out_of_bounds=True,
+          )
+      )
 
   @test_util.run_deprecated_v1
   def testSkipEagerSetItemWithMismatchedShapeFails(self):

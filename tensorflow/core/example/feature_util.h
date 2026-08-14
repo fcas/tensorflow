@@ -127,6 +127,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "tensorflow/core/example/example.pb.h"
 #include "tensorflow/core/example/feature.pb.h"
 #include "tensorflow/core/platform/protobuf.h"
@@ -201,7 +202,7 @@ template <>
 struct is_string<std::string> : std::true_type {};
 
 template <>
-struct is_string<::tensorflow::StringPiece> : std::true_type {};
+struct is_string<absl::string_view> : std::true_type {};
 
 template <>
 struct is_string<tstring> : std::true_type {};
@@ -222,9 +223,15 @@ struct NoneSuch {};
 
 // True if the Feature map in a tf.Example supports heterogenous lookup.
 // See https://abseil.io/tips/144.
+// TODO(b/365531379): this cannot be replaced by a lambda because it exposes a
+// Clang bug when used in modules.
+struct CheckFindFunctor {
+  template <class Container>
+  auto operator()(Container&& c) -> decltype(c.find(NoneSuch{})) {}
+};
 inline constexpr bool kFeatureMapHasHeterogeneousLookup =
     Requires<decltype(Features::default_instance().feature())>(
-        [](auto&& c) -> decltype(c.find(NoneSuch{})) {});
+        CheckFindFunctor());
 
 // Converts an `absl::string_view` into a string-type compatible for use in the
 // protobuf library (e.g. as lookup keys in `proto2::Map` or as elements addable
@@ -431,7 +438,7 @@ void AppendFeatureValues(IteratorType first, IteratorType last,
   using FeatureType = typename internal::FeatureTrait<
       typename std::iterator_traits<IteratorType>::value_type>::Type;
   auto& values = *GetFeatureValues<FeatureType>(feature);
-  values.Reserve(std::distance(first, last));
+  values.Reserve(values.size() + std::distance(first, last));
   for (auto it = first; it != last; ++it) {
     *values.Add() = *it;
   }
@@ -442,7 +449,7 @@ void AppendFeatureValues(std::initializer_list<ValueType> container,
                          Feature* feature) {
   using FeatureType = typename internal::FeatureTrait<ValueType>::Type;
   auto& values = *GetFeatureValues<FeatureType>(feature);
-  values.Reserve(container.size());
+  values.Reserve(values.size() + container.size());
   for (auto& elt : container) {
     *values.Add() = std::move(elt);
   }
@@ -455,20 +462,20 @@ template <typename T, typename = void>
 struct HasSize : std::false_type {};
 
 template <typename T>
-struct HasSize<T, absl::void_t<decltype(std::declval<T>().size())>>
+struct HasSize<T, std::void_t<decltype(std::declval<T>().size())>>
     : std::true_type {};
 
-// Reserves the container's size, if a container.size() method exists.
+// Reserves additional size, if a container.size() method exists.
 template <typename ContainerType, typename RepeatedFieldType>
-auto ReserveIfSizeAvailable(const ContainerType& container,
-                            RepeatedFieldType& values) ->
+auto ReserveAdditionalIfSizeAvailable(const ContainerType& container,
+                                      RepeatedFieldType& values) ->
     typename std::enable_if_t<HasSize<ContainerType>::value, void> {
-  values.Reserve(container.size());
+  values.Reserve(values.size() + container.size());
 }
 
 template <typename ContainerType, typename RepeatedFieldType>
-auto ReserveIfSizeAvailable(const ContainerType& container,
-                            RepeatedFieldType& values) ->
+auto ReserveAdditionalIfSizeAvailable(const ContainerType& container,
+                                      RepeatedFieldType& values) ->
     typename std::enable_if_t<!HasSize<ContainerType>::value, void> {}
 
 }  // namespace internal
@@ -479,7 +486,7 @@ void AppendFeatureValues(const ContainerType& container, Feature* feature) {
   using FeatureType = typename internal::FeatureTrait<
       typename std::iterator_traits<IteratorType>::value_type>::Type;
   auto* values = GetFeatureValues<FeatureType>(feature);
-  internal::ReserveIfSizeAvailable(container, *values);
+  internal::ReserveAdditionalIfSizeAvailable(container, *values);
   // This is equivalent to std::copy into `values` with a
   // RepeatedFieldBackInserter, the difference is RFBI isn't compatible with
   // types that we want to convert (e.g. absl::string_view -> std::string).
@@ -490,6 +497,25 @@ void AppendFeatureValues(const ContainerType& container, Feature* feature) {
       *values->Add() = elt;
     }
   }
+}
+
+// Extends the feature by `ext` elements, with a default value and returns a
+// span of the new elements. Currently only the string type is not supported.
+// Note that unlike the inference of internal feature types in
+// `AppendFeatureValues`, the caller is responsible for passing the correct
+// FeatureType to prevent implicit conversion of `default_value`.
+template <typename FeatureType>
+absl::Span<FeatureType> ExtendAndGetSpan(tensorflow::Feature* feature, int ext,
+                                         FeatureType default_value) {
+  static_assert(!internal::is_string<FeatureType>::value,
+                "ExtendAndGetSpan does not support string types.");
+
+  auto* values = GetFeatureValues<FeatureType>(feature);
+  int old_size = values->size();
+
+  values->Resize(old_size + ext, default_value);
+
+  return absl::MakeSpan(values->mutable_data() + old_size, ext);
 }
 
 // Copies elements from the range, defined by [first, last) into the feature

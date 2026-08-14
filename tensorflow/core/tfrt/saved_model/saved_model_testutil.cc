@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/protobuf/config.pb.h"
@@ -69,6 +70,8 @@ SavedModel::Options DefaultSavedModelOptions(
 
   if (user_options) {
     options.graph_execution_options.enable_mlrt = user_options->enable_mlrt;
+    options.graph_execution_options.model_metadata =
+        user_options->session_metadata;
     compile_options.enable_optimizer = user_options->enable_optimizer;
     compile_options.enable_grappler = user_options->enable_grappler;
     compile_options.force_data_format = user_options->force_data_format;
@@ -89,7 +92,7 @@ TFRTSavedModelTest::TFRTSavedModelTest(
 
   auto saved_model = SavedModelImpl::LoadSavedModel(options, saved_model_dir,
                                                     /*tags=*/{"serve"});
-  TF_DCHECK_OK(saved_model.status());
+  DCHECK_OK(saved_model.status());
   saved_model_ = *std::move(saved_model);
 }
 
@@ -115,9 +118,9 @@ void ComputeCurrentTFResult(const std::string& saved_model_dir,
         ->mutable_rewrite_options()
         ->set_disable_meta_optimizer(true);
   }
-  TF_CHECK_OK(tensorflow::LoadSavedModel(session_options, /*run_options=*/{},
-                                         saved_model_dir,
-                                         /* tags = */ {"serve"}, bundle));
+  CHECK_OK(tensorflow::LoadSavedModel(session_options, /*run_options=*/{},
+                                      saved_model_dir,
+                                      /* tags = */ {"serve"}, bundle));
 
   const auto& signature_def =
       bundle->meta_graph_def.signature_def().at(signature_name);
@@ -136,8 +139,8 @@ void ComputeCurrentTFResult(const std::string& saved_model_dir,
     session_output_names.push_back(node_name);
   }
 
-  TF_CHECK_OK(bundle->GetSession()->Run(session_inputs, session_output_names,
-                                        {}, outputs));
+  CHECK_OK(bundle->GetSession()->Run(session_inputs, session_output_names, {},
+                                     outputs));
 }
 
 void ComputeCurrentTFResult(const std::string& saved_model_dir,

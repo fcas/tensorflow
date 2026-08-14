@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <optional>
 
+#include "absl/strings/str_join.h"
 #include "tensorflow/core/data/name_utils.h"
 #include "tensorflow/core/framework/dataset.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -49,7 +50,7 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
                    ParseScalarArgument(ctx, "num_replicas", &num_replicas));
     OP_REQUIRES(
         ctx, num_replicas > 0,
-        errors::InvalidArgument("num_replicas must be greater than zero."));
+        absl::InvalidArgumentError("num_replicas must be greater than zero."));
     *output =
         new Dataset(ctx, input, num_replicas, output_types_, output_shapes_);
   }
@@ -66,7 +67,7 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
           output_types_(output_types),
           output_shapes_(output_shapes),
           traceme_metadata_(
-              {{"num_replicas", strings::Printf("%lld", static_cast<long long>(
+              {{"num_replicas", absl::StrFormat("%lld", static_cast<long long>(
                                                             num_replicas))}}) {
       input_->Ref();
     }
@@ -74,7 +75,7 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
     ~Dataset() override { input_->Unref(); }
 
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
-        const string& prefix) const override {
+        const std::string& prefix) const override {
       name_utils::IteratorPrefixParams params;
       return std::make_unique<Iterator>(Iterator::Params{
           this, name_utils::IteratorPrefix(kDatasetTypeV1, prefix, params)});
@@ -88,26 +89,26 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
       return output_shapes_;
     }
 
-    string DebugString() const override {
+    std::string DebugString() const override {
       name_utils::DatasetDebugStringParams params;
       params.set_args(num_replicas_);
       return name_utils::DatasetDebugString(kDatasetTypeV1, params);
     }
 
-    Status InputDatasets(
+    absl::Status InputDatasets(
         std::vector<const DatasetBase*>* inputs) const override {
       inputs->push_back(input_);
       return absl::OkStatus();
     }
 
-    Status CheckExternalState() const override {
+    absl::Status CheckExternalState() const override {
       return input_->CheckExternalState();
     }
 
    protected:
-    Status AsGraphDefInternal(SerializationContext* ctx,
-                              DatasetGraphDefBuilder* b,
-                              Node** output) const override {
+    absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                    DatasetGraphDefBuilder* b,
+                                    Node** output) const override {
       Node* input_graph_node = nullptr;
       TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
       Node* num_replicas = nullptr;
@@ -125,14 +126,14 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
 
       ~Iterator() override {}
 
-      Status Initialize(IteratorContext* ctx) override {
+      absl::Status Initialize(IteratorContext* ctx) override {
         return dataset()->input_->MakeIterator(ctx, this, prefix(),
                                                &input_impl_);
       }
 
-      Status GetNextInternal(IteratorContext* ctx,
-                             std::vector<Tensor>* out_tensors,
-                             bool* end_of_sequence) override {
+      absl::Status GetNextInternal(IteratorContext* ctx,
+                                   std::vector<Tensor>* out_tensors,
+                                   bool* end_of_sequence) override {
         mutex_lock l(mu_);
         *end_of_sequence = false;
         if (slice_number_ % dataset()->num_replicas_ == 0) {
@@ -147,11 +148,11 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
           input_descriptors_.reserve(input_tensors.size());
           for (int i = 0; i < input_tensors.size(); ++i) {
             if (input_tensors[i].dims() == 0) {
-              return errors::InvalidArgument(
+              return absl::InvalidArgumentError(absl::StrCat(
                   "Cannot rebatch dataset: All components must have at least "
                   "one dimension. Perhaps your input dataset is not batched? "
                   "Component ",
-                  i, " is scalar.");
+                  i, " is scalar."));
             }
 
             int64_t original_batch_dim = input_tensors[i].dim_size(0);
@@ -189,8 +190,8 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
       }
 
      protected:
-      Status SaveInternal(SerializationContext* ctx,
-                          IteratorStateWriter* writer) override {
+      absl::Status SaveInternal(SerializationContext* ctx,
+                                IteratorStateWriter* writer) override {
         mutex_lock l(mu_);
         if (!input_impl_) {
           TF_RETURN_IF_ERROR(
@@ -204,16 +205,16 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
         if (slice_number_ % dataset()->num_replicas_ != 0) {
           // Save state of input tensors.
           for (int i = 0; i < input_descriptors_.size(); ++i) {
-            TF_RETURN_IF_ERROR(writer->WriteTensor(
-                full_name(strings::StrCat("tensors[", i, "]")),
-                input_descriptors_[i].whole_tensor));
+            TF_RETURN_IF_ERROR(
+                writer->WriteTensor(full_name(absl::StrCat("tensors[", i, "]")),
+                                    input_descriptors_[i].whole_tensor));
           }
         }
         return absl::OkStatus();
       }
 
-      Status RestoreInternal(IteratorContext* ctx,
-                             IteratorStateReader* reader) override {
+      absl::Status RestoreInternal(IteratorContext* ctx,
+                                   IteratorStateReader* reader) override {
         mutex_lock l(mu_);
         if (!reader->Contains(full_name("input_impl_empty"))) {
           TF_RETURN_IF_ERROR(RestoreInput(ctx, reader, input_impl_));
@@ -228,7 +229,7 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
         if (slice_number_ % dataset()->num_replicas_ != 0) {
           for (int i = 0; i < input_descriptors_.size(); ++i) {
             TF_RETURN_IF_ERROR(reader->ReadTensor(
-                ctx->flr(), full_name(strings::StrCat("tensors[", i, "]")),
+                ctx->flr(), full_name(absl::StrCat("tensors[", i, "]")),
                 &input_descriptors_[i].whole_tensor));
             input_descriptors_[i].original_batch_dim =
                 input_descriptors_[i].whole_tensor.dim_size(0);
@@ -298,9 +299,9 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
                    DatasetBase** output) override {
     const Tensor* batch_sizes_tensor;
     OP_REQUIRES_OK(ctx, ctx->input("batch_sizes", &batch_sizes_tensor));
-    OP_REQUIRES(
-        ctx, batch_sizes_tensor->dims() <= 1,
-        errors::InvalidArgument("`batch_sizes` must be a scalar or a vector."));
+    OP_REQUIRES(ctx, batch_sizes_tensor->dims() <= 1,
+                absl::InvalidArgumentError(
+                    "`batch_sizes` must be a scalar or a vector."));
 
     std::vector<int64_t> batch_sizes;
     batch_sizes.reserve(batch_sizes_tensor->NumElements());
@@ -330,14 +331,14 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
           output_types_(output_types),
           output_shapes_(output_shapes),
           traceme_metadata_(
-              {{"batch_sizes", absl::StrJoin(batch_sizes, ",")}}) {
+              {{"batch_sizes", absl::StrJoin(batch_sizes_, ",")}}) {
       input_->Ref();
     }
 
     ~Dataset() override { input_->Unref(); }
 
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
-        const string& prefix) const override {
+        const std::string& prefix) const override {
       name_utils::IteratorPrefixParams params;
       return std::make_unique<Iterator>(Iterator::Params{
           this, name_utils::IteratorPrefix(kDatasetTypeV2, prefix, params)});
@@ -351,24 +352,24 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
       return output_shapes_;
     }
 
-    string DebugString() const override {
+    std::string DebugString() const override {
       return name_utils::DatasetDebugString(kDatasetTypeV2);
     }
 
-    Status InputDatasets(
+    absl::Status InputDatasets(
         std::vector<const DatasetBase*>* inputs) const override {
       inputs->push_back(input_);
       return absl::OkStatus();
     }
 
-    Status CheckExternalState() const override {
+    absl::Status CheckExternalState() const override {
       return input_->CheckExternalState();
     }
 
    protected:
-    Status AsGraphDefInternal(SerializationContext* ctx,
-                              DatasetGraphDefBuilder* b,
-                              Node** output) const override {
+    absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                    DatasetGraphDefBuilder* b,
+                                    Node** output) const override {
       Node* input_graph_node = nullptr;
       TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
       Node* batch_sizes = nullptr;
@@ -388,14 +389,14 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
 
       ~Iterator() override {}
 
-      Status Initialize(IteratorContext* ctx) override {
+      absl::Status Initialize(IteratorContext* ctx) override {
         return dataset()->input_->MakeIterator(ctx, this, prefix(),
                                                &input_impl_);
       }
 
-      Status GetNextInternal(IteratorContext* ctx,
-                             std::vector<Tensor>* out_tensors,
-                             bool* end_of_sequence) override {
+      absl::Status GetNextInternal(IteratorContext* ctx,
+                                   std::vector<Tensor>* out_tensors,
+                                   bool* end_of_sequence) override {
         mutex_lock l(mu_);
         if (end_of_sequence_) {
           *end_of_sequence = true;
@@ -521,8 +522,8 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
                                     dataset()->output_dtypes()[i],
                                     component_shape);
           if (!out_tensors->back().IsInitialized()) {
-            return errors::ResourceExhausted(
-                "Failed to allocate memory for the batch of component ", i);
+            return absl::ResourceExhaustedError(absl::StrCat(
+                "Failed to allocate memory for the batch of component ", i));
           }
           int64_t dst_offset = 0;
           for (size_t j = 0; j < slices_to_concatenate.size(); ++j) {
@@ -571,8 +572,8 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
       }
 
      protected:
-      Status SaveInternal(SerializationContext* ctx,
-                          IteratorStateWriter* writer) override {
+      absl::Status SaveInternal(SerializationContext* ctx,
+                                IteratorStateWriter* writer) override {
         mutex_lock l(mu_);
         if (!input_impl_) {
           TF_RETURN_IF_ERROR(
@@ -586,14 +587,14 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
         if (offset_ != -1) {
           for (int i = 0; i < tensors_.size(); ++i) {
             TF_RETURN_IF_ERROR(writer->WriteTensor(
-                full_name(strings::StrCat("tensors[", i, "]")), tensors_[i]));
+                full_name(absl::StrCat("tensors[", i, "]")), tensors_[i]));
           }
         }
         return absl::OkStatus();
       }
 
-      Status RestoreInternal(IteratorContext* ctx,
-                             IteratorStateReader* reader) override {
+      absl::Status RestoreInternal(IteratorContext* ctx,
+                                   IteratorStateReader* reader) override {
         mutex_lock l(mu_);
         if (!reader->Contains(full_name("input_impl_empty"))) {
           TF_RETURN_IF_ERROR(RestoreInput(ctx, reader, input_impl_));
@@ -609,7 +610,7 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
           tensors_.resize(dataset()->output_dtypes().size());
           for (int i = 0; i < tensors_.size(); ++i) {
             TF_RETURN_IF_ERROR(reader->ReadTensor(
-                ctx->flr(), full_name(strings::StrCat("tensors[", i, "]")),
+                ctx->flr(), full_name(absl::StrCat("tensors[", i, "]")),
                 &tensors_[i]));
           }
         }
@@ -621,19 +622,19 @@ class RebatchDatasetV2Op : public UnaryDatasetOpKernel {
       }
 
      private:
-      Status ValidateInputTensors() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+      absl::Status ValidateInputTensors() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
         for (size_t i = 0; i < tensors_.size(); ++i) {
           if (tensors_[i].dims() == 0) {
-            return errors::InvalidArgument(
+            return absl::InvalidArgumentError(
                 "Input element must have a non-scalar value in each "
                 "component.");
           }
           if (tensors_[i].dim_size(0) != tensors_[0].dim_size(0)) {
-            return errors::InvalidArgument(
+            return absl::InvalidArgumentError(absl::StrCat(
                 "Input element must have the same batch size in each "
                 "component. Component 0 had size ",
                 tensors_[0].dim_size(0), " but component ", i, " had size, ",
-                tensors_[i].dim_size(0), ".");
+                tensors_[i].dim_size(0), "."));
           }
         }
         return absl::OkStatus();

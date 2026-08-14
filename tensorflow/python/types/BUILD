@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
 
 package(
@@ -13,24 +28,19 @@ pytype_strict_library(
         "__init__.py",
         "core.py",
     ],
-    srcs_version = "PY3",
-    visibility = [
-        "//tensorflow:__subpackages__",
-        "//tensorflow:types_allowlist",
-    ],
+    visibility = ["//tensorflow:__subpackages__"],
     deps = [
         ":doc_typealias",
         "//tensorflow/python:pywrap_tensorflow",
         "//tensorflow/python/util:tf_export",
         "//third_party/py/numpy",
-        "@pypi_typing_extensions//:pkg",
+        "@pypi//typing_extensions",
     ],
 )
 
 pytype_strict_library(
     name = "data",
     srcs = ["data.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorflow:__subpackages__",
     ],
@@ -40,7 +50,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "distribute",
     srcs = ["distribute.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorflow:__subpackages__",
     ],
@@ -53,7 +62,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "internal",
     srcs = ["internal.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorflow:__subpackages__",
     ],
@@ -62,7 +70,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "trace",
     srcs = ["trace.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorflow:__subpackages__",
     ],
@@ -70,7 +77,7 @@ pytype_strict_library(
         ":core",
         "//tensorflow/python/util:tf_export",
         "//tensorflow/tools/docs:doc_controls",
-        "@pypi_typing_extensions//:pkg",
+        "@pypi//typing_extensions",
     ],
 )
 
@@ -79,7 +86,6 @@ pytype_strict_library(
     srcs = [
         "doc_typealias.py",
     ],
-    srcs_version = "PY3",
     visibility = [
         "//tensorflow:__subpackages__",
     ],

@@ -17,12 +17,14 @@ limitations under the License.
 #define TENSORFLOW_LITE_DELEGATES_XNNPACK_DYNAMICALLY_QUANTIZED_FULLY_CONNECTED_TESTER_H_
 
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "tensorflow/lite/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/delegates/xnnpack/test_util.h"
 #include "tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h"
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
@@ -36,7 +38,8 @@ enum class WeightsType {
   kTensorWiseQuantizedInt8,
 };
 
-class DynamicallyQuantizedFullyConnectedTester {
+class DynamicallyQuantizedFullyConnectedTester
+    : public ModelCache<DynamicallyQuantizedFullyConnectedTester> {
  public:
   DynamicallyQuantizedFullyConnectedTester() = default;
   DynamicallyQuantizedFullyConnectedTester(
@@ -130,6 +133,13 @@ class DynamicallyQuantizedFullyConnectedTester {
     return *this;
   }
 
+  DynamicallyQuantizedFullyConnectedTester& Float16(bool float16) {
+    float16_ = float16;
+    return *this;
+  }
+
+  bool Float16() const { return float16_; }
+
   inline DynamicallyQuantizedFullyConnectedTester& WeightsCache(
       TfLiteXNNPackDelegateWeightsCache* weights_cache) {
     weights_cache_ = weights_cache;
@@ -139,10 +149,10 @@ class DynamicallyQuantizedFullyConnectedTester {
   void Test(Interpreter* delegate_interpreter,
             Interpreter* default_interpreter) const;
 
-  void Test(TfLiteDelegate* delegate) const;
+  void Test(TfLiteDelegate* delegate);
 
  private:
-  std::vector<char> CreateTfLiteModel() const;
+  std::vector<char> CreateTfLiteModel() const override;
 
   inline bool HasBias() const { return has_bias_; }
 
@@ -164,6 +174,7 @@ class DynamicallyQuantizedFullyConnectedTester {
   float filter_scale_ = 0.75f;
   bool keep_dims_ = false;
   bool has_bias_ = true;
+  bool float16_ = false;
   ::tflite::ActivationFunctionType activation_ =
       ::tflite::ActivationFunctionType_NONE;
   TfLiteXNNPackDelegateWeightsCache* weights_cache_ = nullptr;

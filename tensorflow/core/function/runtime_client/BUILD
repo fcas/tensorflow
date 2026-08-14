@@ -1,6 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
-load("//tensorflow:strict.default.bzl", "py_strict_test")
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//tensorflow:tensorflow.bzl", "py_test", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "tf_python_pybind_extension")
 load("//tensorflow/core/platform:build_config_root.bzl", "if_static")
 
@@ -30,8 +45,10 @@ cc_library(
         "//tensorflow/c/eager:immediate_execution_operation",
         "//tensorflow/c/eager:immediate_execution_tensor_handle",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
-        "//tensorflow/compiler/mlir/tensorflow:export_graphdef",
         "//tensorflow/compiler/mlir/tensorflow:import_model",
+        "//tensorflow/compiler/mlir/tensorflow:mlir_roundtrip_flags",
+        "//tensorflow/compiler/mlir/tf2xla/api/v2:graph_to_tf_executor",
+        "//tensorflow/compiler/mlir/tf2xla/api/v2:tf_executor_to_graph",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
@@ -77,8 +94,8 @@ cc_library(
         "//tensorflow/core/distributed_runtime:pywrap_required_hdrs",
         "//tensorflow/core/distributed_runtime/coordination:pywrap_required_hdrs",
         "//tensorflow/core/distributed_runtime/eager:pywrap_required_hdrs",
-        "@local_xla//xla/tsl/distributed_runtime:pywrap_required_hdrs",
-        "@local_xla//xla/tsl/distributed_runtime/coordination:pywrap_required_hdrs",
+        "@xla//xla/tsl/distributed_runtime:pywrap_required_hdrs",
+        "@xla//xla/tsl/distributed_runtime/coordination:pywrap_required_hdrs",
     ],
 )
 
@@ -125,14 +142,14 @@ tf_python_pybind_extension(
             "//tensorflow/core/protobuf:eager_service_proto_cc",
             "//tensorflow/core/protobuf:master_proto_cc",
             "//tensorflow/core/protobuf:worker_proto_cc",
-            "@local_tsl//tsl/protobuf:coordination_service_proto_cc",
+            "@xla//xla/tsl/protobuf:coordination_service_proto_cc",
         ],
         otherwise = [
             "//tensorflow/core/framework:function_proto_cc_headers_only",
             "//tensorflow/core/protobuf:eager_service_proto_cc_headers_only",
             "//tensorflow/core/protobuf:master_proto_cc_headers_only",
             "//tensorflow/core/protobuf:worker_proto_cc_headers_only",
-            "@local_tsl//tsl/protobuf:coordination_service_proto_cc_headers_only",
+            "@xla//xla/tsl/protobuf:coordination_service_proto_cc_headers_only",
         ],
     ),
 )
@@ -143,9 +160,8 @@ pytype_strict_library(
     srcs = [
         "runtime_client.py",
     ],
-    srcs_version = "PY3",
     visibility = [
-        "//learning/brain/experimental/tfq:__pkg__",
+        "//learning/brain/experimental/tfq:__subpackages__",
         "//tensorflow/core/function/transform:__subpackages__",
         "//tensorflow/python/eager:__subpackages__",
     ],
@@ -156,11 +172,11 @@ pytype_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "runtime_client_py_test",
     srcs = ["runtime_client_test.py"],
     main = "runtime_client_test.py",
-    python_version = "PY3",
+    strict_deps = True,
     tags = ["no_oss"],  # TODO(b/219089812)
     deps = [
         ":runtime_client_py",

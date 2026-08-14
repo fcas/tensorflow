@@ -38,7 +38,8 @@ namespace {
 class DependencyOptimizerTest : public GrapplerTest {};
 
 void VerifyGraphsEqual(const GraphDef& original_graph,
-                       const GraphDef& optimized_graph, const string& func) {
+                       const GraphDef& optimized_graph,
+                       const std::string& func) {
   EXPECT_EQ(original_graph.node_size(), optimized_graph.node_size()) << func;
   for (int i = 0; i < original_graph.node_size(); ++i) {
     const NodeDef& original = original_graph.node(i);
@@ -60,7 +61,7 @@ TEST_F(DependencyOptimizerTest, NoOp) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   VerifyGraphsEqual(item.graph, output, __FUNCTION__);
@@ -85,7 +86,7 @@ TEST_F(DependencyOptimizerTest, DependenciesDrivenByConstants) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -120,7 +121,7 @@ TEST_F(DependencyOptimizerTest, ChangeToNoop) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -186,7 +187,7 @@ TEST_F(DependencyOptimizerTest, FullTypeForKeptNoop) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -240,7 +241,7 @@ TEST_F(DependencyOptimizerTest, ChangeToNoop_RepeatedInput) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -298,7 +299,7 @@ TEST_F(DependencyOptimizerTest, ChangeToNoop_SwitchIdentity) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(item.graph.node_size() - 1, output.node_size());
@@ -332,7 +333,7 @@ TEST_F(DependencyOptimizerTest, ChangeToNoop_NoFetch) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   TF_CHECK_OK(TopologicalSort(&item.graph));
@@ -352,7 +353,7 @@ TEST_F(DependencyOptimizerTest, RemoveNoOps_EmptyInputOrOutput) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -396,7 +397,7 @@ TEST_F(DependencyOptimizerTest, RemoveNoOps_DeviceBoundaries) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // The optimization should be disabled to prevent increasing the number of
@@ -428,7 +429,7 @@ TEST_F(DependencyOptimizerTest, RemoveIdentityOps_DeviceBoundaries) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // The optimization should be disabled to prevent increasing the number of
@@ -451,7 +452,7 @@ TEST_F(DependencyOptimizerTest, RemoveIdentityOps_IdenticalDevices) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(item.graph.node_size() - 1, output.node_size());
@@ -483,7 +484,7 @@ TEST_F(DependencyOptimizerTest, RemoveNoOps_SingleInputOrOutput) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -540,7 +541,7 @@ TEST_F(DependencyOptimizerTest, RemoveIdentity) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(item.graph.node_size() - 3, output.node_size());
@@ -607,7 +608,7 @@ TEST_F(DependencyOptimizerTest, RemoveIdentity_RepeatedInputs) {
   item.fetch.push_back("or2");
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(item.graph.node_size() - 1, output.node_size());
@@ -651,7 +652,7 @@ TEST_F(DependencyOptimizerTest, Transitive_Reduction_Simple) {
   item.fetch.push_back("neg2");
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   EXPECT_EQ(4, output.node_size());
   EXPECT_EQ("neg2", output.node(3).name());
@@ -687,7 +688,7 @@ TEST_F(DependencyOptimizerTest, ChangeToNoop_Identity) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(item.graph.node_size() - 2, output.node_size());
@@ -728,7 +729,7 @@ TEST_F(DependencyOptimizerTest, IdentityInputs) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(6, output.node_size());
@@ -765,7 +766,7 @@ TEST_F(DependencyOptimizerTest, RemoveIdentityN_SwitchInput) {
 
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(8, output.node_size());
@@ -808,7 +809,7 @@ TEST_F(DependencyOptimizerTest, DoNotRemoveIdentityNWithControlDependency) {
 
   DependencyOptimizer optimizer;
   GraphDef optimized_graph_def;
-  Status status = optimizer.Optimize(nullptr, item, &optimized_graph_def);
+  absl::Status status = optimizer.Optimize(nullptr, item, &optimized_graph_def);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(6, optimized_graph_def.node_size());
@@ -831,7 +832,7 @@ TEST_F(DependencyOptimizerTest,
   item.fetch = {"result"};
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   VerifyGraphsEqual(item.graph, output, __FUNCTION__);
@@ -853,7 +854,7 @@ TEST_F(DependencyOptimizerTest, Identity_DeviceCrossing_ConsumerOnSameDevice) {
   item.fetch = {"result"};
   DependencyOptimizer optimizer;
   GraphDef output;
-  Status status = optimizer.Optimize(nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(nullptr, item, &output);
   TF_EXPECT_OK(status);
   EXPECT_EQ(3, output.node_size());
   for (const auto& node : output.node()) {
@@ -979,8 +980,8 @@ TEST_F(DependencyOptimizerTest, GroupCrossHostControlDeps) {
                                   {1, 2}, DT_FLOAT);
     for (int t = 0; t < 4; ++t) {
       for (int c = 0; c < 8; ++c) {
-        string opname = absl::StrCat("t", t, "/c", c);
-        string device = absl::StrCat("/task:", t, "/device:TPU:", c);
+        std::string opname = absl::StrCat("t", t, "/c", c);
+        std::string device = absl::StrCat("/task:", t, "/device:TPU:", c);
         Output output = ops::RandomUniform(
             s.WithOpName(opname).WithDevice(device), {1, 2}, DT_FLOAT);
         ops.push_back(output.op());
@@ -1006,7 +1007,7 @@ TEST_F(DependencyOptimizerTest, GroupCrossHostControlDeps) {
   TF_EXPECT_OK(optimizer.Optimize(nullptr, item, &output));
 
   EXPECT_EQ(output.node_size(), item.graph.node_size() + 4);
-  std::set<string> tasks;
+  std::set<std::string> tasks;
   for (const auto& n : output.node()) {
     if (n.op() == "NoOp") {
       EXPECT_TRUE(absl::StartsWith(n.name(), "GroupCrossDeviceControlEdges"));

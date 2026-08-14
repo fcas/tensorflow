@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Experimental filesystem C APIs for TensorFlow.
 # Will be moved in proper place once all filesystems are converted to the
 # modular framework.
@@ -36,12 +51,22 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":filesystem_interface",
+        "//tensorflow/c:tf_file_statistics",
         "//tensorflow/c:tf_status_helper",
         "//tensorflow/c:tf_status_internal",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core/platform:env",
         "//tensorflow/core/platform:errors",
+        "//tensorflow/core/platform:file_statistics",
         "//tensorflow/core/platform:status",
-        "@local_tsl//tsl/platform:errors",
+        "//tensorflow/core/platform:strcat",
+        "//tensorflow/core/platform:stringpiece",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 

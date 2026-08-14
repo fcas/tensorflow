@@ -17,7 +17,9 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -26,10 +28,15 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "flatbuffers/buffer.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
+#include "flatbuffers/string.h"  // from @flatbuffers
+#include "tensorflow/compiler/mlir/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/c/c_api_types.h"
+#include "tensorflow/lite/core/interpreter_builder.h"
 #include "tensorflow/lite/core/kernels/register.h"
-#include "tensorflow/lite/core/model.h"
-#include "tensorflow/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h"
+#include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
@@ -79,9 +86,8 @@ void QuantizedFullyConnectedTester::Test(
   }
 }
 
-void QuantizedFullyConnectedTester::Test(TfLiteDelegate* delegate) const {
-  std::vector<char> buffer = CreateTfLiteModel();
-  const Model* model = GetModel(buffer.data());
+void QuantizedFullyConnectedTester::Test(TfLiteDelegate* delegate) {
+  const Model* model = GetModel();
 
   std::unique_ptr<Interpreter> delegate_interpreter;
   ASSERT_EQ(
@@ -113,7 +119,7 @@ void QuantizedFullyConnectedTester::Test(TfLiteDelegate* delegate) const {
   ASSERT_EQ(delegate_interpreter->ModifyGraphWithDelegate(delegate), kTfLiteOk);
 
   if (weights_cache_ != nullptr) {
-    TfLiteXNNPackDelegateWeightsCacheFinalizeHard(weights_cache_);
+    TfLiteXNNPackDelegateWeightsCacheFinalizeSoft(weights_cache_);
   }
 
   if (Unsigned()) {

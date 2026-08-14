@@ -42,7 +42,7 @@ class AutoMixedPrecision : public GraphOptimizer {
 
   ~AutoMixedPrecision() override {}
 
-  string name() const override {
+  std::string name() const override {
     switch (mode_) {
       case AutoMixedPrecisionMode::CUDA:
         return "auto_mixed_precision";
@@ -61,8 +61,8 @@ class AutoMixedPrecision : public GraphOptimizer {
 
   bool UsesFunctionLibrary() const override { return false; }
 
-  Status Optimize(Cluster* cluster, const GrapplerItem& item,
-                  GraphDef* output) override;
+  absl::Status Optimize(Cluster* cluster, const GrapplerItem& item,
+                        GraphDef* output) override;
 
  private:
   const AutoMixedPrecisionMode mode_;

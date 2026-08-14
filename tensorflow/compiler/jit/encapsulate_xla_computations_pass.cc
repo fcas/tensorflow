@@ -46,7 +46,7 @@ const char* const kXlaClusterOutput = "XlaClusterOutput";
 
 bool IsCpuGpuCompile(const Graph* graph) {
   for (Node* n : graph->nodes()) {
-    string name;
+    std::string name;
     // Only consider nodes being compiled.
     if (!TryGetNodeAttr(n->attrs(), kXlaClusterIdAttr, &name)) continue;
     // Early return for any node with a device that is not a CPU or GPU.
@@ -71,11 +71,11 @@ bool is_guaranteed_constant(const Node& n) {
 }
 
 // Finds the `index` of an _Arg or _Retval node.
-Status GetIndexAttr(const Node& n, int num_args, int* index) {
+absl::Status GetIndexAttr(const Node& n, int num_args, int* index) {
   TF_RETURN_IF_ERROR(GetNodeAttr(n.attrs(), "index", index));
   if (*index < 0 || *index >= num_args) {
-    return errors::InvalidArgument("Invalid ", n.type_string(), " number ",
-                                   *index);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid ", n.type_string(), " number ", *index));
   }
   return absl::OkStatus();
 }
@@ -111,11 +111,10 @@ void AddControlOutputs(const Node& node, absl::flat_hash_set<Node*>* deps) {
 // of the arguments.
 //
 // TODO(b/113166435): Ordering constraints on XlaLaunch op can be relaxed.
-Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
-                       std::unique_ptr<Graph>* graph_ptr,
-                       std::vector<int>* input_permutation,
-                       std::vector<int>* output_permutation,
-                       NodeDef* call_def) {
+absl::Status RewriteSubgraph(
+    const std::vector<OutputTensor>& arg_source_tensors,
+    std::unique_ptr<Graph>* graph_ptr, std::vector<int>* input_permutation,
+    std::vector<int>* output_permutation, NodeDef* call_def) {
   Graph* graph = graph_ptr->get();
   const int num_args = input_permutation->size();
   const int num_retvals = output_permutation->size();
@@ -128,8 +127,8 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
     if (n->type_string() == "_Arg") {
       // Check if this is a guaranteed constant.
       if (is_guaranteed_constant(*n)) {
-        return errors::InvalidArgument(
-            "Guaranteed constants are not supported (", n->name(), ")");
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Guaranteed constants are not supported (", n->name(), ")"));
       }
       args.push_back(n);
     } else if (n->type_string() == "_Retval") {
@@ -138,7 +137,7 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
   }
 
   if (std::find(args.begin(), args.end(), nullptr) != args.end()) {
-    return errors::InvalidArgument("Missing or non-consecutive arguments");
+    return absl::InvalidArgumentError("Missing or non-consecutive arguments");
   }
 
   // Reorders the arguments.
@@ -147,8 +146,8 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
     bool a_is_resource = (a->output_type(0) == DT_RESOURCE);
     bool b_is_resource = (b->output_type(0) == DT_RESOURCE);
     // Uses the name as a tiebreaker so the output is deterministic.
-    StringPiece a_name(a->name());
-    StringPiece b_name(b->name());
+    absl::string_view a_name(a->name());
+    absl::string_view b_name(b->name());
     return std::tie(a_is_resource, a_name) < std::tie(b_is_resource, b_name);
   });
 
@@ -186,7 +185,7 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
   // Uniquify the function name by computing a fingerprint of the function.
   // Nondeterminism in serialization would not lead to incorrect results, but
   // may cause spurious cache misses.
-  TF_ASSIGN_OR_RETURN(uint64 fingerprint, FingerprintGraph(*graph));
+  TF_ASSIGN_OR_RETURN(uint64_t fingerprint, FingerprintGraph(*graph));
   VLOG(1) << "Subgraph fingerprint:" << fingerprint;
   call_def->set_op(absl::StrCat(call_def->op(), "_", fingerprint));
   return absl::OkStatus();
@@ -194,7 +193,7 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
 
 }  // namespace
 
-/*static*/ Status EncapsulateXlaComputationsPass::Encapsulate(
+/*static*/ absl::Status EncapsulateXlaComputationsPass::Encapsulate(
     std::unique_ptr<Graph>* graph, FunctionLibraryDefinition* flib_def) {
   // Check for undeclared outputs before Encapsulation, so we can give a better
   // error message.
@@ -205,14 +204,14 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
         e->src()->attrs().Find(kXlaClusterIdAttr) != nullptr &&
         e->dst()->attrs().Find(kXlaClusterIdAttr) == nullptr &&
         e->dst()->type_string() != kXlaClusterOutput) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Undeclared output of XLA computation. Some common causes of this "
           "error are: 1) variable initializers that depend on the XLA "
           "computation; 2) gradient computations that depend on the XLA "
           "computation, which can be mitigated by moving gradient computations "
           "inside XLA computation. Offending edge: ",
           e->src()->name(), ":", e->src_output(), " -> ", e->dst()->name(), ":",
-          e->dst_input());
+          e->dst_input()));
     }
   }
 
@@ -226,7 +225,7 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
   return absl::OkStatus();
 }
 
-/*static*/ Status EncapsulateXlaComputationsPass::BuildXlaLaunchOps(
+/*static*/ absl::Status EncapsulateXlaComputationsPass::BuildXlaLaunchOps(
     Graph* graph,
     const std::function<absl::StatusOr<bool>(const Node&)>& is_xla_launch_node,
     const std::function<absl::StatusOr<XlaFunctionInfo>(const Node&)>&
@@ -358,10 +357,11 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
   return absl::OkStatus();
 }
 
-/*static*/ Status EncapsulateXlaComputationsPass::BuildXlaLaunchOps(
+/*static*/ absl::Status EncapsulateXlaComputationsPass::BuildXlaLaunchOps(
     Graph* graph) {
   const auto is_xla_launch_node = [](const Node& node) -> absl::StatusOr<bool> {
-    const string& name = GetNodeAttrString(node.attrs(), kXlaClusterIdAttr);
+    const std::string& name =
+        GetNodeAttrString(node.attrs(), kXlaClusterIdAttr);
     return !name.empty();
   };
 
@@ -377,7 +377,7 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
                            /*add_edges_to_output_of_downstream_nodes=*/true);
 }
 
-Status EncapsulateXlaComputationsPass::Run(
+absl::Status EncapsulateXlaComputationsPass::Run(
     const GraphOptimizationPassOptions& options) {
   VLOG(1) << "EncapsulateXlaComputations(): "
           << DumpGraphToFile("encapsulate_xla_computations_before",

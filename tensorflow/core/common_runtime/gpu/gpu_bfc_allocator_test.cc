@@ -13,6 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <ostream>
+
+#include "absl/memory/memory.h"
+#include "absl/synchronization/mutex.h"
+#include "xla/tsl/protobuf/bfc_memory_map.pb.h"
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 
@@ -22,22 +32,21 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/framework/device_id.h"
+#include "xla/tsl/lib/gtl/inlined_vector.h"
+#include "xla/tsl/lib/random/simple_philox.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/platform/types.h"
 #include "tensorflow/core/common_runtime/device/device_mem_allocator.h"
 #include "tensorflow/core/framework/typed_allocator.h"
 #include "tensorflow/core/protobuf/bfc_memory_map.pb.h"
 #include "tensorflow/core/protobuf/config.pb.h"
-#include "tsl/framework/device_id.h"
-#include "tsl/lib/gtl/inlined_vector.h"
-#include "tsl/lib/random/simple_philox.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/strcat.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/test_benchmark.h"
-#include "tsl/platform/threadpool.h"
-#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace {
@@ -70,7 +79,7 @@ std::unique_ptr<SubAllocator> CreateGPUMemAllocator(size_t) {
   PlatformDeviceId gpu_id(0);
   return absl::WrapUnique(new DeviceMemAllocator(
       GPUMachineManager()->ExecutorForDevice(gpu_id.value()).value(), gpu_id,
-      stream_executor::MemoryType::kDevice, {}, {}));
+      {}));
 }
 
 std::unique_ptr<SubAllocator> CreateSubAllocator(
@@ -435,7 +444,7 @@ class GPUBFCAllocatorPrivateMethodsTest
 
     std::array<BFCAllocator::BinDebugInfo, BFCAllocator::kNumBins> bin_infos;
     {
-      mutex_lock l(a.lock_);
+      absl::MutexLock l(a.mutex_);
       bin_infos = a.get_bin_debug_info();
     }
 
@@ -487,7 +496,7 @@ class GPUBFCAllocatorPrivateMethodsTest
       initial_ptrs[i] = nullptr;
     }
     {
-      mutex_lock l(a.lock_);
+      absl::MutexLock l(a.mutex_);
       bin_infos = a.get_bin_debug_info();
     }
     for (int i = 0; i < BFCAllocator::kNumBins; i++) {
@@ -611,7 +620,7 @@ class GPUBFCAllocatorPrivateMethodsTest_SubAllocatorSpecific
     }
 
     {
-      mutex_lock l(a.lock_);
+      absl::MutexLock l(a.mutex_);
       // Make sure there are more than 1 regions in preparation for the test.
       EXPECT_LT(1, a.region_manager_.regions().size());
     }
@@ -624,7 +633,7 @@ class GPUBFCAllocatorPrivateMethodsTest_SubAllocatorSpecific
     // Deallocate free regions and there shall be only one region left.
     EXPECT_EQ(true, a.DeallocateFreeRegions(/*rounded_bytes=*/0));
     {
-      mutex_lock l(a.lock_);
+      absl::MutexLock l(a.mutex_);
       EXPECT_EQ(1, a.region_manager_.regions().size());
     }
 

@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
@@ -34,12 +35,13 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/utils/dump_mlir_util.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
 #include "tensorflow/compiler/mlir/tf2xla/internal/logging_hooks.h"
+#include "xla/tsl/lib/monitoring/counter.h"
+#include "xla/tsl/platform/status.h"
 #include "tensorflow/core/platform/error_payloads.h"
 #include "tensorflow/core/platform/status.h"
+#include "tensorflow/core/protobuf/core_platform_payloads.pb.h"
 #include "tensorflow/core/util/debug_data_dumper.h"
-#include "tsl/lib/monitoring/counter.h"
 #include "tsl/platform/error_logging.h"
-#include "tsl/platform/status.h"
 
 namespace tensorflow {
 namespace tf2xla {
@@ -101,7 +103,7 @@ void AddTfDialectToExecutorPasses(OpPassManager &pm) {
   pm.addPass(mlir::TF::CreateVerifySuitableForExportPass());
 }
 
-tensorflow::Status RecordStatusIfError(absl::Status status) {
+absl::Status RecordStatusIfError(absl::Status status) {
   if (status.ok()) {
     return absl::OkStatus();
   }
@@ -127,7 +129,7 @@ tensorflow::Status RecordStatusIfError(absl::Status status) {
 
 }  // namespace
 
-tensorflow::Status ExportFromTensorflowDialectToExecutor(
+absl::Status ExportFromTensorflowDialectToExecutor(
     ModuleOp module, llvm::StringRef module_name) {
   PassManager tf_to_executor(module.getContext());
   ::tensorflow::applyTensorflowAndCLOptions(tf_to_executor);

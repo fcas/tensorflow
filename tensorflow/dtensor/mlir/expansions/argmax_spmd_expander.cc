@@ -17,12 +17,15 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/FormatVariadic.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
@@ -30,7 +33,6 @@ limitations under the License.
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
-#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/mlir/value_utils.h"
 #include "tensorflow/dtensor/proto/layout.pb.h"
 
@@ -41,8 +43,8 @@ namespace {
 StatusOr<Layout> ComputeResultLayout(mlir::Operation* op,
                                      const Layout& input_layout) {
   if (!mlir::isa<mlir::TF::ArgMaxOp>(op))
-    return errors::Unimplemented("SPMD expansion for op type: ", OpName(op),
-                                 " not yet implemented.");
+    return absl::UnimplementedError(absl::StrCat(
+        "SPMD expansion for op type: ", OpName(op), " not yet implemented."));
 
   auto argmax_op = llvm::cast<mlir::TF::ArgMaxOp>(op);
   const auto input_rank = ValueRank(argmax_op.getInput());
@@ -67,15 +69,16 @@ StatusOr<mlir::Operation*> ArgMaxSPMDExpander::ExpandOp(mlir::Operation* op) {
                       ExtractLayoutFromOperand(argmax_op.getInput()));
   TF_ASSIGN_OR_RETURN(auto output_layout, ExtractSingleLayoutFromOp(argmax_op));
   if (!input_layout || !output_layout)
-    return errors::InvalidArgument(
-        OpName(op), " is missing layouts during SPMD Expansion.");
+    return absl::InvalidArgumentError(
+        absl::StrCat(OpName(op), " is missing layouts during SPMD Expansion."));
 
   mlir::Value input = argmax_op.getInput();
   const auto input_rank = ValueRank(input);
 
   TF_ASSIGN_OR_RETURN(auto input_shape, GetShapeOfValue(input));
 
-  if (input_rank == -1) return errors::Unimplemented("missing rank for input.");
+  if (input_rank == -1)
+    return absl::UnimplementedError("missing rank for input.");
   if (axis < 0) axis += input_rank;
 
   mlir::OpBuilder builder(op);
@@ -104,9 +107,9 @@ StatusOr<mlir::Operation*> ArgMaxSPMDExpander::ExpandOp(mlir::Operation* op) {
     }
   }
 
-  auto new_argmax = builder.create<mlir::TF::ArgMaxOp>(
-      argmax_op.getLoc(), argmax_op.getResult().getType(), input,
-      argmax_op.getDimension());
+  auto new_argmax = mlir::TF::ArgMaxOp::create(builder, argmax_op.getLoc(),
+                                               argmax_op.getResult().getType(),
+                                               input, argmax_op.getDimension());
   op->getResult(0).replaceAllUsesWith(new_argmax.getOutput());
   op->erase();
 
@@ -123,9 +126,9 @@ StatusOr<llvm::DenseMap<int, Layout>> ArgMaxSPMDExpander::ComputeLayoutForward(
   TF_ASSIGN_OR_RETURN(auto result_layout,
                       ComputeResultLayout(op, input_layout));
   if (result_layout.rank() != input_layout.rank() - 1)
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         OpName(op), " derived output layout rank is ", result_layout.rank(),
-        " not ", input_layout.rank() - 1, " as expected.");
+        " not ", input_layout.rank() - 1, " as expected."));
 
   return llvm::DenseMap<int, Layout>({{0, result_layout}});
 }

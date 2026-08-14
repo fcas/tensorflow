@@ -18,22 +18,29 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/kernels/conv_op_helpers.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <numeric>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
-#include "xla/client/lib/arithmetic.h"
-#include "xla/client/lib/constants.h"
-#include "xla/client/xla_builder.h"
+#include "xla/hlo/builder/lib/arithmetic.h"
+#include "xla/hlo/builder/lib/constants.h"
+#include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal_util.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/framework/kernel_shape_util.h"
 #include "tensorflow/core/framework/node_def_util.h"
@@ -42,6 +49,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_slice.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/kernels/conv_grad_shape_utils.h"
 #include "tensorflow/core/util/padding.h"
 #include "tensorflow/core/util/tensor_format.h"
@@ -67,8 +75,8 @@ xla::PrecisionConfig GetPrecisionConfig() {
 // If `shape` is [H, W, ..., M, N] returns [H, W, ..., 1, M*N].
 xla::Shape GroupedFilterShapeForDepthwiseConvolution(
     const xla::Shape& filter_shape) {
-  int64_t input_feature_dim = filter_shape.dimensions_size() - 2;
-  int64_t output_feature_dim = filter_shape.dimensions_size() - 1;
+  int64_t input_feature_dim = filter_shape.dimensions().size() - 2;
+  int64_t output_feature_dim = filter_shape.dimensions().size() - 1;
   int64_t depthwise_multiplier = filter_shape.dimensions(output_feature_dim);
   int64_t input_feature = filter_shape.dimensions(input_feature_dim);
 
@@ -86,7 +94,7 @@ xla::XlaOp TransposeFilterForGroupConvolutionBackpropInput(
     int num_spatial_dims) {
   // 1. Reshape from [H, W, ..., filter_in_depth, out_depth] to [H, W, ...,
   // filter_in_depth, G, out_depth / G]
-  int num_dims = filter_shape.dimensions_size();
+  int num_dims = filter_shape.dimensions().size();
   CHECK_GE(num_dims, 2);  // Crash OK
   xla::Shape new_shape = filter_shape;
   new_shape.set_dimensions(num_dims - 1, num_groups);
@@ -116,36 +124,36 @@ xla::XlaOp ReshapeFilterForDepthwiseConvolution(const xla::Shape& filter_shape,
 
 // Performs some basic checks on ConvOpAttrs that are true for all kinds of XLA
 // convolutions (as currently implemented).
-Status CheckConvAttrs(const ConvOpAttrs& attrs) {
+absl::Status CheckConvAttrs(const ConvOpAttrs& attrs) {
   const int num_dims = attrs.num_spatial_dims + 2;
   const int attrs_strides_size = attrs.strides.size();
   if (attrs_strides_size != num_dims) {
-    return errors::InvalidArgument("Sliding window strides field must specify ",
-                                   num_dims, " dimensions");
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Sliding window strides field must specify ", num_dims, " dimensions"));
   }
   int batch_dim = GetTensorBatchDimIndex(num_dims, attrs.data_format);
   int feature_dim = GetTensorFeatureDimIndex(num_dims, attrs.data_format);
   if (attrs.strides[batch_dim] != 1 || attrs.strides[feature_dim] != 1) {
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         "Current implementation does not yet support strides in the batch and "
         "depth dimensions.");
   }
   const int attrs_dilations_size = attrs.dilations.size();
   if (attrs_dilations_size != num_dims) {
-    return errors::InvalidArgument("Dilations field must specify ", num_dims,
-                                   " dimensions");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Dilations field must specify ", num_dims, " dimensions"));
   }
   if (attrs.dilations[batch_dim] != 1 || attrs.dilations[feature_dim] != 1) {
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         "Current implementation does not support dilations in the batch and "
         "depth dimensions.");
   }
   for (int i = 0; i < attrs.num_spatial_dims; ++i) {
     int input_dim = GetTensorSpatialDimIndex(num_dims, attrs.data_format, i);
     if (attrs.dilations[input_dim] < 1) {
-      return errors::Unimplemented("Dilation values must be positive; ", i,
-                                   "th spatial dimension had dilation ",
-                                   attrs.dilations[input_dim]);
+      return absl::UnimplementedError(absl::StrCat(
+          "Dilation values must be positive; ", i,
+          "th spatial dimension had dilation ", attrs.dilations[input_dim]));
     }
   }
   return absl::OkStatus();
@@ -153,11 +161,12 @@ Status CheckConvAttrs(const ConvOpAttrs& attrs) {
 
 // Wrapper around ConvBackpropComputeDimensions that converts from XLA shapes
 // to TensorShapes.
-Status ConvBackpropComputeDimensionsV2XlaShapes(
-    StringPiece label, int num_spatial_dims, const xla::Shape& input_shape,
-    const xla::Shape& filter_shape, const xla::Shape& out_backprop_shape,
-    absl::Span<const int32> dilations, const std::vector<int32>& strides,
-    Padding padding, TensorFormat data_format, ConvBackpropDimensions* dims,
+absl::Status ConvBackpropComputeDimensionsV2XlaShapes(
+    absl::string_view label, int num_spatial_dims,
+    const xla::Shape& input_shape, const xla::Shape& filter_shape,
+    const xla::Shape& out_backprop_shape, absl::Span<const int32_t> dilations,
+    const std::vector<int32_t>& strides, Padding padding,
+    TensorFormat data_format, ConvBackpropDimensions* dims,
     absl::Span<const int64_t> explicit_paddings) {
   TensorShape input_tensor_shape, filter_tensor_shape,
       out_backprop_tensor_shape;
@@ -195,10 +204,11 @@ absl::StatusOr<ConvOpAttrs> ConvOpAttrs::Create(int num_spatial_dims,
         ctx->GetAttr("explicit_paddings", &attrs.explicit_paddings));
   }
 
-  string data_format;
+  std::string data_format;
   TF_RETURN_IF_ERROR(ctx->GetAttr("data_format", &data_format));
   if (!FormatFromString(data_format, &attrs.data_format)) {
-    return errors::InvalidArgument("Invalid data format: ", data_format);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid data format: ", data_format));
   }
 
   TF_RETURN_IF_ERROR(CheckValidPadding(attrs.padding, attrs.explicit_paddings,
@@ -223,7 +233,7 @@ absl::StatusOr<ConvNDOpAttrs> ConvNDOpAttrs::Create(OpKernelConstruction* ctx) {
         ctx->GetAttr("explicit_paddings", &attrs.explicit_paddings));
   }
 
-  string data_format_str;
+  std::string data_format_str;
   TF_RETURN_IF_ERROR(ctx->GetAttr("data_format", &data_format_str));
   if (!(data_format_str == "CHANNELS_LAST" ||
         data_format_str == "CHANNELS_FIRST")) {
@@ -236,10 +246,9 @@ absl::StatusOr<ConvNDOpAttrs> ConvNDOpAttrs::Create(OpKernelConstruction* ctx) {
   return attrs;
 }
 
-absl::StatusOr<xla::XlaOp> MakeXlaForwardConvOp(StringPiece /*type_string*/,
-                                                xla::XlaOp conv_input,
-                                                xla::XlaOp filter,
-                                                const ConvOpAttrs& attrs) {
+absl::StatusOr<xla::XlaOp> MakeXlaForwardConvOp(
+    absl::string_view /*type_string*/, xla::XlaOp conv_input, xla::XlaOp filter,
+    const ConvOpAttrs& attrs) {
   TF_RETURN_IF_ERROR(CheckConvAttrs(attrs));
 
   auto* builder = conv_input.builder();
@@ -249,14 +258,14 @@ absl::StatusOr<xla::XlaOp> MakeXlaForwardConvOp(StringPiece /*type_string*/,
 
   // For 2D convolution, there should be 4 dimensions.
   int num_dims = attrs.num_spatial_dims + 2;
-  if (input_shape.dimensions_size() != num_dims) {
-    return errors::InvalidArgument("input must be ", num_dims, "-dimensional",
-                                   input_shape.DebugString());
+  if (input_shape.dimensions().size() != num_dims) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "input must be ", num_dims, "-dimensional", input_shape.ToString()));
   }
-  if (filter_shape.dimensions_size() != num_dims) {
-    return errors::InvalidArgument(
-        "filter must be ", num_dims,
-        "-dimensional: ", filter_shape.DebugString());
+  if (filter_shape.dimensions().size() != num_dims) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("filter must be ", num_dims,
+                     "-dimensional: ", filter_shape.ToString()));
   }
 
   // The last two dimensions of the filter are the input and output shapes.
@@ -269,15 +278,15 @@ absl::StatusOr<xla::XlaOp> MakeXlaForwardConvOp(StringPiece /*type_string*/,
   // The 'C' dimension for input is in_depth.
   // It must be a multiple of the filter's in_depth.
   if (in_depth % filter_in_depth != 0) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Depth of input must be a multiple of depth of filter: ", in_depth,
-        " vs ", filter_in_depth);
+        " vs ", filter_in_depth));
   }
   int64_t feature_group_count = in_depth / filter_in_depth;
   if (out_depth % feature_group_count != 0) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Depth of output must be a multiple of the number of groups: ",
-        out_depth, " vs ", feature_group_count);
+        out_depth, " vs ", feature_group_count));
   }
 
   if (attrs.depthwise) {
@@ -346,8 +355,8 @@ absl::StatusOr<xla::XlaOp> MakeXlaForwardConvOp(StringPiece /*type_string*/,
 }
 
 absl::StatusOr<xla::XlaOp> MakeXlaBackpropInputConvOp(
-    StringPiece type_string, const xla::Shape& input_shape, xla::XlaOp filter,
-    xla::XlaOp out_backprop, const ConvOpAttrs& attrs,
+    absl::string_view type_string, const xla::Shape& input_shape,
+    xla::XlaOp filter, xla::XlaOp out_backprop, const ConvOpAttrs& attrs,
     xla::XlaOp* input_sizes) {
   TF_RETURN_IF_ERROR(CheckConvAttrs(attrs));
 
@@ -445,7 +454,7 @@ absl::StatusOr<xla::XlaOp> MakeXlaBackpropInputConvOp(
 }
 
 absl::StatusOr<xla::XlaOp> MakeXlaBackpropFilterConvOp(
-    StringPiece type_string, xla::XlaOp activations,
+    absl::string_view type_string, xla::XlaOp activations,
     const xla::Shape& filter_shape, xla::XlaOp gradients,
     const ConvOpAttrs& attrs) {
   TF_RETURN_IF_ERROR(CheckConvAttrs(attrs));

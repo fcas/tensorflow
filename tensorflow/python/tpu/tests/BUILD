@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description: Tests defined for Cloud TPUs
 
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
@@ -11,7 +26,6 @@ package(
 pytype_strict_library(
     name = "tpu_embedding_base_test",
     srcs = ["tpu_embedding_base_test.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/distribute:tpu_strategy",
@@ -42,8 +56,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/checkpoint",
@@ -75,8 +87,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -107,8 +117,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -131,8 +139,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -153,8 +159,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -182,8 +186,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -205,8 +207,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -224,8 +224,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -240,7 +238,6 @@ tpu_py_strict_test(
 pytype_strict_library(
     name = "tpu_embedding_v2_correctness_base_test",
     srcs = ["tpu_embedding_v2_correctness_base_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -259,8 +256,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -276,8 +271,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -293,8 +286,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -310,8 +301,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -327,8 +316,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -344,8 +331,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -361,8 +346,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -378,8 +361,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -395,8 +376,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -415,8 +394,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_v2_correctness_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -439,8 +416,6 @@ tpu_py_strict_test(
     ],
     disable_experimental = True,
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     deps = [
         ":tpu_embedding_base_test",
         "//tensorflow/python/compat:v2_compat",
@@ -463,8 +438,6 @@ tpu_py_strict_test(
         "tpu_embedding_v1_checkpoint_test.py",
     ],
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = ["no_oss"],
     deps = [
         ":tpu_embedding_base_test",
@@ -493,8 +466,6 @@ tpu_py_strict_test(
         "tpu_embedding_v1_correctness_test.py",
     ],
     disable_mlir_bridge = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = ["no_oss"],
     deps = [
         ":tpu_embedding_base_test",
@@ -518,8 +489,6 @@ tpu_py_strict_test(
     disable_mlir_bridge = False,
     disable_tfrt = False,
     disable_v3_4chips = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = ["no_oss"],
     deps = [
         "//tensorflow/python/compat:v2_compat",

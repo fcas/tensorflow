@@ -15,15 +15,19 @@ limitations under the License.
 #include <stdint.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
+#include <limits>
 #include <vector>
 
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
+#include "tensorflow/lite/kernels/internal/kernel_utils.h"
 #include "tensorflow/lite/kernels/internal/tensor.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/util.h"
 
 namespace tflite {
 namespace ops {
@@ -35,6 +39,24 @@ constexpr int kOutputValues = 0;
 constexpr int kOutputIndexes = 1;
 
 namespace {
+
+TfLiteStatus ReadTopK(TfLiteContext* context, const TfLiteTensor& top_k,
+                      int32_t& k) {
+  switch (top_k.type) {
+    case kTfLiteInt32:
+      k = *GetTensorData<int32_t>(&top_k);
+      return kTfLiteOk;
+    case kTfLiteInt16:
+      k = *GetTensorData<int16_t>(&top_k);
+      return kTfLiteOk;
+    default:
+      TF_LITE_KERNEL_LOG(context,
+                         "Type %s is currently not supported k Type by TopK.",
+                         TfLiteTypeGetName(top_k.type));
+      return kTfLiteError;
+  }
+}
+
 TfLiteStatus ResizeOutput(TfLiteContext* context, TfLiteNode* node) {
   const TfLiteTensor* top_k;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTopK, &top_k));
@@ -44,13 +66,8 @@ TfLiteStatus ResizeOutput(TfLiteContext* context, TfLiteNode* node) {
   // Check that the tensor contains only one value.
   TF_LITE_ENSURE_EQ(context, NumElements(top_k), 1);
 
-  int32 k;
-  if (top_k->type == kTfLiteInt16) {
-    k = *GetTensorData<int16_t>(top_k);
-  } else {
-    // top_k->type == kTfLiteInt32
-    k = *GetTensorData<int32_t>(top_k);
-  }
+  int32 k = 0;
+  TF_LITE_ENSURE_OK(context, ReadTopK(context, *top_k, k));
 
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTensor, &input));
@@ -58,9 +75,24 @@ TfLiteStatus ResizeOutput(TfLiteContext* context, TfLiteNode* node) {
   // Check that input has one or more dimensions.
   TF_LITE_ENSURE_MSG(context, input->dims->size >= 1,
                      "TopK k input must have 1 or more dimensions.");
-  // Check that k is less or equal the internal dimension.
-  TF_LITE_ENSURE_MSG(context, k <= input->dims->data[num_dimensions - 1],
-                     "TopK k is higher than the internal dimension.");
+  int input_elements = 0;
+  TF_LITE_ENSURE_MSG(context,
+                     CheckedNumElements(input, input_elements) == kTfLiteOk,
+                     "Input element count overflows int.");
+  int num_rows = 0;
+  TF_LITE_ENSURE_OK(context,
+                    kernel_utils::CheckedDimensionProduct(
+                        context, *input, 0, num_dimensions - 1, num_rows));
+
+  // Calculate the size of the last dimension for the output tensors.
+  // It should be 0 if k is not positive.
+  const int32 output_last_dim = std::max(0, k);
+
+  // Check that k is less or equal the internal dimension *if k is positive*.
+  if (k > 0) {
+    TF_LITE_ENSURE_MSG(context, k <= input->dims->data[num_dimensions - 1],
+                       "TopK k is higher than the internal dimension.");
+  }
 
   TfLiteIntArray* output_indexes_shape = TfLiteIntArrayCreate(num_dimensions);
   TfLiteIntArray* output_values_shape = TfLiteIntArrayCreate(num_dimensions);
@@ -68,8 +100,10 @@ TfLiteStatus ResizeOutput(TfLiteContext* context, TfLiteNode* node) {
     output_indexes_shape->data[i] = input->dims->data[i];
     output_values_shape->data[i] = input->dims->data[i];
   }
-  output_indexes_shape->data[num_dimensions - 1] = k;
-  output_values_shape->data[num_dimensions - 1] = k;
+  // Use the sanitized dimension size.
+  output_indexes_shape->data[num_dimensions - 1] = output_last_dim;
+  output_values_shape->data[num_dimensions - 1] = output_last_dim;
+
   TfLiteTensor* output_indexes;
   TF_LITE_ENSURE_OK(
       context, GetOutputSafe(context, node, kOutputIndexes, &output_indexes));
@@ -170,6 +204,13 @@ class TopContainer {
   // (notice the inversion of direction, not a typo); ties (==) are broken in
   // favor of earlier elements (i.e., a < b).
   bool compare_fun(Tidx a, Tidx b) const {
+    const bool a_isnan = std::isnan(values_[a]);
+    const bool b_isnan = std::isnan(values_[b]);
+    if (a_isnan != b_isnan) {
+      // Consistently order NaNs after non-NaN numbers (treating NaN as smaller
+      // than any float value).
+      return b_isnan;
+    }
     if (values_[b] < values_[a]) {
       return true;
     } else if (values_[b] > values_[a]) {
@@ -184,6 +225,12 @@ class TopContainer {
 template <typename T, typename Tidx = int32>
 void TopK(int32 row_size, int32 num_rows, const T* data, int32 k,
           Tidx* output_indexes, T* output_values) {
+  if (k <= 0) {
+    // If k is 0 or negative, there are no top elements to find.
+    // The output tensors should already be sized with the last dimension as 0
+    // by the Prepare/ResizeOutput functions.
+    return;
+  }
   TopContainer<T, Tidx> topc(k, row_size);
   for (int row = 0; row < num_rows; ++row) {
     const T* values_row = data + row * row_size;
@@ -221,7 +268,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTopK, &top_k));
 
   TF_LITE_ENSURE(context,
-                 top_k->type != kTfLiteInt32 || top_k->type != kTfLiteInt16);
+                 top_k->type == kTfLiteInt32 || top_k->type == kTfLiteInt16);
 
   // Set output dynamic if the `top_k` tensor is not constant, or the input has
   // dynamic dimensions (indicated by dims signature).
@@ -253,8 +300,17 @@ TfLiteStatus TopKImpl(TfLiteContext* context, TfLiteNode* node, int32_t k,
 
   const int32 row_size = input->dims->data[input->dims->size - 1];
   int32 num_rows = 1;
-  for (int i = 0; i < input->dims->size - 1; ++i) {
-    num_rows *= input->dims->data[i];
+  TF_LITE_ENSURE_OK(context,
+                    kernel_utils::CheckedDimensionProduct(
+                        context, *input, 0, input->dims->size - 1, num_rows));
+  int input_elements = 0;
+  TF_LITE_ENSURE_MSG(context,
+                     CheckedNumElements(input, input_elements) == kTfLiteOk,
+                     "Input element count overflows int.");
+  if (num_rows > 0 && k > 0) {
+    TF_LITE_ENSURE_MSG(context,
+                       row_size <= std::numeric_limits<idx_type>::max(),
+                       "TopK row size exceeds output index type range.");
   }
   switch (output_values->type) {
     case kTfLiteFloat32:
@@ -301,21 +357,8 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
   }
   const TfLiteTensor* top_k;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTopK, &top_k));
-  int32 k;
-
-  switch (top_k->type) {
-    case kTfLiteInt32:
-      k = top_k->data.i32[0];
-      break;
-    case kTfLiteInt16:
-      k = top_k->data.i16[0];
-      break;
-    default:
-      TF_LITE_KERNEL_LOG(context,
-                         "Type %s is currently not supported k Type by TopK.",
-                         TfLiteTypeGetName(output_values->type));
-      return kTfLiteError;
-  }
+  int32 k = 0;
+  TF_LITE_ENSURE_OK(context, ReadTopK(context, *top_k, k));
 
   switch (output_indexes->type) {
     case kTfLiteInt32: {

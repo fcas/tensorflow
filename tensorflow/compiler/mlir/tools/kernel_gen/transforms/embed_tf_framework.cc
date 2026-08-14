@@ -48,7 +48,7 @@ class FuncOpConverter : public OpConversionPattern<func::FuncOp> {
       conversion.addInputs(arg_type.index(), arg_type.value());
     }
 
-    rewriter.applySignatureConversion(&func.getBody(), conversion);
+    rewriter.applySignatureConversion(&func.getBody().front(), conversion);
 
     // Update the signature of the function.
     rewriter.modifyOpInPlace(func, [&] {
@@ -95,10 +95,10 @@ struct AllocOpConverter : public OpConversionPattern<memref::AllocOp> {
         alloc, alloc.getType(), *ctx, adaptor.getOperands(),
         reuse_input_candidates, reuse_output_index);
     Location loc = buffer.getLoc();
-    Value cond = rewriter.create<IsValidMemRefOp>(
-        loc, rewriter.getIntegerType(1), buffer);
-    rewriter.create<TFAssertOp>(loc, *ctx, cond, ErrorCode::RESOURCE_EXHAUSTED,
-                                "failed to allocate memory");
+    Value cond = IsValidMemRefOp::create(rewriter, loc,
+                                         rewriter.getIntegerType(1), buffer);
+    TFAssertOp::create(rewriter, loc, *ctx, cond, ErrorCode::RESOURCE_EXHAUSTED,
+                       "failed to allocate memory");
     return success();
   }
 };

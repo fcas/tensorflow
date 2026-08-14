@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_TYPE_INFERENCE_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_TYPE_INFERENCE_H_
 
+#include "absl/status/status.h"
 #include "tensorflow/core/common_runtime/optimization_registry.h"
 
 namespace tensorflow {
@@ -40,7 +41,7 @@ namespace tensorflow {
 // TODO(mdan): Use a regular union-based algorithm instead?
 class TypeInferencePass : public GraphOptimizationPass {
  public:
-  Status Run(const GraphOptimizationPassOptions& options) override;
+  absl::Status Run(const GraphOptimizationPassOptions& options) override;
 };
 
 // A version of TypeInferencePass that prints a warning on error, instead
@@ -49,7 +50,7 @@ class TypeInferencePass : public GraphOptimizationPass {
 // TODO(mdan): Turn this into an error, once all offenders are clean.
 class WeakTypeInferencePass : public GraphOptimizationPass {
  public:
-  Status Run(const GraphOptimizationPassOptions& options) override;
+  absl::Status Run(const GraphOptimizationPassOptions& options) override;
 };
 
 }  // namespace tensorflow

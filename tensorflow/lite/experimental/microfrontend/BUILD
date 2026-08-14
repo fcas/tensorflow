@@ -1,6 +1,8 @@
 # TensorFlow ops for audio front-end processing.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_copts",
@@ -12,7 +14,7 @@ load(
 load("//tensorflow:tensorflow.default.bzl", "tf_custom_op_py_strict_library", "tf_py_strict_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )
@@ -106,7 +108,7 @@ tf_gen_op_wrapper_py(
         "//tensorflow/python/util:deprecation",
         "//tensorflow/python/util:tf_export",
     ],
-    py_lib_rule = py_strict_library,
+    py_lib_rule = py_library,
     deps = [":audio_microfrontend_op_op_lib"],
 )
 
@@ -119,7 +121,6 @@ tf_custom_op_py_strict_library(
     kernels = [
         ":audio_microfrontend_op_op_lib",
     ],
-    srcs_version = "PY3",
     deps = [
         ":audio_microfrontend_op",
         "//tensorflow/python/framework:dtypes",
@@ -138,6 +139,7 @@ tf_py_strict_test(
     name = "audio_microfrontend_op_test",
     size = "small",
     srcs = ["python/kernel_tests/audio_microfrontend_op_test.py"],
+    exec_properties = {"cpp_link.mem": "16g"},
     deps = [
         ":audio_microfrontend_py",
         "//tensorflow:tensorflow_py",

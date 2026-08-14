@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #define EIGEN_USE_THREADS
 
 #include "tensorflow/core/kernels/data/optional_ops_util.h"
@@ -26,11 +28,11 @@ limitations under the License.
 namespace tensorflow {
 namespace data {
 
-Status OptionalZerosLike(OpKernelContext* ctx, const OptionalVariant& x,
-                         OptionalVariant* y,
-                         std::function<Status(OpKernelContext* ctx,
-                                              const Tensor& input, Tensor* out)>
-                             zeros_like_func) {
+absl::Status OptionalZerosLike(
+    OpKernelContext* ctx, const OptionalVariant& x, OptionalVariant* y,
+    std::function<absl::Status(OpKernelContext* ctx, const Tensor& input,
+                               Tensor* out)>
+        zeros_like_func) {
   if (!x.has_value()) {
     return absl::OkStatus();
   }
@@ -44,25 +46,25 @@ Status OptionalZerosLike(OpKernelContext* ctx, const OptionalVariant& x,
   return absl::OkStatus();
 }
 
-Status OptionalBinaryAdd(
+absl::Status OptionalBinaryAdd(
     OpKernelContext* ctx, const OptionalVariant& a, const OptionalVariant& b,
     OptionalVariant* out,
-    std::function<Status(OpKernelContext* ctx, const Tensor& a, const Tensor& b,
-                         Tensor* out)>
+    std::function<absl::Status(OpKernelContext* ctx, const Tensor& a,
+                               const Tensor& b, Tensor* out)>
         binary_add_func) {
   // TODO(skyewm): should adding a value to a non-value be a no-op instead?
   if (a.has_value() != b.has_value()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Cannot add optionals because one has a value and the other doesn't.");
   }
   if (!a.has_value()) {
     return absl::OkStatus();
   }
   if (a.get_values().size() != b.get_values().size()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Cannot add optionals because they have different numbers of "
         "components (",
-        a.get_values().size(), " vs. ", b.get_values().size(), ").");
+        a.get_values().size(), " vs. ", b.get_values().size(), ")."));
   }
   std::vector<Tensor> out_tensors;
   for (int i = 0; i < a.get_values().size(); ++i) {

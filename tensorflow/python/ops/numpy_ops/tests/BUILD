@@ -1,23 +1,39 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library", "py_strict_test")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 licenses(["notice"])
 
-py_strict_library(
+py_library(
     name = "config",
     srcs = ["config.py"],
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     deps = [
         "@absl_py//absl:app",
         "@absl_py//absl/flags",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "test_util",
     srcs = ["test_util.py"],
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     deps = [
         ":config",
         ":extensions",
@@ -29,16 +45,17 @@ py_strict_library(
         "//tensorflow/python/ops/numpy_ops:np_utils",
         "//tensorflow/python/ops/numpy_ops:numpy",
         "//tensorflow/python/util:nest",
+        "//tensorflow/python/util:numpy_compat",
         "//third_party/py/numpy",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "np_wrapper",
     srcs = ["np_wrapper.py"],
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     visibility = [
         "//visibility:public",
     ],
@@ -57,10 +74,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "extensions",
     srcs = ["extensions.py"],
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     deps = [
         ":np_wrapper",
         "//tensorflow:tensorflow_py",
@@ -102,11 +119,10 @@ py_strict_library(
 )
 
 # copybara:uncomment_begin(google-only)
-# py_strict_test(
+# py_test(
 #     name = "extensions_test",
 #     srcs = ["extensions_test.py"],
-#     python_version = "PY3",
-#     srcs_version = "PY2AND3",
+#     strict_deps = True,
 #     tags = [
 #         "gpu",
 #         "no_pip",
@@ -145,7 +161,7 @@ py_strict_library(
 #     ],
 # )
 #
-# py_strict_test(
+# py_test(
 #     name = "extensions_test_tpu",
 #     srcs = ["extensions_test.py"],
 #     args = [
@@ -153,7 +169,7 @@ py_strict_library(
 #         "--requires_tpu",
 #     ],
 #     main = "extensions_test.py",
-#     python_version = "PY3",
+#     strict_deps = True,
 #     tags = [
 #         "no_pip",
 #         "requires-tpu",
@@ -191,7 +207,7 @@ py_strict_library(
 # )
 # copybara:uncomment_end
 
-py_strict_test(
+py_test(
     name = "np_test",
     timeout = "long",
     srcs = ["np_test.py"],
@@ -199,10 +215,14 @@ py_strict_test(
         "--num_generated_cases=90",
         "--enable_x64",  # Needed to enable dtype check
     ],
-    python_version = "PY3",
+    env = {
+        "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+    },
     shard_count = 20,
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     tags = [
+        "exclusive-if-local",
         "gpu",
         "no_pip",
         "requires-gpu-nvidia",
@@ -220,21 +240,21 @@ py_strict_test(
         "//tensorflow/python/ops/numpy_ops:np_config",
         "//tensorflow/python/ops/numpy_ops:numpy",
         "//tensorflow/python/util:nest",
+        "//tensorflow/python/util:numpy_compat",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "np_indexing_test",
     srcs = ["np_indexing_test.py"],
     args = [
         "--num_generated_cases=90",
         "--enable_x64",  # Needed to enable dtype check
     ],
-    python_version = "PY3",
     shard_count = 10,
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     # TODO(b/164245103): Re-enable GPU once tf.tensor_strided_slice_update's segfault is fixed.
     tags = [
         "no_pip",
@@ -256,16 +276,15 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "np_einsum_test",
     srcs = ["np_einsum_test.py"],
     args = [
         "--num_generated_cases=90",
         "--enable_x64",  # Needed to enable dtype check
     ],
-    python_version = "PY3",
     shard_count = 20,
-    srcs_version = "PY2AND3",
+    strict_deps = True,
     tags = [
         "gpu",
         "no_pip",

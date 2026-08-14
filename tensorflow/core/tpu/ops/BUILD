@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -18,7 +33,6 @@ cc_library(
         ":tpu_copy_with_dynamic_shape_op",
         ":tpu_embedding_ops",
         ":tpu_execute_op",
-        ":tpu_handle_to_key_op",
         ":tpu_partitioned_ops",
         ":tpu_reshard_variables_op",
         ":tpu_round_robin_op",
@@ -40,7 +54,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:status",
+        "@xla//xla/tsl/platform:status",
     ],
     alwayslink = 1,
 )
@@ -54,6 +68,7 @@ cc_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/status",
     ],
     alwayslink = 1,
 )
@@ -77,6 +92,7 @@ cc_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/status",
     ],
     alwayslink = 1,
 )
@@ -98,19 +114,6 @@ cc_library(
 )
 
 cc_library(
-    name = "tpu_handle_to_key_op",
-    srcs = [
-        "tpu_handle_to_key_op.cc",
-    ],
-    linkstatic = 1,
-    deps = [
-        "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
     name = "topk_ops",
     srcs = [
         "topk_ops.cc",
@@ -119,6 +122,7 @@ cc_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/status",
     ],
     alwayslink = 1,
 )
@@ -149,7 +153,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_xla//xla:util",
+        "@xla//xla:util",
     ],
 )
 
@@ -170,12 +174,14 @@ cc_library(
         "//tensorflow/core/protobuf/tpu:tpu_embedding_configuration_proto_cc",
         "//tensorflow/core/tpu:tpu_embedding_optimization_parameters_utils",
         "//tensorflow/core/tpu:tpu_embedding_output_layout_utils",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
-        "@local_xla//xla:status_macros",
+        "@xla//xla:status_macros",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:logging",
     ],
     alwayslink = 1,
 )
@@ -191,7 +197,7 @@ cc_library(
         "//tensorflow/core:lib",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@local_xla//xla:util",
+        "@xla//xla:util",
     ],
     alwayslink = 1,
 )
@@ -204,7 +210,11 @@ cc_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "//tensorflow/core/framework:types_proto_cc",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@xla//xla:util",
     ],
     alwayslink = 1,
 )
@@ -217,6 +227,8 @@ cc_library(
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core/lib/core:status",
+        "@com_google_absl//absl/status",
+        "@xla//xla/tsl/platform:errors",
     ],
     alwayslink = 1,
 )

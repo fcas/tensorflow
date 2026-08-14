@@ -1,4 +1,20 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library", "py_strict_test")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 load("//tensorflow/python/tpu:tpu.bzl", "tpu_py_strict_test")
 
 package(
@@ -7,10 +23,10 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "xla_sharding",
     srcs = ["xla_sharding.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         "//tensorflow/compiler/tf2xla/python:xla",
@@ -18,20 +34,19 @@ py_strict_library(
         "//tensorflow/python/eager:context",
         "//tensorflow/python/ops:resource_variable_ops",
         "//third_party/py/numpy",
-        "@local_xla//xla:xla_data_proto_py",
+        "@xla//xla:xla_data_proto_py",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "xla_sharding_test",
     srcs = ["xla_sharding_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":xla_sharding",
         # copybara:uncomment "//third_party/py/google/protobuf:use_fast_cpp_protos",
         "//third_party/py/numpy",
-        "@local_xla//xla:xla_data_proto_py",
+        "@xla//xla:xla_data_proto_py",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:def_function",
         "//tensorflow/python/framework:dtypes",
@@ -46,8 +61,6 @@ tpu_py_strict_test(
     name = "resource_variable_xla_sharding_test",
     srcs = ["resource_variable_xla_sharding_test.py"],
     disable_v3_4chips = False,
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = ["requires-net:external"],
     deps = [
         ":xla_sharding",

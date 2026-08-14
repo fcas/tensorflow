@@ -161,11 +161,15 @@ def linspace_nd(start, stop, num, name=None, axis=0):
     num: A `Tensor`. Must be one of the following types: `int32`, `int64`. 0-D
       tensor. Number of values to generate.
     name: A name for the operation (optional).
-    axis: Axis along which the operation is performed (used only when N-D
-      tensors are provided).
+    axis: Axis along which the operation is performed (can be specified to
+      non-zero only when N-D tensors are provided).
 
   Returns:
     A `Tensor`. Has the same type as `start`.
+
+  Raises:
+    InvalidArgumentError: If `axis` is specified to non-zero when 1-D tensor
+      is provided.
   """
 
   with ops.name_scope(name, "linspace", [start, stop]):
@@ -246,11 +250,14 @@ def _set_doc(doc):
 # pylint: disable=redefined-builtin
 @tf_export(v1=["math.argmax", "argmax"])
 @dispatch.add_dispatch_support
-@deprecation.deprecated_args(None, "Use the `axis` argument instead",
-                             "dimension")
+@deprecation.deprecated_args(
+    None, "Use the `axis` argument instead", "dimension"
+)
 @_set_doc(
-    gen_math_ops.arg_max.__doc__.replace("dimensions",
-                                         "axes").replace("dimension", "axis"))
+    (gen_math_ops.arg_max.__doc__ or "")
+    .replace("dimensions", "axes")
+    .replace("dimension", "axis")
+)
 def argmax(input,
            axis=None,
            name=None,
@@ -295,16 +302,37 @@ def argmax_v2(input, axis=None, output_type=dtypes.int64, name=None):
   """
   if axis is None:
     axis = 0
+
+  if hasattr(axis, "dtype"):
+    allowed_dtypes = {
+        dtypes.int8,
+        dtypes.uint8,
+        dtypes.int16,
+        dtypes.uint16,
+        dtypes.int32,
+        dtypes.int64,
+    }
+    if axis.dtype not in allowed_dtypes:
+      raise TypeError(f"axis tensor dtypes {axis.dtype} is not supported")
+    castable_types = {dtypes.int8, dtypes.int16, dtypes.uint8, dtypes.uint16}
+    if axis.dtype in castable_types:
+      axis = cast(axis, dtypes.int32)
+  elif not isinstance(axis, int):
+    raise TypeError("axis must be int or Tensor with integer datatype")
+
   return gen_math_ops.arg_max(input, axis, name=name, output_type=output_type)
 
 
 @tf_export(v1=["math.argmin", "argmin"])
 @dispatch.add_dispatch_support
-@deprecation.deprecated_args(None, "Use the `axis` argument instead",
-                             "dimension")
+@deprecation.deprecated_args(
+    None, "Use the `axis` argument instead", "dimension"
+)
 @_set_doc(
-    gen_math_ops.arg_min.__doc__.replace("dimensions",
-                                         "axes").replace("dimension", "axis"))
+    (gen_math_ops.arg_min.__doc__ or "")
+    .replace("dimensions", "axes")
+    .replace("dimension", "axis")
+)
 def argmin(input,
            axis=None,
            name=None,
@@ -534,8 +562,10 @@ def _mul(x, y, name=None):
   return gen_math_ops.mul(x, y, name)
 
 
-_mul.__doc__ = (
-    gen_math_ops.mul.__doc__ + ("" if _mul.__doc__ is None else _mul.__doc__))
+if gen_math_ops.mul.__doc__ is not None:
+  _mul.__doc__ = gen_math_ops.mul.__doc__ + (
+      "" if _mul.__doc__ is None else _mul.__doc__
+  )
 
 
 @tf_export("math.subtract", "subtract")
@@ -556,8 +586,10 @@ def _sub(x, y, name=None):
   return gen_math_ops.sub(x, y, name)
 
 
-_sub.__doc__ = (
-    gen_math_ops.sub.__doc__ + ("" if _sub.__doc__ is None else _sub.__doc__))
+if gen_math_ops.sub.__doc__ is not None:
+  _sub.__doc__ = gen_math_ops.sub.__doc__ + (
+      "" if _sub.__doc__ is None else _sub.__doc__
+  )
 
 negative = gen_math_ops.neg
 
@@ -775,15 +807,31 @@ def sign(x, name=None):
   """
   x = ops.convert_to_tensor(x)
   if x.dtype.is_complex:
-    return gen_math_ops.div_no_nan(
-        x,
-        cast(
-            gen_math_ops.complex_abs(
-                x,
-                Tout=dtypes.float32
-                if x.dtype == dtypes.complex64 else dtypes.float64),
-            dtype=x.dtype),
-        name=name)
+    # Promote to complex128 for the entire computation to avoid underflow for
+    # small complex64 values. Two distinct underflow hazards must be addressed:
+    #   (1) |z| = sqrt(re^2 + im^2) computed via complex_abs on complex64
+    #       underflows to 0 for |z| < ~1.08e-19 (sqrt(float32_min)). The
+    #       ComplexAbs C++ kernel also rejects mismatched input/output
+    #       precision (e.g. complex64 -> float64), so we cannot simply ask
+    #       the kernel for a float64 magnitude while feeding it complex64.
+    #   (2) The vectorized complex division (div_no_nan) involves an
+    #       intermediate conjugate product that still underflows on FTZ
+    #       systems when the divisor's magnitude is below the input dtype's
+    #       smallest normal value, even when the divisor is computed in
+    #       float64.
+    # Casting the input itself to complex128 lifts both computations above
+    # the underflow threshold (~1e-154). The DivNoNan C++ kernel requires
+    # both operands to share the same dtype, so the float64 magnitude from
+    # complex_abs is cast back to complex128 before division. The final
+    # result is cast back to the original dtype.
+    compute_dtype = dtypes.complex128
+    x_compute = cast(x, compute_dtype) if x.dtype != compute_dtype else x
+    magnitude = cast(
+        gen_math_ops.complex_abs(x_compute, Tout=dtypes.float64), compute_dtype
+    )
+    return cast(
+        gen_math_ops.div_no_nan(x_compute, magnitude, name=name), dtype=x.dtype
+    )
   return gen_math_ops.sign(x, name=name)
 
 
@@ -1092,12 +1140,29 @@ def saturate_cast(value, dtype, name=None):
       # can do in order to avoid UB without introducing a separate SaturateCast
       # op.
       np_dtype = in_dtype.as_numpy_dtype
+
+      # We promote types *before* comparison in order to not lose precision.
+      # The Try/Except block is mostly to work around bfloat16 types which are
+      # not numpy dtypes.
+      try:
+        promoted_type = np.promote_types(
+            np_dtype, out_real_dtype.as_numpy_dtype
+        )
+      except TypeError:
+        # On newer numpy versions this is DTypePromotionError.
+        # Fall back to just floats. This should be sufficient in most cases
+        # since we only expect to hit this error in cases of bloat16.
+        promoted_type = float
+
       min_limit = np_dtype(np.maximum(in_dtype.min, out_real_dtype.min))
-      if min_limit < out_real_dtype.min:
+      promoted = np.array([min_limit, out_real_dtype.min], dtype=promoted_type)
+      if promoted[0] < promoted[1]:
         min_limit = np.nextafter(min_limit, np_dtype(0), dtype=np_dtype)
 
-      max_limit = np_dtype(np.minimum(in_dtype.max, out_real_dtype.max))
-      if max_limit > out_real_dtype.max:
+      max_limit = np_dtype(np.minimum(float(in_dtype.max),
+                                      float(out_real_dtype.max)))
+      promoted = np.array([max_limit, out_real_dtype.max], dtype=promoted_type)
+      if promoted[0] > promoted[1]:
         max_limit = np.nextafter(max_limit, np_dtype(0), dtype=np_dtype)
 
       value = gen_math_ops._clip_by_value(
@@ -1467,15 +1532,36 @@ def truediv(x, y, name=None):
   division operator semantics.
 
   This function forces Python 3 division operator semantics where all integer
-  arguments are cast to floating types first.   This op is generated by normal
-  `x / y` division in Python 3 and in Python 2.7 with
-  `from __future__ import division`.  If you want integer division that rounds
-  down, use `x // y` or `tf.math.floordiv`.
+  arguments are cast to floating types first. If you want integer
+  division that rounds down, use `x // y` or `tf.math.floordiv`.
 
   `x` and `y` must have the same numeric type.  If the inputs are floating
   point, the output will have the same type.  If the inputs are integral, the
   inputs are cast to `float32` for `int8` and `int16` and `float64` for `int32`
   and `int64` (matching the behavior of Numpy).
+
+  Example:
+
+  >>> # Division with integer tensors (returns float)
+  >>> x1 = tf.constant([10, 20, 30], dtype=tf.int32)
+  >>> y1 = tf.constant([2, 4, 5], dtype=tf.int32)
+  >>> result1 = tf.math.truediv(x1, y1)
+
+  <tf.Tensor: shape=(3,), dtype=float64, numpy=array([5., 5., 6.])>
+
+  >>> # Division with different shaped tensors (broadcasting)
+  >>> x2 = tf.constant([[10, 20], [30, 40]], dtype=tf.float64)
+  >>> y2 = tf.constant([2, 5], dtype=tf.float64)
+  >>> result2 = tf.math.truediv(x2, y2)
+
+  <tf.Tensor: shape=(2, 2),dtype=float64,numpy= array([[ 5.,  4.],[15.,  8.]])>
+
+  # Handling potential division by zero (returns inf)
+  >>> x3 = tf.constant(5, dtype=tf.float32)
+  >>> y3 = tf.constant(0, dtype=tf.float32)
+  >>> result3 = tf.math.truediv(x3, y3)
+
+  <tf.Tensor: shape=(), dtype=float32, numpy=inf>
 
   Args:
     x: `Tensor` numerator of numeric type.
@@ -2010,7 +2096,12 @@ def range(start, limit=None, delta=1, dtype=None, name="range"):  # pylint: disa
     # infer dtype if not explicitly provided
     if dtype is None:
       dtype_hierarchy = [
-          dtypes.int32, dtypes.int64, dtypes.float32, dtypes.float64
+          dtypes.int32,
+          dtypes.int64,
+          dtypes.float16,
+          dtypes.bfloat16,
+          dtypes.float32,
+          dtypes.float64,
       ]
       assert all(arg.dtype in dtype_hierarchy for arg in [start, limit, delta])
       inferred_dtype = max([arg.dtype for arg in [start, limit, delta]],
@@ -2101,7 +2192,7 @@ def reduce_sum_v1(input_tensor,
            [1, 1, 1]], dtype=int32)
     >>> # sum all the elements
     >>> # 1 + 1 + 1 + 1 + 1+ 1 = 6
-    >>> tf.reduce_sum(x).numpy()
+    >>> tf.reduce_sum(x).numpy().item()
     6
     >>> # reduce along the first dimension
     >>> # the result is [1, 1, 1] + [1, 1, 1] = [2, 2, 2]
@@ -2120,7 +2211,7 @@ def reduce_sum_v1(input_tensor,
     >>> # or, equivalently, reduce along rows, then reduce the resultant array
     >>> # [1, 1, 1] + [1, 1, 1] = [2, 2, 2]
     >>> # 2 + 2 + 2 = 6
-    >>> tf.reduce_sum(x, [0, 1]).numpy()
+    >>> tf.reduce_sum(x, [0, 1]).numpy().item()
     6
 
   Args:
@@ -2173,7 +2264,7 @@ def reduce_sum(input_tensor, axis=None, keepdims=False, name=None):
            [1, 1, 1]], dtype=int32)
     >>> # sum all the elements
     >>> # 1 + 1 + 1 + 1 + 1+ 1 = 6
-    >>> tf.reduce_sum(x).numpy()
+    >>> tf.reduce_sum(x).numpy().item()
     6
     >>> # reduce along the first dimension
     >>> # the result is [1, 1, 1] + [1, 1, 1] = [2, 2, 2]
@@ -2192,7 +2283,7 @@ def reduce_sum(input_tensor, axis=None, keepdims=False, name=None):
     >>> # or, equivalently, reduce along rows, then reduce the resultant array
     >>> # [1, 1, 1] + [1, 1, 1] = [2, 2, 2]
     >>> # 2 + 2 + 2 = 6
-    >>> tf.reduce_sum(x, [0, 1]).numpy()
+    >>> tf.reduce_sum(x, [0, 1]).numpy().item()
     6
 
   Args:
@@ -2891,6 +2982,10 @@ def reduce_min(input_tensor, axis=None, keepdims=False, name=None):
   Returns:
     The reduced tensor.
 
+  Note: When computing gradients, if multiple elements are equal to the
+    minimum value along the reduced axes, the gradient is distributed equally
+    among all such elements.
+
   @compatibility(numpy)
   Equivalent to np.min
   @end_compatibility
@@ -3012,6 +3107,10 @@ def reduce_max(input_tensor, axis=None, keepdims=False, name=None):
 
   Returns:
     The reduced tensor.
+
+  Note: When computing gradients, if multiple elements are equal to the
+    maximum value along the reduced axes, the gradient is distributed equally
+    among all such elements.
   """
   return reduce_max_with_dims(input_tensor, axis, keepdims, name,
                               _ReductionDims(input_tensor, axis))
@@ -3339,9 +3438,9 @@ def reduce_logsumexp(input_tensor, axis=None, keepdims=False, name=None):
   with ops.name_scope(name, "ReduceLogSumExp", [input_tensor]) as name:
     raw_max = reduce_max(input_tensor, axis=axis, keepdims=True)
     my_max = array_ops.stop_gradient(
-        gen_math_ops.select(
+        gen_math_ops.select_v2(
             gen_math_ops.is_finite(raw_max), raw_max,
-            gen_array_ops.zeros_like(raw_max)))
+            0))
     result = gen_math_ops.log(
         reduce_sum(
             exp(subtract(input_tensor, my_max)),
@@ -3558,6 +3657,24 @@ def matmul(
     # TODO(apassos) remove _shape_tuple here when it is not needed.
     a_shape = a._shape_tuple()  # pylint: disable=protected-access
     b_shape = b._shape_tuple()  # pylint: disable=protected-access
+
+    if a_shape is not None and len(a_shape) < 2:
+      raise ValueError(
+          "Argument `a` passed to `tf.linalg.matmul` must be at least rank 2."
+          f" Received `a` with shape {a_shape} (rank {len(a_shape)})."
+          " To fix this, consider using `tf.expand_dims(a, axis=0)` to add a"
+          " batch dimension, or `tf.reshape(a, [...])` to reshape it into a"
+          " 2-D (or higher-rank) matrix before calling `tf.linalg.matmul`."
+      )
+    if b_shape is not None and len(b_shape) < 2:
+      raise ValueError(
+          "Argument `b` passed to `tf.linalg.matmul` must be at least rank 2."
+          f" Received `b` with shape {b_shape} (rank {len(b_shape)})."
+          " For matrix-vector multiplication, use `tf.linalg.matvec`."
+          " Alternatively, consider using `tf.expand_dims(b, axis=-1)` to add a"
+          " column dimension, or `tf.reshape(b, [...])` to reshape it into a"
+          " 2-D (or higher-rank) matrix before calling `tf.linalg.matmul`."
+      )
 
     output_may_have_non_empty_batch_shape = (
         (a_shape is None or len(a_shape) > 2) or
@@ -4299,15 +4416,15 @@ def cumprod(x, axis=0, exclusive=False, reverse=False, name=None):
 @tf_export("math.cumulative_logsumexp", v1=["math.cumulative_logsumexp"])
 @dispatch.add_dispatch_support
 def cumulative_logsumexp(x, axis=0, exclusive=False, reverse=False, name=None):
-  """Compute the cumulative log-sum-exp of the tensor `x` along `axis`.
+  """Compute the cumulative log-sum-exp of the tensor `x` along the `axis`.
 
-  By default, this op performs an inclusive cumulative log-sum-exp, which means
-  that the first element of the input is identical to the first element of
+  By default, this operation performs an inclusive cumulative log-sum-exp, which
+  means that the first element of the input is identical to the first element of
   the output.
 
   This operation is significantly more numerically stable than the equivalent
-  tensorflow operation `tf.math.log(tf.math.cumsum(tf.math.exp(x)))`, although
-  computes the same result given infinite numerical precision. However, note
+  Tensorflow operation `tf.math.log(tf.math.cumsum(tf.math.exp(x)))`, although
+  it computes the same result given infinite numerical precision. However, note
   that in some cases, it may be less stable than `tf.math.reduce_logsumexp`
   for a given element, as it applies the "log-sum-exp trick" in a different
   way.
@@ -4434,30 +4551,35 @@ def reduced_shape(input_shape, axes):
       constant_input_shape[constant_axes] = 1
       return constant_input_shape
 
-  # Example:
-  # cast needed for SparseTensor reductions
-  input_shape = cast(input_shape, dtypes.int32)  # [2, 3, 5, 7]
-  axes = cast(axes, dtypes.int32)  # [1, 2]
-
-  input_rank = array_ops.size(input_shape)  # 4
+  axes = ops.convert_to_tensor(axes)
+  input_rank = array_ops.size(input_shape, out_type=axes.dtype)  # 4
   axes = (axes + input_rank) % input_rank
   axes_shape = array_ops.shape(axes)  # [2]
   return gen_data_flow_ops.dynamic_stitch(  # [2, 1, 1, 7]
-      [
-          range(input_rank),  # [0, 1, 2, 3]
-          axes
-      ],  # [1, 2]
+      [range(input_rank), axes],  # [0, 1, 2, 3]  # [1, 2]
       [
           input_shape,  # [2, 3, 5, 7]
-          array_ops.ones(axes_shape, dtype=dtypes.int32)
-      ])  # [1, 1]
+          array_ops.ones(axes_shape, dtype=input_shape.dtype),
+      ],
+  )  # [1, 1]
 
 
 def _unsorted_segment_N(data, segment_ids, num_segments):
-  """ Helper function for unsorted_segment_mean/_sqrtN.
+  """Helper function for unsorted_segment_mean/_sqrtN.
 
-  Computes the number
-      of segment entries with 0-entries set to 1 to allow division by N.
+  Computes the number of segment entries with 0-entries set to 1 to allow
+  division by N.
+
+  Args:
+    data: A `Tensor` with data that will be assembled in the output.
+    segment_ids: An integer tensor whose shape is a prefix of `data.shape`. The
+      values must be in the range `[0, num_segments)`. The values are always
+      validated to be in range on CPU, never validated on TPU/GPU.
+    num_segments: An integer scalar `Tensor`. The number of distinct segment
+      IDs.
+
+  Returns:
+    A `Tensor` with the number of segment entries with 0-entries set to 1.
   """
   num_segments = ops.convert_to_tensor(num_segments)
   # bincount doesn't support negative indices so we use unsorted_segment_sum
@@ -4619,7 +4741,7 @@ def sparse_segment_sum(
   tf.sparse.segment_sum(c, tf.constant([0, 1]), tf.constant([0, 0]))
   # => [[0 0 0 0]]
 
-  # Select two rows, two segment.
+  # Select two rows, two segments.
   tf.sparse.segment_sum(c, tf.constant([0, 1]), tf.constant([0, 1]))
   # => [[ 1  2  3  4]
   #     [-1 -2 -3 -4]]
@@ -4797,7 +4919,7 @@ def sampled_addmm(
     dense_shape: `tf.Tensor` defining the dense shape of the output.
     mat1: `tf.Tensor` to be multiplied. Must have rank > 1.
     mat2: `tf.Tensor` to be multiplied. Must have rank > 1.
-    beta: Number to be multipled with `values`. Defaults to 1.0.
+    beta: Number to be multiplied with `values`. Defaults to 1.0.
     alpha: Number to be multiplied with the sampled dot product of `mat1` and
       `mat2`. Defaults to 1.0.
     output_type: The output datatype if needed. Defaults to float32.
@@ -4903,7 +5025,7 @@ def sparse_segment_sum_v2(
   tf.sparse.segment_sum(c, tf.constant([0, 1]), tf.constant([0, 0]))
   # => [[0 0 0 0]]
 
-  # Select two rows, two segment.
+  # Select two rows, two segments.
   tf.sparse.segment_sum(c, tf.constant([0, 1]), tf.constant([0, 1]))
   # => [[ 1  2  3  4]
   #     [-1 -2 -3 -4]]
@@ -5447,6 +5569,11 @@ def polyval(coeffs, x, name=None):
     p = coeffs[0]
     for c in coeffs[1:]:
       p = c + p * x
+    # For single-coefficient polynomials, the loop above never executes,
+    # so x is unused. Add x*0 to broadcast against x's shape and
+    # propagate NaN, matching numpy.polyval behavior.
+    if len(coeffs) == 1:
+      p = p + x * 0
     return p
 
 

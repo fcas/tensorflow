@@ -15,12 +15,28 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/einsum_spmd_expander.h"
 
+#include <cassert>
+#include <cstddef>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/IRMapping.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
@@ -38,12 +54,14 @@ StatusOr<mlir::Operation*> EinsumSPMDExpander::ExpandOp(mlir::Operation* op) {
   for (int i = 0; i < op->getNumOperands(); ++i) {
     TF_ASSIGN_OR_RETURN(auto layout,
                         ExtractLayoutFromOperand(op->getOperand(i)));
-    if (!layout) return errors::InvalidArgument("missing layout for input ", i);
+    if (!layout)
+      return absl::InvalidArgumentError(
+          absl::StrCat("missing layout for input ", i));
     input_layouts[i] = layout.value();
   }
   TF_ASSIGN_OR_RETURN(auto output_layout, ExtractSingleLayoutFromOp(op));
   if (!output_layout)
-    return errors::InvalidArgument("is missing output layout.");
+    return absl::InvalidArgumentError("is missing output layout.");
 
   std::vector<mlir::Value> new_inputs;
   Layout layout_after_einsum;
@@ -85,7 +103,7 @@ StatusOr<mlir::Operation*> EinsumSPMDExpander::ExpandOp(mlir::Operation* op) {
 // input_mappings: for each equation input, the map from the equation labels
 //   to the tensor dimension of that label.
 // output_mapping: as above, but for the equation output.
-Status ExtractEquationRelations(
+absl::Status ExtractEquationRelations(
     absl::string_view equation, absl::flat_hash_set<char>& reduced_dims,
     std::vector<absl::flat_hash_map<char, std::vector<int>>>& input_mappings,
     absl::flat_hash_map<char, std::vector<int>>& output_mapping) {
@@ -96,9 +114,9 @@ Status ExtractEquationRelations(
   for (const auto& char_and_index : llvm::enumerate(parts.second)) {
     // TODO(b/172691887): Support Broadcasting for einsum.
     if (char_and_index.value() == '.')
-      return errors::Unimplemented(
+      return absl::UnimplementedError(absl::StrCat(
           "Broadcasting is unimplemented for einsum. Received equation ",
-          equation);
+          equation));
     non_reduced_dims.insert(char_and_index.value());
 
     // Construct the output mapping, note that output is not allowed to have
@@ -118,9 +136,9 @@ Status ExtractEquationRelations(
   // Note that the TF einsum op only supports at most 2 inputs. This is slightly
   // confusing as the tf.einsum interface actually supports > 2 inputs.
   if (inputs.size() > 2)
-    return errors::InvalidArgument(
-        "einsum only supports at most 2 inputs received equation ", equation,
-        " which has ", inputs.size(), " inputs");
+    return absl::InvalidArgumentError(
+        absl::StrCat("einsum only supports at most 2 inputs received equation ",
+                     equation, " which has ", inputs.size(), " inputs"));
 
   input_mappings.resize(inputs.size());
 
@@ -155,7 +173,7 @@ StatusOr<absl::flat_hash_map<char, std::string>> GetLabelToShardingSpec(
     for (const auto& mapping : mappings[index]) {
       for (int offset : mapping.second) {
         if (offset >= layouts[index].rank())
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               llvm::formatv(
                   "specified einsum equation for operand {0} tried to "
                   "read layout at offset {1}, but layout is {2} with rank "
@@ -170,7 +188,7 @@ StatusOr<absl::flat_hash_map<char, std::string>> GetLabelToShardingSpec(
           if (Layout::IsShardedDimension(sharding_spec) &&
               label_to_sharding_spec[mapping.first] != sharding_spec) {
             if (!replicate_incompatible_dimensions)
-              return errors::InvalidArgument(
+              return absl::InvalidArgumentError(
                   llvm::formatv(
                       "incompatible mesh dimensions in equation, label '{0}' "
                       "is mapped to mesh dimension '{1}' and '{2}'",
@@ -222,7 +240,6 @@ GetSpecsFromLabelsAndMap(
 
   std::vector<std::string> sharding_specs(layout_rank);
   absl::flat_hash_map<std::string, int> dimension_use_count;
-  absl::flat_hash_set<std::string> dimension_use_set;
   for (const auto& label_and_indices : label_to_index) {
     const auto& loc = label_to_sharding_spec.find(label_and_indices.first);
     if (loc != label_to_sharding_spec.end()) {
@@ -255,9 +272,9 @@ StatusOr<llvm::DenseMap<int, Layout>> EinsumSPMDExpander::ComputeLayoutForward(
   TF_RETURN_IF_ERROR(ExtractEquationRelations(equation, reduced_dim_labels,
                                               input_mappings, output_mapping));
   if (input_mappings.size() != num_inputs)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Einsum equation ", equation, " has ", input_mappings.size(),
-        " inputs but this op has ", num_inputs, " inputs.");
+        " inputs but this op has ", num_inputs, " inputs."));
 
   // GetLabelToShardingSpec requires two inputs if the einsum equation needs
   // two inputs. We may only have one layout, so make other replicated. This
@@ -269,7 +286,9 @@ StatusOr<llvm::DenseMap<int, Layout>> EinsumSPMDExpander::ComputeLayoutForward(
       layouts.emplace_back(input_layouts.lookup(k));
     } else {
       int rank = ValueRank(op->getOperand(k));
-      if (rank < 0) return errors::InvalidArgument("No rank for input ", k);
+      if (rank < 0)
+        return absl::InvalidArgumentError(
+            absl::StrCat("No rank for input ", k));
       // This case can only happen when there are two inputs. Input 1 - k
       // is the other input. In this case of the if, input k is missing, so
       // this means that input 1 - k must be there.
@@ -310,9 +329,9 @@ StatusOr<llvm::DenseMap<int, Layout>> EinsumSPMDExpander::ComputeLayoutBackward(
   TF_RETURN_IF_ERROR(ExtractEquationRelations(equation, reduced_dim_labels,
                                               input_mappings, output_mapping));
   if (input_mappings.size() != num_inputs)
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Einsum equation ", equation, " has ", input_mappings.size(),
-        " inputs but this op has ", num_inputs, " inputs.");
+        " inputs but this op has ", num_inputs, " inputs."));
 
   // Using the output mapping, construct an equation label to mesh dimension
   // mapping.
@@ -376,12 +395,12 @@ StatusOr<llvm::DenseMap<int, Layout>> EinsumSPMDExpander::ComputeLayoutBackward(
 //   for x is sharded. If both are sharded, we can compute the einsum on the
 //   diagonal machines in the mesh and 0s on the off diagonals and then all
 //   the much smaller matrix.
-Status EinsumSPMDExpander::MaybeRelayoutInputs(
+absl::Status EinsumSPMDExpander::MaybeRelayoutInputs(
     const std::vector<Layout>& input_layouts, mlir::Operation* op,
     const Layout& output_layout, absl::flat_hash_set<std::string>& reduce_dims,
     Layout& einsum_layout, std::vector<mlir::Value>& new_inputs) {
   if (!mlir::isa<mlir::TF::EinsumOp>(op))
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "called einsum spmd expander but op is not Einsum.");
 
   mlir::TF::EinsumOp einsum = mlir::cast<mlir::TF::EinsumOp>(op);

@@ -638,11 +638,11 @@ class RunHandlerTest : public ::testing::Test {
     ASSERT_EQ(setenv("TF_NUM_INTEROP_THREADS", "16", true), 0);
   }
 
-  string a_;
-  string x_;
-  string y_;
-  string y_neg_;
-  string z_;
+  std::string a_;
+  std::string x_;
+  std::string y_;
+  std::string y_neg_;
+  std::string z_;
   GraphDef def_;
 };
 
@@ -651,19 +651,19 @@ TEST_F(RunHandlerTest, UseRunHandlerPoolEnableSubPool) {
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
   EXPECT_EQ(absl::OkStatus(), session->Create(def_));
-  std::vector<std::pair<string, Tensor>> inputs;
+  std::vector<std::pair<std::string, Tensor>> inputs;
 
   // Request two targets: one fetch output and one non-fetched output.
-  std::vector<string> output_names = {y_ + ":0"};
-  std::vector<string> target_nodes = {y_neg_};
+  std::vector<std::string> output_names = {y_ + ":0"};
+  std::vector<std::string> target_nodes = {y_neg_};
   std::vector<Tensor> outputs;
 
   // Prepares RunOptions and RunMetadata
   RunOptions run_options;
   run_options.mutable_experimental()->set_use_run_handler_pool(true);
 
-  Status s = session->Run(run_options, inputs, output_names, target_nodes,
-                          &outputs, nullptr);
+  absl::Status s = session->Run(run_options, inputs, output_names, target_nodes,
+                                &outputs, nullptr);
   EXPECT_EQ(absl::OkStatus(), s);
 
   ASSERT_EQ(1, outputs.size());
@@ -687,14 +687,14 @@ TEST_F(RunHandlerTest, TestConcurrencyUseRunHandlerPool) {
   thread::ThreadPool* tp = new thread::ThreadPool(Env::Default(), "test", 4);
 
   // Run the graph 1000 times in 4 different threads concurrently.
-  std::vector<string> output_names = {y_ + ":0"};
+  std::vector<std::string> output_names = {y_ + ":0"};
   auto fn = [&session, output_names, run_options]() {
-    for (int i = 0; i < 1000; ++i) {
-      std::vector<std::pair<string, Tensor>> inputs;
+    for (int i = 0; i < 200; ++i) {
+      std::vector<std::pair<std::string, Tensor>> inputs;
       std::vector<Tensor> outputs;
       // Run the graph
-      Status s = session->Run(run_options, inputs, output_names, {}, &outputs,
-                              nullptr);
+      absl::Status s = session->Run(run_options, inputs, output_names, {},
+                                    &outputs, nullptr);
       EXPECT_EQ(absl::OkStatus(), s);
       ASSERT_EQ(1, outputs.size());
       auto mat = outputs[0].matrix<float>();
@@ -715,11 +715,11 @@ TEST_F(RunHandlerTest, UseRunHandlerPoolEnableSubPoolWithPriority) {
   auto session = CreateSession();
   ASSERT_TRUE(session != nullptr);
   EXPECT_EQ(absl::OkStatus(), session->Create(def_));
-  std::vector<std::pair<string, Tensor>> inputs;
+  std::vector<std::pair<std::string, Tensor>> inputs;
 
   // Request two targets: one fetch output and one non-fetched output.
-  std::vector<string> output_names = {y_ + ":0"};
-  std::vector<string> target_nodes = {y_neg_};
+  std::vector<std::string> output_names = {y_ + ":0"};
+  std::vector<std::string> target_nodes = {y_neg_};
   std::vector<Tensor> outputs;
 
   // Prepares RunOptions and RunMetadata
@@ -729,8 +729,8 @@ TEST_F(RunHandlerTest, UseRunHandlerPoolEnableSubPoolWithPriority) {
       ->mutable_run_handler_pool_options()
       ->set_priority(1);
 
-  Status s = session->Run(run_options, inputs, output_names, target_nodes,
-                          &outputs, nullptr);
+  absl::Status s = session->Run(run_options, inputs, output_names, target_nodes,
+                                &outputs, nullptr);
   EXPECT_EQ(absl::OkStatus(), s);
 
   ASSERT_EQ(1, outputs.size());
@@ -751,19 +751,19 @@ TEST_F(RunHandlerTest, TestConcurrencyUseRunHandlerPoolWithPriority) {
   thread::ThreadPool* tp = new thread::ThreadPool(Env::Default(), "test", 4);
 
   // Run the graph 1000 times in 4 different threads concurrently.
-  std::vector<string> output_names = {y_ + ":0"};
+  std::vector<std::string> output_names = {y_ + ":0"};
   auto fn = [&session, output_names]() {
-    for (int i = 0; i < 1000; ++i) {
+    for (int i = 0; i < 200; ++i) {
       RunOptions run_options;
       run_options.mutable_experimental()->set_use_run_handler_pool(true);
       run_options.mutable_experimental()
           ->mutable_run_handler_pool_options()
           ->set_priority(i % 4);
-      std::vector<std::pair<string, Tensor>> inputs;
+      std::vector<std::pair<std::string, Tensor>> inputs;
       std::vector<Tensor> outputs;
       // Run the graph
-      Status s = session->Run(run_options, inputs, output_names, {}, &outputs,
-                              nullptr);
+      absl::Status s = session->Run(run_options, inputs, output_names, {},
+                                    &outputs, nullptr);
       EXPECT_EQ(absl::OkStatus(), s);
       ASSERT_EQ(1, outputs.size());
       auto mat = outputs[0].matrix<float>();

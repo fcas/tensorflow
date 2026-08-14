@@ -1,4 +1,23 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load(
+    "//tensorflow/core/platform:build_config.bzl",
+    "tf_proto_library",
+)
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -7,6 +26,7 @@ package(
         "//tensorflow/compiler/mlir/tensorflow/transforms:__pkg__",
         "//tensorflow/compiler/mlir/tf2xla/api/v1:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla/api/v2:__subpackages__",
+        "//tensorflow/core/tfrt/saved_model:__pkg__",
     ],
 )
 
@@ -34,8 +54,9 @@ cc_library(
     hdrs = ["test_matchers.h"],
     deps = [
         "//tensorflow/compiler/mlir/tf2xla:compile_mlir_util",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
-        "@local_tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -49,10 +70,11 @@ tf_cc_test(
         "//tensorflow/core:lib",
         "//tensorflow/core/lib/monitoring:cell_reader",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla/client:xla_computation",
-        "@local_xla//xla/service:hlo_proto_cc",
+        "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/service:hlo_proto_cc",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -62,6 +84,7 @@ cc_library(
     hdrs = ["mlir_pass_instrumentation.h"],
     deps = [
         "//tensorflow/core/platform:logging",
+        "@com_google_absl//absl/log",
         "@llvm-project//mlir:Pass",
     ],
 )
@@ -73,6 +96,8 @@ tf_cc_test(
         ":mlir_pass_instrumentation",
         "//tensorflow/compiler/mlir/tf2xla/api/v1:compile_mlir_util_no_tf_dialect_passes",
         "//tensorflow/core:test",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -96,14 +121,15 @@ cc_library(
         "//tensorflow/core/tpu:tpu_compile",
         "//tensorflow/core/tpu/kernels:tpu_compile_op_support",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@local_tsl//tsl/platform:error_logging",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla/mlir_hlo:hlo_dialect_registration",
         "@stablehlo//:register",
+        "@tsl//tsl/platform:error_logging",
+        "@xla//xla:shape_util",
+        "@xla//xla/mlir_hlo:hlo_dialect_registration",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -114,18 +140,22 @@ tf_cc_test(
         ":legalize_tf_mlir",
         ":test_matchers",
         "//tensorflow/compiler/jit",
-        "//tensorflow/compiler/mlir/tf2xla:compile_mlir_util",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:deserialize_mlir_module_utils",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_helpers",
         "//tensorflow/core:framework",
         "//tensorflow/core:test_main",
-        "//tensorflow/core/lib/monitoring:cell_reader",
         "//tensorflow/core/protobuf/tpu:compile_metadata_proto_cc",
         "//tensorflow/core/tpu/kernels:tpu_compile_op_support",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla:shape_util",
+        "@stablehlo//:register",
+        "@xla//xla:shape_util",
+        "@xla//xla/mlir_hlo:hlo_dialect_registration",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -134,23 +164,31 @@ cc_library(
     srcs = ["legalize_tf_to_hlo.cc"],
     hdrs = ["legalize_tf_to_hlo.h"],
     deps = [
-        ":compilation_timer",
         ":legalize_tf_mlir",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:deserialize_mlir_module_utils",
+        "//tensorflow/compiler/mlir/tensorflow/transforms:set_tpu_infeed_layout",
         "//tensorflow/compiler/mlir/tf2xla/api/v1:compile_tf_graph",
         "//tensorflow/compiler/tf2xla:layout_util",
         "//tensorflow/compiler/tf2xla:xla_helpers",
         "//tensorflow/compiler/tf2xla:xla_tpu_backend_registration",
         "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/protobuf/tpu:compile_metadata_proto_cc",
         "//tensorflow/core/tpu/kernels:tpu_compile_op_support",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla/client:compile_only_client",
+        "@stablehlo//:register",
+        "@xla//xla:shape_util",
+        "@xla//xla/client:compile_only_client",
+        "@xla//xla/mlir_hlo:hlo_dialect_registration",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -161,6 +199,8 @@ tf_cc_test(
         ":legalize_tf_to_hlo",
         ":test_matchers",
         "//tensorflow/compiler/jit",
+        "//tensorflow/compiler/mlir/tensorflow",
+        "//tensorflow/compiler/mlir/tensorflow:deserialize_mlir_module_utils",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_helpers",
         "//tensorflow/core:framework",
@@ -170,12 +210,17 @@ tf_cc_test(
         "//tensorflow/core/protobuf:for_core_protos_cc",
         "//tensorflow/core/protobuf/tpu:compile_metadata_proto_cc",
         "//tensorflow/core/tpu/kernels:tpu_compile_op_support",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla/client:client_library",
-        "@local_xla//xla/stream_executor",
+        "@stablehlo//:register",
+        "@xla//xla:shape_util",
+        "@xla//xla/client:client_library",
+        "@xla//xla/mlir_hlo:hlo_dialect_registration",
+        "@xla//xla/stream_executor:platform",
+        "@xla//xla/stream_executor:platform_manager",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -232,6 +277,7 @@ tf_cc_test(
         "//tensorflow/core:lib",
         "//tensorflow/core:test",
         "//tensorflow/core/platform:resource_loader",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:FuncDialect",
@@ -239,8 +285,8 @@ tf_cc_test(
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Transforms",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:status",
+        "@xla//xla/tsl/lib/core:status_test_util",
+        "@xla//xla/tsl/platform:status",
     ],
 )
 
@@ -254,6 +300,7 @@ cc_library(
         "//tensorflow/compiler/tf2xla:tf2xla_defs",
         "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
+        "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/common_runtime:function_body",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -262,7 +309,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/platform:status",
+        "@xla//xla/tsl/platform:status",
     ],
     alwayslink = 1,
 )
@@ -284,13 +331,114 @@ tf_cc_test(
         "//tensorflow/cc:tpu_ops",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/tf2xla:tf2xla_defs",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
         "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
-        "//tensorflow/core:portable_gif_internal",
+        "//tensorflow/core/platform:types",
+        "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/platform:enable_tf2_utils",
         # "//tensorflow/core/platform:resource_loader",
-        "@local_tsl//tsl/lib/core:status_test_util",
+        "@xla//xla/tsl/lib/core:status_test_util",
+    ],
+)
+
+tf_proto_library(
+    name = "reproducer_proto",
+    srcs = ["reproducer.proto"],
+    protodeps = [
+        "//tensorflow/core:protos_all",
+        "//tensorflow/core/protobuf/tpu:compile_metadata_proto",
+    ],
+    visibility = [
+        "//learning/brain/mlir/bridge:__pkg__",
+        "//tensorflow/compiler/mlir/tf2xla/api/v2:__pkg__",
+    ],
+)
+
+cc_library(
+    name = "node_order",
+    srcs = ["node_order.cc"],
+    hdrs = ["node_order.h"],
+    deps = [
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:lib",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
+
+tf_cc_test(
+    name = "node_order_test",
+    size = "small",
+    srcs = [
+        "node_order_test.cc",
+    ],
+    deps = [
+        ":node_order",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/cc:function_ops",
+        "//tensorflow/cc:sendrecv_ops",
+        "//tensorflow/core",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:core_cpu_internal",
+        "//tensorflow/core:direct_session_internal",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:ops",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "@com_google_absl//absl/log:check",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "graph_to_tf_executor_util",
+    srcs = ["graph_to_tf_executor_util.cc"],
+    hdrs = ["graph_to_tf_executor_util.h"],
+    deps = [
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_types_hdr",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/common_runtime:function_body",
+        "//tensorflow/core/platform:enable_tf2_utils",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+tf_cc_test(
+    name = "graph_to_tf_executor_util_test",
+    srcs = ["graph_to_tf_executor_util_test.cc"],
+    deps = [
+        ":graph_to_tf_executor_util",
+        "//tensorflow/cc:array_ops",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:functional_ops",
+        "//tensorflow/cc:ops",
+        "//tensorflow/cc:scope",
+        "//tensorflow/cc:tpu_ops",
+        "//tensorflow/compiler/tf2xla/ops:xla_ops",
+        "//tensorflow/core:core_cpu_base",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/framework:tensor_testutil",
+        "//tensorflow/core/platform:enable_tf2_utils",
+        "//tensorflow/core/platform:types",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )

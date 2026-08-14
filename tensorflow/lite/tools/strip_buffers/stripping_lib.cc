@@ -17,17 +17,21 @@ limitations under the License.
 
 #include <stdint.h>
 
-#include <cmath>
 #include <limits>
 #include <memory>
 #include <random>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/strings/string_view.h"
+#include "flatbuffers/buffer.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/lite/core/api/flatbuffer_conversions.h"
 #include "tensorflow/lite/core/c/common.h"
-#include "tensorflow/lite/core/model.h"
+#include "tensorflow/lite/model_builder.h"
+#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/string_type.h"
 
 #define TFLITE_SCHEMA_VERSION 3
 
@@ -198,8 +202,11 @@ TfLiteStatus StripWeightsFromFlatbuffer(
 }
 
 string StripWeightsFromFlatbuffer(const absl::string_view input_flatbuffer) {
-  auto input_model = FlatBufferModel::BuildFromBuffer(input_flatbuffer.data(),
-                                                      input_flatbuffer.size());
+  auto input_model = FlatBufferModel::VerifyAndBuildFromBuffer(
+      input_flatbuffer.data(), input_flatbuffer.size());
+  if (!input_model) {
+    return string();
+  }
 
   FlatBufferBuilder builder(/*initial_size=*/10240);
   if (StripWeightsFromFlatbuffer(input_model->GetModel(), &builder) !=
@@ -335,8 +342,11 @@ TfLiteStatus ReconstituteConstantTensorsIntoFlatbuffer(
 
 string ReconstituteConstantTensorsIntoFlatbuffer(
     const absl::string_view input_flatbuffer) {
-  auto input_model = FlatBufferModel::BuildFromBuffer(input_flatbuffer.data(),
-                                                      input_flatbuffer.size());
+  auto input_model = FlatBufferModel::VerifyAndBuildFromBuffer(
+      input_flatbuffer.data(), input_flatbuffer.size());
+  if (!input_model) {
+    return string();
+  }
 
   FlatBufferBuilder builder(/*initial_size=*/10240);
   if (ReconstituteConstantTensorsIntoFlatbuffer(input_model->GetModel(),

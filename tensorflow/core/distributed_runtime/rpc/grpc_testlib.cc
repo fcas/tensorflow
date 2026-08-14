@@ -29,28 +29,28 @@ limitations under the License.
 namespace tensorflow {
 namespace test {
 
-Status TestCluster::MakeTestCluster(const TestClusterConfig& config,
-                                    std::unique_ptr<TestCluster>* out_cluster) {
+absl::Status TestCluster::MakeTestCluster(
+    const TestClusterConfig& config,
+    std::unique_ptr<TestCluster>* out_cluster) {
   std::string binary_path =
       !config.binary_path.empty()
           ? config.binary_path
-          : strings::StrCat(
-                testing::TensorFlowSrcRoot(),
-                "/core/distributed_runtime/rpc/grpc_testlib_server");
+          : absl::StrCat(testing::TensorFlowSrcRoot(),
+                         "/core/distributed_runtime/rpc/grpc_testlib_server");
   SessionOptions options = config.options;
   std::unique_ptr<TestCluster> ret(new TestCluster);
 
   std::vector<std::string> tf_job_args;
   for (const auto& job : config.jobs) {
     if (job.num_tasks % job.num_replicas != 0) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Number of tasks must evenly divide replicas.");
     }
 
     std::vector<std::string>& job_targets = ret->targets_[job.name];
     for (int i = 0; i < job.num_tasks; ++i) {
       int port = testing::PickUnusedPortOrDie();
-      job_targets.push_back(strings::StrCat("localhost:", port));
+      job_targets.push_back(absl::StrCat("localhost:", port));
     }
     tf_job_args.push_back(strings::StrCat(job.name, "|",
                                           absl::StrJoin(job_targets, ";"), "|",
@@ -70,32 +70,32 @@ Status TestCluster::MakeTestCluster(const TestClusterConfig& config,
     num_gpus = iter->second;
   }
   if (!options.env->FileExists(binary_path).ok()) {
-    return errors::Internal("Could not find grpc_testlib_server");
+    return absl::InternalError("Could not find grpc_testlib_server");
   }
 
   for (const auto& job : config.jobs) {
     for (int i = 0; i < job.num_tasks; ++i) {
-      const std::vector<string> argv(
+      const std::vector<std::string> argv(
           {binary_path, /* see grpc_testlib_server.cc for flags */
-           tf_jobs, strings::StrCat("--tf_job=", job.name),
-           strings::StrCat("--tf_task=", i / job.num_replicas),
-           strings::StrCat("--tf_replica=", i % job.num_replicas),
-           strings::StrCat("--num_cpus=", num_cpus),
-           strings::StrCat("--host_port=", ret->targets_[job.name][i]),
-           strings::StrCat("--num_gpus=", num_gpus)});
+           tf_jobs, absl::StrCat("--tf_job=", job.name),
+           absl::StrCat("--tf_task=", i / job.num_replicas),
+           absl::StrCat("--tf_replica=", i % job.num_replicas),
+           absl::StrCat("--num_cpus=", num_cpus),
+           absl::StrCat("--host_port=", ret->targets_[job.name][i]),
+           absl::StrCat("--num_gpus=", num_gpus)});
       LOG(INFO) << "Start: " << absl::StrJoin(argv, " ");
       auto subprocess = CreateSubProcess(argv);
       bool success = subprocess->Start();
       ret->subprocesses_.emplace_back(std::move(subprocess));
       if (!success) {
-        return errors::Internal("Could not start subprocess");
+        return absl::InternalError("Could not start subprocess");
       }
     }
   }
 
   SessionOptions options_copy(options);
   options_copy.target =
-      strings::StrCat("grpc://", ret->targets(config.jobs[0].name)[0]);
+      absl::StrCat("grpc://", ret->targets(config.jobs[0].name)[0]);
 
   std::unique_ptr<GrpcSession> session;
   TF_RETURN_IF_ERROR(GrpcSession::Create(options_copy, &session));

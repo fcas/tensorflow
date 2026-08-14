@@ -14,14 +14,19 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/types/span.h"
 #include "tensorflow/compiler/tf2xla/mlir_xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
-#include "xla/client/lib/arithmetic.h"
-#include "xla/client/xla_builder.h"
+#include "xla/hlo/builder/lib/arithmetic.h"
+#include "xla/hlo/builder/xla_builder.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/platform/macros.h"
 
 namespace tensorflow {
@@ -62,10 +67,11 @@ void XlaNudge(xla::XlaBuilder* b, const DataType data_type,
   xla::XlaOp zero_point_from_min = xla::Sub(quant_min, xla::Div(min, *scale));
   xla::XlaOp quant_max =
       XlaHelpers::FloatLiteral(b, data_type, quant_max_value);
-  xla::XlaOp nudged_zero_point =
-      xla::Select(xla::Le(zero_point_from_min, quant_min), quant_min,
-                  xla::Select(xla::Ge(zero_point_from_min, quant_max),
-                              quant_max, xla::Round(zero_point_from_min)));
+  xla::XlaOp half = XlaHelpers::FloatLiteral(b, data_type, 0.5f);
+  xla::XlaOp nudged_zero_point = xla::Select(
+      xla::Le(zero_point_from_min, quant_min), quant_min,
+      xla::Select(xla::Ge(zero_point_from_min, quant_max), quant_max,
+                  xla::Floor(xla::Add(zero_point_from_min, half))));
   *nudged_min = xla::Mul(xla::Sub(quant_min, nudged_zero_point), *scale);
   *nudged_max = xla::Mul(xla::Sub(quant_max, nudged_zero_point), *scale);
 }
@@ -94,9 +100,10 @@ class FakeQuantWithMinMaxArgsGradOp : public XlaOpKernel {
     int num_bits;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits));
     OP_REQUIRES(ctx, num_bits >= 2 && num_bits <= 16,
-                errors::InvalidArgument("num_bits is out of range, expected "
-                                        "between 2 and 16, was: ",
-                                        num_bits));
+                absl::InvalidArgumentError(
+                    absl::StrCat("num_bits is out of range, expected "
+                                 "between 2 and 16, was: ",
+                                 num_bits)));
     bool narrow_range;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range));
     const float quant_min = narrow_range ? 1 : 0;
@@ -143,9 +150,10 @@ class FakeQuantWithMinMaxVarsOp : public XlaOpKernel {
       : XlaOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits_));
     OP_REQUIRES(ctx, num_bits_ >= 2 && num_bits_ <= 16,
-                errors::InvalidArgument("num_bits is out of range, expected "
-                                        "between 2 and 16, was: ",
-                                        num_bits_));
+                absl::InvalidArgumentError(
+                    absl::StrCat("num_bits is out of range, expected "
+                                 "between 2 and 16, was: ",
+                                 num_bits_)));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
     quant_min_ = narrow_range_ ? 1 : 0;
     quant_max_ = (1 << num_bits_) - 1;
@@ -183,9 +191,10 @@ class FakeQuantWithMinMaxVarsGradOp : public XlaOpKernel {
     int num_bits;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits));
     OP_REQUIRES(ctx, num_bits >= 2 && num_bits <= 16,
-                errors::InvalidArgument("num_bits is out of range, expected "
-                                        "between 2 and 16, was: ",
-                                        num_bits));
+                absl::InvalidArgumentError(
+                    absl::StrCat("num_bits is out of range, expected "
+                                 "between 2 and 16, was: ",
+                                 num_bits)));
     bool narrow_range;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range));
     quant_min_ = narrow_range ? 1 : 0;
@@ -247,9 +256,10 @@ class FakeQuantWithMinMaxVarsPerChannelOp : public XlaOpKernel {
       : XlaOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits_));
     OP_REQUIRES(ctx, num_bits_ >= 2 && num_bits_ <= 16,
-                errors::InvalidArgument("num_bits is out of range, expected "
-                                        "between 2 and 16, was: ",
-                                        num_bits_));
+                absl::InvalidArgumentError(
+                    absl::StrCat("num_bits is out of range, expected "
+                                 "between 2 and 16, was: ",
+                                 num_bits_)));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
     quant_min_ = narrow_range_ ? 1 : 0;
     quant_max_ = (1 << num_bits_) - 1;
@@ -267,7 +277,7 @@ class FakeQuantWithMinMaxVarsPerChannelOp : public XlaOpKernel {
     absl::Span<const int64_t> input_dimensions = input_shape.dimensions();
     auto convert_to_input_shape = [&](const xla::XlaOp op) {
       return xla::BroadcastInDim(op, input_dimensions,
-                                 {input_shape.rank() - 1});
+                                 {input_shape.dimensions_size() - 1});
     };
     input_min = convert_to_input_shape(input_min);
     input_max = convert_to_input_shape(input_max);
@@ -298,9 +308,10 @@ class FakeQuantWithMinMaxVarsPerChannelGradOp : public XlaOpKernel {
     int num_bits;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits));
     OP_REQUIRES(ctx, num_bits >= 2 && num_bits <= 16,
-                errors::InvalidArgument("num_bits is out of range, expected "
-                                        "between 2 and 16, was: ",
-                                        num_bits));
+                absl::InvalidArgumentError(
+                    absl::StrCat("num_bits is out of range, expected "
+                                 "between 2 and 16, was: ",
+                                 num_bits)));
     bool narrow_range;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range));
     quant_min_ = narrow_range ? 1 : 0;
@@ -322,13 +333,13 @@ class FakeQuantWithMinMaxVarsPerChannelGradOp : public XlaOpKernel {
     absl::Span<const int64_t> input_dimensions = input_shape.dimensions();
 
     std::vector<int64_t> reduce_axes;
-    for (int64_t i = 0; i + 1 < input_shape.rank(); ++i) {
+    for (int64_t i = 0; i + 1 < input_shape.dimensions().size(); ++i) {
       reduce_axes.push_back(i);
     }
 
     auto convert_to_input_shape = [&](const xla::XlaOp op) {
       return xla::BroadcastInDim(op, input_dimensions,
-                                 {input_shape.rank() - 1});
+                                 {input_shape.dimensions_size() - 1});
     };
     input_min = convert_to_input_shape(input_min);
     input_max = convert_to_input_shape(input_max);

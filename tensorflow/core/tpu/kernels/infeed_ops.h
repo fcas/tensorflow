@@ -19,12 +19,12 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "xla/shape.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
-#include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/tpu/kernels/transfer_ops.h"
 
 namespace tensorflow {
@@ -38,7 +38,7 @@ class TpuInfeedEnqueueOp : public TpuTransferAsyncOpKernel {
   explicit TpuInfeedEnqueueOp(
       OpKernelConstruction* ctx,
       std::unique_ptr<TpuTransferOpInterface> transfer_op);
-  Status DoWork(OpKernelContext* ctx, int device_ordinal) override;
+  absl::Status DoWork(OpKernelContext* ctx, int device_ordinal) override;
 
  private:
   TensorShape shape_;
@@ -56,7 +56,7 @@ class TpuInfeedEnqueueTupleOp : public TpuTransferAsyncOpKernel {
   explicit TpuInfeedEnqueueTupleOp(
       OpKernelConstruction* ctx,
       std::unique_ptr<TpuTransferOpInterface> transfer_op);
-  Status DoWork(OpKernelContext* ctx, int device_ordinal) override;
+  absl::Status DoWork(OpKernelContext* ctx, int device_ordinal) override;
 
  private:
   std::vector<TensorShape> shapes_;
@@ -75,7 +75,7 @@ class InfeedEnqueuePrelinearizedBufferOp : public TpuTransferAsyncOpKernel {
       OpKernelConstruction* ctx,
       std::unique_ptr<TpuTransferOpInterface> transfer_op);
 
-  Status DoWork(OpKernelContext* ctx, int device_ordinal) override;
+  absl::Status DoWork(OpKernelContext* ctx, int device_ordinal) override;
 
  private:
   InfeedEnqueuePrelinearizedBufferOp(

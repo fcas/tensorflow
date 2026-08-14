@@ -17,19 +17,37 @@ limitations under the License.
 #define XLA_SERVICE_GPU_MODEL_GPU_INDEXING_PERFORMANCE_MODEL_H_
 
 #include <cstdint>
+#include <variant>
 
-#include "absl/types/span.h"
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "absl/container/inlined_vector.h"
+#include "absl/status/statusor.h"
+#include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/tiled_hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
+#include "xla/service/gpu/model/fusion_analysis_cache.h"
+#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/gpu/model/hlo_op_profiles.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/shape.h"
+#include "xla/service/instruction_fusion.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
+
+// Contains informations about block level parameters and run time of a fusion.
+struct TiledRunTimeData {
+  EstimateRunTimeData runtime_data;
+  BlockLevelParameters block_level_parameters;
+};
+
+using TiledRunTimeDataOrError = std::variant<TiledRunTimeData, FusionDecision>;
+
+using TopKTiledRunTimeDataOrError =
+    std::variant<absl::InlinedVector<TiledRunTimeData, 4>, FusionDecision>;
 
 // Implementation of Cost Model that uses indexing analysis to estimate amount
 // of compute and memory access time.
@@ -37,37 +55,83 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
  public:
   explicit GpuPerformanceModelWithIndexingAnalysis(
       const se::DeviceDescription* device_info,
+      HloFusionAnalysisCache* fusion_analysis_cache,
       HloCostAnalysis::ShapeSizeFunction shape_size,
-      mlir::MLIRContext* mlir_context)
-      : hlo_op_profile_(&HloOpProfiles::Singleton().GetProfile(device_info)),
+      mlir::MLIRContext* mlir_context, bool use_experimental_tiling,
+      bool enable_same_shape_multi_output_fusion)
+      : hlo_op_profile_(&HloOpProfiles::Singleton().GetProfile(*device_info)),
         device_info_(device_info),
+        fusion_analysis_cache_(fusion_analysis_cache),
         shape_size_(shape_size),
-        mlir_context_(mlir_context) {}
+        cost_analysis_(
+            GpuHloCostAnalysis::Options{shape_size_,
+                                        /*per_second_rates=*/{},
+                                        /*min_latencies_seconds=*/{},
+                                        /*count_multiple_input_accesses=*/true},
+            *device_info_),
+        mlir_context_(mlir_context),
+        use_experimental_tiling_(use_experimental_tiling),
+        enable_same_shape_multi_output_fusion_(
+            enable_same_shape_multi_output_fusion) {}
 
-  EstimateRunTimeData EstimateRunTimeForFusion(
-      const HloFusionAnalysis& fusion_analysis, bool is_coalesced = true);
+  // Returns the number of warps for the given tiled HLO computation.
+  static int64_t EstimateNumWarps(
+      const TiledHloComputation& tiled_hlo_computation);
 
-  EstimateRunTimeData EstimateRunTimeForInstruction(
-      const HloInstruction* producer);
+  // Returns the number of warps for the given tiled HLO computation.
+  static int64_t EstimateNumWarps(
+      const experimental::TiledHloComputation& tiled_hlo_computation);
 
-  EstimateRunTimeData EstimateRunTimeForProducerConsumer(
-      const HloInstruction* producer, const HloInstruction* consumer);
+  absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
+      const HloFusionAdaptor& fusion_adaptor,
+      const TiledHloComputation& tiled_hlo_computation,
+      const BlockLevelParameters& block_level_parameters);
 
-  RunTimes EstimateRunTimes(
-      const HloInstruction* producer,
-      absl::Span<const HloInstruction* const> fused_consumers = {});
+  // Estimate the run time of the fusion with the given launch dimensions and
+  // output tile sizes.
+  //
+  // The model uses SymbolicTileAnalysis to build a TiledHloComputation with the
+  // given tile sizes. This way it can better estimate the amount of memory
+  // access and computation.
+  absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledFusion(
+      const HloFusionAdaptor& fusion_adaptor,
+      const BlockLevelParameters& block_level_parameters);
 
- private:
+  // Estimate the run time of an Hlo instruction assuming it is emitted by
+  // Triton.
+  absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTriton(
+      const HloInstruction* instr,
+      const BlockLevelParameters* block_level_parameters = nullptr);
+
+  // Estimates the best tile sizes for the given fusion. Iterates over all the
+  // good tile sizes provided by SymbolicTileAnalysis, estimates the run time
+  // for each of them.
+  //
+  // Returns status if there is an error that we can't recover from.
+  // Returns FusionDecision if the fusion can't be tiled or there are no valid
+  // block level parameters.
+  // Otherwise returns block level parameters that give the best execution time.
+  absl::StatusOr<TiledRunTimeDataOrError> TryFindBestTilingForFusion(
+      const HloFusionAdaptor& fusion_adaptor);
+
+  // Returns top_k (possibly fewer if not enough valid tilings are found) block
+  // level parameters for the given fusion.
+  absl::StatusOr<TopKTiledRunTimeDataOrError> TryFindTopKBestTilingsForFusion(
+      const HloFusionAdaptor& fusion_adaptor, int top_k);
+
   // Returns an estimate how many FLOPs will be used to produce one element of
   // the output.
-  int64_t FlopsPerElement(const HloInstruction* instr) const;
+  int64_t FlopsPerElement(const HloInstruction* instr);
 
-  int64_t GetShapeSizeRecursive(const Shape& shape) const;
-
+ private:
   const HloOpProfiles::HloOpProfile* hlo_op_profile_;
   const se::DeviceDescription* device_info_;
+  HloFusionAnalysisCache* fusion_analysis_cache_;
   HloCostAnalysis::ShapeSizeFunction shape_size_;
+  GpuHloCostAnalysis cost_analysis_;
   mlir::MLIRContext* mlir_context_;
+  bool use_experimental_tiling_;
+  bool enable_same_shape_multi_output_fusion_;
 };
 
 }  // namespace gpu

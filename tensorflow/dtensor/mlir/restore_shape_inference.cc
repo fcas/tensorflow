@@ -13,15 +13,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <memory>
 
+#include "absl/status/status.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "llvm/Support/LogicalResult.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/Visitors.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_attributes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
+#include "tensorflow/dtensor/mlir/dtensor_dialect/ir/dtensor_attributes.h"
 #include "tensorflow/dtensor/mlir/dtensor_send_recv.h"
 #include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
@@ -73,8 +85,8 @@ mlir::LogicalResult BackwardShapeInferenceToRestoreOp(mlir::ModuleOp module,
     // O(N).
     value.setType(type);
   } else if (auto cast_op = llvm::dyn_cast_or_null<mlir::TF::CastOp>(op)) {
-    auto new_cast_op = builder->create<mlir::TF::CastOp>(cast_op.getLoc(), type,
-                                                         cast_op.getOperand());
+    auto new_cast_op = mlir::TF::CastOp::create(*builder, cast_op.getLoc(),
+                                                type, cast_op.getOperand());
     cast_op.replaceAllUsesWith(new_cast_op.getResult());
     cast_op.erase();
 
@@ -91,8 +103,8 @@ mlir::LogicalResult BackwardShapeInferenceToRestoreOp(mlir::ModuleOp module,
         module, builder, new_cast_op.getOperand(), new_type);
   } else if (auto identity_op =
                  llvm::dyn_cast_or_null<mlir::TF::IdentityOp>(op)) {
-    auto new_identity_op = builder->create<mlir::TF::IdentityOp>(
-        identity_op.getLoc(), type, identity_op.getInput());
+    auto new_identity_op = mlir::TF::IdentityOp::create(
+        *builder, identity_op.getLoc(), type, identity_op.getInput());
     identity_op.getOutput().replaceAllUsesWith(new_identity_op.getOutput());
     identity_op.erase();
 
@@ -116,8 +128,9 @@ mlir::LogicalResult BackwardShapeInferenceToRestoreOp(mlir::ModuleOp module,
     // RestoreV2Op we want to fix is on the mesh of the corresponding
     // DTensorSend. Set shape of this DTensorRecv first and go to the
     // corresponding DTensorSend.
-    auto new_recv_op = builder->create<mlir::TF::DTensorRecv>(
-        recv_op.getLoc(), type, builder->getStringAttr(recv_op.getKey()),
+    auto new_recv_op = mlir::TF::DTensorRecv::create(
+        *builder, recv_op.getLoc(), type,
+        builder->getStringAttr(recv_op.getKey()),
         mlir::TF::ShapeAttr::get(builder->getContext(),
                                  mlir::dyn_cast<mlir::TensorType>(type)),
         mlir::dtensor::MeshAttr::get(builder->getContext(), recv_op.getMesh()));

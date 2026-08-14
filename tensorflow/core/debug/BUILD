@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 # TensorFlow Debugger (tfdbg).
 #
@@ -12,7 +27,7 @@
 #    a watch state.
 # ":debug_node_key" - Defines a struct used for tracking tensors.
 
-# Placeholder: load py_proto_library
+load("@rules_python//python:proto.bzl", "py_proto_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "check_deps",
@@ -41,7 +56,7 @@ package(
 # Check that tensorflow/core:tensorflow does not depend on grpc.
 check_deps(
     name = "core_tensorflow_check_deps",
-    disallowed_deps = ["@com_github_grpc_grpc//:grpc++"],
+    disallowed_deps = ["@grpc//:grpc++"],
     deps = ["//tensorflow/core:tensorflow"],
 )
 
@@ -51,7 +66,6 @@ tf_proto_library(
         "debug_service.proto",
     ],
     has_services = 1,
-    cc_api_version = 2,
     create_grpc_library = True,
     protodeps = [
         ":debugger_event_metadata_proto",
@@ -63,7 +77,6 @@ tf_proto_library(
 tf_proto_library(
     name = "debugger_event_metadata_proto",
     srcs = ["debugger_event_metadata.proto"],
-    cc_api_version = 2,
 )
 
 cc_library(
@@ -182,11 +195,8 @@ tf_cc_test(
         ":debug_grpc_testlib",
         ":debug_io_utils",
         ":debug_node_key",
-        ":debug_service_proto_cc",
         ":debugger_event_metadata_proto_cc",
-        "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_internal",
-        "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
@@ -194,7 +204,7 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
-        "//tensorflow/core/platform/default/build_config:platformlib",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -260,9 +270,9 @@ tf_cc_test(
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
-        "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -294,13 +304,11 @@ tf_cc_binary(
 # py_proto_library(
 #     name = "debug_service_py_pb2",
 #     has_services = 1,
-#     api_version = 2,
 #     deps = [":debug_service_proto"],
 # )
 #
 # py_proto_library(
 #     name = "debugger_event_metadata_py_pb2",
-#     api_version = 2,
 #     deps = [":debugger_event_metadata_proto"],
 # )
 # copybara:uncomment_end

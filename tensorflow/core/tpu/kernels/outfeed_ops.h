@@ -20,22 +20,21 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "tensorflow/compiler/tf2xla/literal_util.h"
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "xla/literal.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/op_requires.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
-#include "tensorflow/core/platform/errors.h"
-#include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/tpu/kernels/transfer_ops.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace tensorflow {
 
@@ -53,7 +52,7 @@ class TpuOutfeedDequeueOp : public T {
     OP_REQUIRES_OK(ctx, TensorShapeToXLAShape(dtype_, shape_, &xla_shape_));
   }
 
-  Status DoWork(OpKernelContext* ctx, int device_ordinal) override {
+  absl::Status DoWork(OpKernelContext* ctx, int device_ordinal) override {
     Tensor* output;
     TF_RETURN_IF_ERROR(ctx->allocate_output(0, shape_, &output));
 
@@ -93,9 +92,9 @@ class TpuOutfeedDequeueTupleOp : public T {
       : T(ctx, "outfeed_dequeue", 1, std::move(transfer_op)) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("shapes", &shapes_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("dtypes", &dtypes_));
-    OP_REQUIRES(
-        ctx, shapes_.size() == dtypes_.size(),
-        errors::InvalidArgument("shapes and dtypes must be the same length."));
+    OP_REQUIRES(ctx, shapes_.size() == dtypes_.size(),
+                absl::InvalidArgumentError(
+                    "shapes and dtypes must be the same length."));
     // The `dtypes` list is inferred from the supplied inputs, so it
     // is always the correct length.
     for (int i = 0; i < shapes_.size(); i++) {
@@ -107,7 +106,7 @@ class TpuOutfeedDequeueTupleOp : public T {
     tuple_shape_ = xla::ShapeUtil::MakeTupleShape(xla_shapes_);
   }
 
-  Status DoWork(OpKernelContext* ctx, int device_ordinal) override {
+  absl::Status DoWork(OpKernelContext* ctx, int device_ordinal) override {
     VLOG(1) << "TransferLiteralFromOutfeed "
             << xla::ShapeUtil::HumanStringWithLayout(tuple_shape_);
 

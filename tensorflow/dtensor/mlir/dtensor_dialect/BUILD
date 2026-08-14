@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 
@@ -33,24 +48,12 @@ td_library(
 gentbl_cc_library(
     name = "DialectIncGen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "ir/ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "ir/ops.cc.inc",
-        ),
-        (
-            ["-gen-dialect-decls"],
-            "ir/dialect.h.inc",
-        ),
-        (
-            ["-gen-dialect-defs"],
-            "ir/dialect.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "ir/ops.h.inc": ["-gen-op-decls"],
+        "ir/ops.cc.inc": ["-gen-op-defs"],
+        "ir/dialect.h.inc": ["-gen-dialect-decls"],
+        "ir/dialect.cc.inc": ["-gen-dialect-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/dtensor_ops.td",
     deps = [":dtensor_td_files"],
@@ -66,9 +69,8 @@ cc_library(
     deps = [
         ":DialectIncGen",
         ":ir/dtensor_attributes",
-        "//tensorflow/compiler/mlir/utils:string_container_utils",
+        "//tensorflow/dtensor/cc:dstatus",
         "//tensorflow/dtensor/cc:tensor_layout",
-        "@com_google_absl//absl/strings",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:Support",
@@ -88,5 +90,6 @@ cc_library(
         "//tensorflow/dtensor/proto:layout_proto_cc",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )

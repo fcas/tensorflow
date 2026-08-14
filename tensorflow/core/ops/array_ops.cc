@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <limits>
 #include <ostream>
 #include <vector>
 
@@ -42,13 +43,13 @@ using shape_inference::UnchangedShape;
 
 namespace {
 
-Status GetAxisForPackAndUnpack(InferenceContext* c, int32_t rank_after_pack,
-                               int32* axis) {
+absl::Status GetAxisForPackAndUnpack(InferenceContext* c,
+                                     int32_t rank_after_pack, int32_t* axis) {
   TF_RETURN_IF_ERROR(c->GetAttr("axis", axis));
   if (*axis < -1 * rank_after_pack || *axis >= rank_after_pack) {
-    return errors::InvalidArgument("Invalid axis: ", *axis, "; must be in [",
-                                   -1 * rank_after_pack, ",", rank_after_pack,
-                                   ")");
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid axis: ", *axis, "; must be in [",
+                     -1 * rank_after_pack, ",", rank_after_pack, ")"));
   }
   if (*axis < 0) *axis = (rank_after_pack + *axis);
   return absl::OkStatus();
@@ -65,8 +66,8 @@ std::vector<int64_t> AsInt64(const Tensor* tensor, int64_t num_elements) {
 }
 
 template <typename T>
-Status PadKnown(InferenceContext* c, ShapeHandle input,
-                const Tensor* paddings_t, int64_t num_dims) {
+absl::Status PadKnown(InferenceContext* c, ShapeHandle input,
+                      const Tensor* paddings_t, int64_t num_dims) {
   // paddings_t is known.
   std::vector<DimensionHandle> dims(num_dims);
   auto paddings_data = paddings_t->matrix<T>();
@@ -74,7 +75,7 @@ Status PadKnown(InferenceContext* c, ShapeHandle input,
     const T pad0 = paddings_data(i, 0);
     const T pad1 = paddings_data(i, 1);
     if (pad0 < 0 || pad1 < 0) {
-      return errors::InvalidArgument("Paddings must be non-negative");
+      return absl::InvalidArgumentError("Paddings must be non-negative");
     }
     TF_RETURN_IF_ERROR(c->Add(c->Dim(input, i), pad0 + pad1, &dims[i]));
   }
@@ -82,7 +83,7 @@ Status PadKnown(InferenceContext* c, ShapeHandle input,
   return absl::OkStatus();
 }
 
-Status PadShapeFn(InferenceContext* c) {
+absl::Status PadShapeFn(InferenceContext* c) {
   // Paddings is a matrix of [input_rank, 2].
   ShapeHandle paddings;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &paddings));
@@ -116,13 +117,13 @@ Status PadShapeFn(InferenceContext* c) {
   TF_RETURN_IF_ERROR(c->WithValue(n_dim, num_dims, &n_dim));
 
   if (paddings_t->dtype() == DT_INT32) {
-    return PadKnown<int32>(c, input, paddings_t, num_dims);
+    return PadKnown<int32_t>(c, input, paddings_t, num_dims);
   } else {
     return PadKnown<int64_t>(c, input, paddings_t, num_dims);
   }
 }
 
-Status TransposeShapeFn(InferenceContext* c) {
+absl::Status TransposeShapeFn(InferenceContext* c) {
   ShapeHandle input = c->input(0);
   ShapeHandle perm_shape = c->input(1);
   const Tensor* perm = c->input_tensor(1);
@@ -165,7 +166,7 @@ Status TransposeShapeFn(InferenceContext* c) {
   if (perm != nullptr) {
     std::vector<int64_t> data;
     if (perm->dtype() == DT_INT32) {
-      data = AsInt64<int32>(perm, rank);
+      data = AsInt64<int32_t>(perm, rank);
     } else {
       data = AsInt64<int64_t>(perm, rank);
     }
@@ -173,8 +174,8 @@ Status TransposeShapeFn(InferenceContext* c) {
     for (int32_t i = 0; i < rank; ++i) {
       int64_t in_idx = data[i];
       if (in_idx >= rank || in_idx < -rank) {
-        return errors::InvalidArgument("perm dim ", in_idx,
-                                       " is out of range of input rank ", rank);
+        return absl::InvalidArgumentError(absl::StrCat(
+            "perm dim ", in_idx, " is out of range of input rank ", rank));
       }
       dims[i] = c->Dim(input, in_idx);
     }
@@ -188,7 +189,7 @@ Status TransposeShapeFn(InferenceContext* c) {
   return absl::OkStatus();
 }
 
-Status SetOutputShapeForReshape(InferenceContext* c) {
+absl::Status SetOutputShapeForReshape(InferenceContext* c) {
   ShapeHandle in = c->input(0);
   ShapeHandle out;
   TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(1, &out));
@@ -198,29 +199,49 @@ Status SetOutputShapeForReshape(InferenceContext* c) {
     c->set_output(0, out);
     return absl::OkStatus();
   }
-  if (c->RankKnown(in)) {
-    // We don't know the number of output elements, but we can try to infer
-    // the missing dimension.
-    bool too_many_unknown = false;
-    int32_t out_unknown_idx = -1;
 
-    DimensionHandle known_out_elems = c->NumElements(out);
-    if (!c->ValueKnown(known_out_elems)) {
-      known_out_elems = c->MakeDim(1);
-      for (int32_t i = 0; i < c->Rank(out); ++i) {
-        DimensionHandle dim = c->Dim(out, i);
-        if (!c->ValueKnown(dim)) {
-          if (out_unknown_idx >= 0) {
-            too_many_unknown = true;
-            break;
-          }
-          out_unknown_idx = i;
-        } else {
-          TF_RETURN_IF_ERROR(
-              c->Multiply(known_out_elems, dim, &known_out_elems));
-        }
+  const Tensor* new_shape_tensor = c->input_tensor(1);
+  int32_t literal_neg_one_count = 0;
+  if (new_shape_tensor != nullptr) {
+    const int64_t num_elements = new_shape_tensor->NumElements();
+    if (new_shape_tensor->dtype() == DT_INT32) {
+      auto vec = new_shape_tensor->vec<int32_t>();
+      for (int64_t i = 0; i < num_elements; ++i) {
+        if (vec(i) == -1) ++literal_neg_one_count;
+      }
+    } else if (new_shape_tensor->dtype() == DT_INT64) {
+      auto vec = new_shape_tensor->vec<int64_t>();
+      for (int64_t i = 0; i < num_elements; ++i) {
+        if (vec(i) == -1) ++literal_neg_one_count;
       }
     }
+  }
+
+  int32_t out_unknown_idx = -1;
+  bool out_too_many_unknown = false;
+  DimensionHandle known_out_elems = c->NumElements(out);
+  if (!c->ValueKnown(known_out_elems)) {
+    known_out_elems = c->MakeDim(1);
+    for (int32_t i = 0; i < c->Rank(out); ++i) {
+      DimensionHandle dim = c->Dim(out, i);
+      if (!c->ValueKnown(dim)) {
+        if (out_unknown_idx >= 0) {
+          if (literal_neg_one_count >= 2) {
+            return absl::InvalidArgumentError(
+                absl::StrCat("Only one input size may be -1, not both ",
+                             out_unknown_idx, " and ", i));
+          }
+          out_too_many_unknown = true;
+        }
+        out_unknown_idx = i;
+      } else {
+        TF_RETURN_IF_ERROR(c->Multiply(known_out_elems, dim, &known_out_elems));
+      }
+    }
+  }
+
+  if (c->RankKnown(in)) {
+    bool too_many_unknown = false;
     int32_t in_unknown_idx = -1;
     DimensionHandle known_in_elems = c->NumElements(in);
     if (!c->ValueKnown(known_in_elems)) {
@@ -243,13 +264,13 @@ Status SetOutputShapeForReshape(InferenceContext* c) {
       if (in_unknown_idx < 0 && out_unknown_idx < 0) {
         // Just check that the dimensions match.
         if (c->Value(known_in_elems) != c->Value(known_out_elems)) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(absl::StrCat(
               "Cannot reshape a tensor with ", c->DebugString(known_in_elems),
               " elements to shape ", c->DebugString(out), " (",
-              c->DebugString(known_out_elems), " elements)");
+              c->DebugString(known_out_elems), " elements)"));
         }
       } else if (in_unknown_idx < 0 && out_unknown_idx >= 0 &&
-                 c->Value(known_out_elems) > 0) {
+                 !out_too_many_unknown && c->Value(known_out_elems) > 0) {
         // Input fully known, infer the one missing output dim
         DimensionHandle inferred_dim;
         TF_RETURN_IF_ERROR(c->Divide(known_in_elems, c->Value(known_out_elems),
@@ -268,7 +289,8 @@ Status SetOutputShapeForReshape(InferenceContext* c) {
         DimensionHandle unknown_in_dim = c->Dim(in, in_unknown_idx);
         TF_RETURN_IF_ERROR(
             c->Merge(unknown_in_dim, inferred_dim, &unknown_in_dim));
-      } else if (in_unknown_idx >= 0 && out_unknown_idx >= 0) {
+      } else if (in_unknown_idx >= 0 && out_unknown_idx >= 0 &&
+                 !out_too_many_unknown) {
         // Exactly one unknown dimension in both input and output. These 2 are
         // equal iff the known elements are equal.
         if (c->Value(known_in_elems) == c->Value(known_out_elems)) {
@@ -299,7 +321,7 @@ REGISTER_OP("ParallelConcat")
       TF_RETURN_IF_ERROR(
           c->MakeShapeFromPartialTensorShape(shape, &passed_shape));
       if (!c->FullyDefined(passed_shape)) {
-        return errors::InvalidArgument("shape attr must be fully defined.");
+        return absl::InvalidArgumentError("shape attr must be fully defined.");
       }
       ShapeHandle cur;
       TF_RETURN_IF_ERROR(c->ReplaceDim(
@@ -307,18 +329,19 @@ REGISTER_OP("ParallelConcat")
           &cur));
       for (int i = 0; i < c->num_inputs(); ++i) {
         if (!c->FullyDefined(c->input(i))) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "All input shapes must be fully defined.");
         }
         if (c->Rank(c->input(i)) < 1) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(absl::StrCat(
               "The rank of all input shapes must be greater than 0, "
               "but input ",
-              i, " had rank ", c->Rank(c->input(i)), ".");
+              i, " had rank ", c->Rank(c->input(i)), "."));
         }
         DimensionHandle unused;
         if (!c->WithValue(c->Dim(c->input(i), 0), 1, &unused).ok()) {
-          return errors::InvalidArgument("Size of first dimension must be 1.");
+          return absl::InvalidArgumentError(
+              "Size of first dimension must be 1.");
         }
         TF_RETURN_WITH_CONTEXT_IF_ERROR(c->Merge(c->input(i), cur, &cur),
                                         "From merging shape ", i,
@@ -634,7 +657,7 @@ REGISTER_OP("SplitV")
         }
       } else if (rank == 0) {
         // Throw error if input is a scalar.
-        return errors::InvalidArgument("Can't split scalars");
+        return absl::InvalidArgumentError("Can't split scalars");
       } else if (size_splits == nullptr && c->ValueKnown(split_dimension)) {
         // If split dimension is known, but the sizes are unknown, then
         // only the split dimension is unknown
@@ -660,13 +683,14 @@ REGISTER_OP("SplitV")
         TF_RETURN_IF_ERROR(c->WithRankAtLeast(input, split_dim + 1, &input));
         std::vector<int64_t> data;
         if (size_splits->dtype() == DT_INT32) {
-          data = AsInt64<int32>(size_splits, size_splits->shape().dim_size(0));
+          data =
+              AsInt64<int32_t>(size_splits, size_splits->shape().dim_size(0));
         } else {
           data =
               AsInt64<int64_t>(size_splits, size_splits->shape().dim_size(0));
         }
         if (num_outputs != data.size()) {
-          return errors::InvalidArgument(
+          return absl::InvalidArgumentError(
               "Length of size_splits should be equal to num_outputs");
         }
         int64_t total_size = 0;
@@ -674,7 +698,7 @@ REGISTER_OP("SplitV")
         for (const auto size : data) {
           if (size == -1) {
             if (has_neg_one) {
-              return errors::InvalidArgument(
+              return absl::InvalidArgumentError(
                   "size_splits can only have one -1");
             }
             has_neg_one = true;
@@ -695,8 +719,8 @@ REGISTER_OP("SplitV")
           // If we have a negative known size (either explicit, or computed
           // via -1), then the split sizes are invalid.
           if (size < -1 || (size == -1 && c->ValueKnown(split_dim_size))) {
-            return errors::InvalidArgument("Split size at index ", i,
-                                           " must be >= 0. Got: ", size);
+            return absl::InvalidArgumentError(absl::StrCat(
+                "Split size at index ", i, " must be >= 0. Got: ", size));
           }
           TF_RETURN_IF_ERROR(
               c->ReplaceDim(input, split_dim, c->MakeDim(size), &output_shape));
@@ -705,9 +729,9 @@ REGISTER_OP("SplitV")
         if (c->ValueKnown(split_dim_size)) {
           if (has_neg_one ? total_size > split_dim_size
                           : total_size != split_dim_size) {
-            return errors::InvalidArgument(
+            return absl::InvalidArgumentError(absl::StrCat(
                 "can't split axis of size ", split_dim_size,
-                " into pieces of size [", absl::StrJoin(data, ","), "]");
+                " into pieces of size [", absl::StrJoin(data, ","), "]"));
           }
         }
       }
@@ -823,8 +847,8 @@ REGISTER_OP("DiagPart")
       // Rank must be even, and result will have rank <rank/2>.
       const int32_t rank = c->Rank(in);
       if ((rank % 2) != 0 || rank <= 0) {
-        return errors::InvalidArgument(
-            "Input must have even and non-zero rank, input rank is ", rank);
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Input must have even and non-zero rank, input rank is ", rank));
       }
       const int32_t mid = rank / 2;
 
@@ -1004,7 +1028,7 @@ REGISTER_OP("Reverse")
         TF_RETURN_IF_ERROR(c->WithRank(input, c->Value(dims_dim), &input));
       }
       if (c->Rank(input) > 8) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "reverse does not work on tensors with more than 8 dimensions");
       }
       c->set_output(0, input);
@@ -1025,7 +1049,7 @@ REGISTER_OP("ReverseV2")
       ShapeHandle axis;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &axis));
       if (c->Rank(input) > 8) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "reverse does not work on tensors with more than 8 dimensions");
       }
       const Tensor* axis_tensor = c->input_tensor(1);
@@ -1033,7 +1057,8 @@ REGISTER_OP("ReverseV2")
         int32_t rank = c->Rank(input);
         std::vector<int64_t> axis_value;
         if (axis_tensor->dtype() == DT_INT32) {
-          axis_value = AsInt64<int32>(axis_tensor, axis_tensor->NumElements());
+          axis_value =
+              AsInt64<int32_t>(axis_tensor, axis_tensor->NumElements());
         } else {
           axis_value =
               AsInt64<int64_t>(axis_tensor, axis_tensor->NumElements());
@@ -1043,13 +1068,13 @@ REGISTER_OP("ReverseV2")
           int64_t canonical_axis =
               axis_value[i] < 0 ? rank + axis_value[i] : axis_value[i];
           if (canonical_axis < 0 || canonical_axis >= rank) {
-            return errors::InvalidArgument("'axis'[", i, "] = ", axis_value[i],
-                                           " is out of valid range [", 0, ", ",
-                                           rank - 1);
+            return absl::InvalidArgumentError(
+                absl::StrCat("'axis'[", i, "] = ", axis_value[i],
+                             " is out of valid range [", 0, ", ", rank - 1));
           }
           if (axes_dense[canonical_axis]) {
-            return errors::InvalidArgument("axis ", canonical_axis,
-                                           " specified more than once.");
+            return absl::InvalidArgumentError(absl::StrCat(
+                "axis ", canonical_axis, " specified more than once."));
           }
           axes_dense[canonical_axis] = true;
         }
@@ -1082,22 +1107,22 @@ REGISTER_OP("EditDistance")
         return shape_inference::UnknownShape(c);
       }
       if (hypothesis_shape_t->NumElements() != truth_shape_t->NumElements()) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "Num elements of hypothesis_shape does not match truth_shape: ",
             hypothesis_shape_t->NumElements(), " vs. ",
-            truth_shape_t->NumElements());
+            truth_shape_t->NumElements()));
       }
       if (hypothesis_shape_t->NumElements() < 2) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "Input Hypothesis SparseTensors must have rank at least 2, but "
             "hypothesis_shape rank is: ",
-            hypothesis_shape_t->NumElements());
+            hypothesis_shape_t->NumElements()));
       }
       if (truth_shape_t->NumElements() < 2) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "Input Truth SparseTensors must have rank at least 2, but "
             "truth_shape rank is: ",
-            truth_shape_t->NumElements());
+            truth_shape_t->NumElements()));
       }
 
       auto h_values = hypothesis_shape_t->flat<int64_t>();
@@ -1120,7 +1145,7 @@ REGISTER_OP("Fill")
     .Attr("index_type: {int32, int64} = DT_INT32")
     .SetShapeFn([](InferenceContext* c) {
       DataType index_type = DT_INT32;
-      Status s = c->GetAttr("index_type", &index_type);
+      absl::Status s = c->GetAttr("index_type", &index_type);
       if (!s.ok() && s.code() != error::NOT_FOUND) {
         return s;
       }
@@ -1131,9 +1156,9 @@ REGISTER_OP("Fill")
       const Tensor* t = c->input_tensor(0);
       if (t != nullptr) {
         for (int i = 0; i < t->NumElements(); ++i) {
-          if ((index_type == DT_INT32 && t->vec<int32>()(i) < 0) ||
+          if ((index_type == DT_INT32 && t->vec<int32_t>()(i) < 0) ||
               (index_type == DT_INT64 && t->vec<int64_t>()(i) < 0)) {
-            return errors::InvalidArgument("Fill dimensions must be >= 0");
+            return absl::InvalidArgumentError("Fill dimensions must be >= 0");
           }
         }
       }
@@ -1249,7 +1274,7 @@ REGISTER_OP("GatherV2")
       // Note, axis can be negative.
       int64_t axis = 0;
       if (axis_t->dtype() == DT_INT32) {
-        axis = axis_t->scalar<int32>()();
+        axis = axis_t->scalar<int32_t>()();
       } else {
         axis = axis_t->scalar<int64_t>()();
       }
@@ -1306,6 +1331,7 @@ REGISTER_OP("GatherNd")
     .Output("output: Tparams")
     .Attr("Tparams: type")
     .Attr("Tindices: {int16,int32,int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(shape_inference::GatherNdShape);
 
 // --------------------------------------------------------------------------
@@ -1333,7 +1359,7 @@ REGISTER_OP("IdentityN")
       // If any of the input shapes are not known, we should return error.
       for (int i = 0; i < input.size(); i++) {
         if (!input[i].Handle()) {
-          return errors::InvalidArgument(absl::StrCat(
+          return absl::InvalidArgumentError(absl::StrCat(
               "Cannot infer output shape #", i,
               " for IdentityN node because input shape #", i, " is unknown."));
         }
@@ -1459,7 +1485,7 @@ REGISTER_OP("_MklConjugateTranspose")
 
 // --------------------------------------------------------------------------
 namespace {
-Status UniqueIdxShapeFn(InferenceContext* c) {
+absl::Status UniqueIdxShapeFn(InferenceContext* c) {
   ShapeHandle input = c->input(0);
   const Tensor* axis_t = c->input_tensor(1);
   if (axis_t == nullptr || !c->RankKnown(input)) {
@@ -1468,28 +1494,29 @@ Status UniqueIdxShapeFn(InferenceContext* c) {
   }
 
   if (c->Rank(c->input(1)) != 1) {
-    return errors::InvalidArgument("axis expects a 1D vector.");
+    return absl::InvalidArgumentError("axis expects a 1D vector.");
   }
 
   int32_t n = axis_t->NumElements();
   if (n == 0) {
     if (c->Rank(input) != 1) {
-      return errors::InvalidArgument("x expects a 1D vector.");
+      return absl::InvalidArgumentError("x expects a 1D vector.");
     }
     c->set_output(1, input);
     return absl::OkStatus();
   } else if (n == 1) {
     int64_t axis;
     if (axis_t->dtype() == DT_INT32) {
-      axis = static_cast<int64_t>(axis_t->flat<int32>()(0));
+      axis = static_cast<int64_t>(axis_t->flat<int32_t>()(0));
     } else {
       axis = axis_t->flat<int64_t>()(0);
     }
 
     int64_t input_rank = c->Rank(input);
     if (axis < -input_rank || axis >= input_rank) {
-      return errors::InvalidArgument("axis expects to be in the range [",
-                                     -input_rank, ", ", input_rank, ")");
+      return absl::InvalidArgumentError(
+          absl::StrCat("axis expects to be in the range [", -input_rank, ", ",
+                       input_rank, ")"));
     }
     if (axis < 0) {
       axis += input_rank;
@@ -1497,7 +1524,7 @@ Status UniqueIdxShapeFn(InferenceContext* c) {
     c->set_output(1, c->Vector(c->Dim(input, axis)));
     return absl::OkStatus();
   }
-  return errors::InvalidArgument(
+  return absl::InvalidArgumentError(
       "axis does not support input tensors larger than 1 elements.");
 }
 }  // namespace
@@ -1564,7 +1591,7 @@ REGISTER_OP("UniqueWithCountsV2")
 
 namespace {
 
-Status ShapeShapeFn(InferenceContext* c) {
+absl::Status ShapeShapeFn(InferenceContext* c) {
   for (int i = 0; i < c->num_inputs(); ++i) {
     DimensionHandle dim;
     if (c->RankKnown(c->input(i))) {
@@ -1646,13 +1673,14 @@ REGISTER_OP("ReverseSequence")
       // Validate batch_dim and seq_dim against input.
       const int32_t input_rank = c->Rank(input);
       if (batch_dim >= input_rank) {
-        return errors::InvalidArgument(
-            "batch_dim must be < input rank: ", batch_dim, " vs. ", input_rank);
+        return absl::InvalidArgumentError(
+            absl::StrCat("batch_dim must be < input rank: ", batch_dim, " vs. ",
+                         input_rank));
       }
 
       if (seq_dim >= input_rank) {
-        return errors::InvalidArgument(
-            "seq_dim must be < input rank: ", seq_dim, " vs. ", input_rank);
+        return absl::InvalidArgumentError(absl::StrCat(
+            "seq_dim must be < input rank: ", seq_dim, " vs. ", input_rank));
       }
 
       // To prevent out of bound access when calling c->Dim(input, batch_dim),
@@ -1660,8 +1688,8 @@ REGISTER_OP("ReverseSequence")
       // the op implementation has a stricter bound for batch_dim requiring >= 0
       // value. Thus, perform strict check here.
       if (batch_dim < 0) {
-        return errors::InvalidArgument("batch_dim must be >=0, got ",
-                                       batch_dim);
+        return absl::InvalidArgumentError(
+            absl::StrCat("batch_dim must be >=0, got ", batch_dim));
       }
 
       DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);
@@ -1752,7 +1780,7 @@ REGISTER_OP("StridedSlice")
 
       PartialTensorShape processing_shape, final_shape;
       bool is_identity, is_simple_slice, slice_dim0;
-      absl::InlinedVector<int64, 4UL> begin, end, strides;
+      absl::InlinedVector<int64_t, 4UL> begin, end, strides;
       TF_RETURN_IF_ERROR(ValidateStridedSliceOp(
           begin_value, end_value, *strides_value, input_shape, begin_mask,
           end_mask, ellipsis_mask, new_axis_mask, shrink_axis_mask,
@@ -1972,15 +2000,15 @@ REGISTER_OP("MirrorPad")
 // --------------------------------------------------------------------------
 namespace {
 template <typename T>
-Status MirrorPadKnown(InferenceContext* c, ShapeHandle input,
-                      const Tensor* paddings_t, int64_t input_rank) {
+absl::Status MirrorPadKnown(InferenceContext* c, ShapeHandle input,
+                            const Tensor* paddings_t, int64_t input_rank) {
   auto paddings_data = paddings_t->matrix<T>();
   std::vector<DimensionHandle> dims(input_rank);
   for (int64_t i = 0; i < input_rank; ++i) {
     const int64_t pad0 = static_cast<int64_t>(paddings_data(i, 0));
     const int64_t pad1 = static_cast<int64_t>(paddings_data(i, 1));
     if (pad0 < 0 || pad1 < 0) {
-      return errors::InvalidArgument("Paddings must be non-negative");
+      return absl::InvalidArgumentError("Paddings must be non-negative");
     }
 
     TF_RETURN_IF_ERROR(c->Subtract(c->Dim(input, i), pad0 + pad1, &dims[i]));
@@ -2025,7 +2053,7 @@ REGISTER_OP("MirrorPadGrad")
       }
 
       if (paddings_t->dtype() == DT_INT32) {
-        return MirrorPadKnown<int32>(c, input, paddings_t, input_rank);
+        return MirrorPadKnown<int32_t>(c, input, paddings_t, input_rank);
       } else {
         return MirrorPadKnown<int64_t>(c, input, paddings_t, input_rank);
       }
@@ -2096,7 +2124,7 @@ REGISTER_OP("ExpandDims")
 
       const Tensor* dim_t = c->input_tensor(1);
       if (dim_t != nullptr && dim_t->NumElements() != 1) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "'dim' input must be a tensor with a single value");
       }
       if (dim_t == nullptr || !c->RankKnown(input)) {
@@ -2106,7 +2134,7 @@ REGISTER_OP("ExpandDims")
 
       int64_t dim;
       if (dim_t->dtype() == DT_INT32) {
-        dim = static_cast<int64_t>(dim_t->flat<int32>()(0));
+        dim = static_cast<int64_t>(dim_t->flat<int32_t>()(0));
       } else {
         dim = dim_t->flat<int64_t>()(0);
       }
@@ -2114,8 +2142,8 @@ REGISTER_OP("ExpandDims")
       const int32_t rank = c->Rank(input);
       const int32_t min_dim = -1 * rank - 1;
       if (dim < min_dim || dim > rank) {
-        return errors::InvalidArgument("dim ", dim, " not in the interval [",
-                                       min_dim, ", ", rank, "].");
+        return absl::InvalidArgumentError(absl::StrCat(
+            "dim ", dim, " not in the interval [", min_dim, ", ", rank, "]."));
       }
 
       if (dim < 0) {
@@ -2150,12 +2178,13 @@ REGISTER_OP("Squeeze")
       const int32_t input_rank = c->Rank(input);
 
       // Validate and wrap squeeze dimensions.
-      std::vector<int32> squeeze_dims;
+      std::vector<int32_t> squeeze_dims;
       TF_RETURN_IF_ERROR(c->GetAttr("squeeze_dims", &squeeze_dims));
       for (int i = 0; i < squeeze_dims.size(); ++i) {
         if (squeeze_dims[i] < -input_rank || squeeze_dims[i] >= input_rank) {
-          return errors::InvalidArgument("squeeze_dims[", i, "] not in [",
-                                         -input_rank, ",", input_rank, ").");
+          return absl::InvalidArgumentError(
+              absl::StrCat("squeeze_dims[", i, "] not in [", -input_rank, ",",
+                           input_rank, ")."));
         }
 
         if (squeeze_dims[i] < 0) {
@@ -2190,9 +2219,9 @@ REGISTER_OP("Squeeze")
             continue;
           }
         } else if (is_explicit_match) {
-          return errors::InvalidArgument("Can not squeeze dim[", i,
-                                         "], expected a dimension of 1, got ",
-                                         c->Value(c->Dim(input, i)));
+          return absl::InvalidArgumentError(absl::StrCat(
+              "Can not squeeze dim[", i, "], expected a dimension of 1, got ",
+              c->Value(c->Dim(input, i))));
         }
 
         result_shape.emplace_back(dim);
@@ -2237,24 +2266,25 @@ std::vector<int64_t> GetFlatInt64(const Tensor& t) {
 // Converts int32 or int64 Tensor to flat std::vector<int64_t>.
 std::vector<int64_t> GetFlatInt64(const Tensor& t) {
   if (t.dtype() == DT_INT32) {
-    return GetFlatInt64<int32>(t);
+    return GetFlatInt64<int32_t>(t);
   } else {
     return GetFlatInt64<int64_t>(t);
   }
 }
 
-Status SpaceToBatchShapeHelper(InferenceContext* c, ShapeHandle input_shape,
-                               ShapeHandle block_shape_shape,
-                               const Tensor* block_shape_t,
-                               ShapeHandle paddings_shape,
-                               const Tensor* paddings_t) {
+absl::Status SpaceToBatchShapeHelper(InferenceContext* c,
+                                     ShapeHandle input_shape,
+                                     ShapeHandle block_shape_shape,
+                                     const Tensor* block_shape_t,
+                                     ShapeHandle paddings_shape,
+                                     const Tensor* paddings_t) {
   if (c->Rank(block_shape_shape) != 1) {
-    return errors::InvalidArgument("block_shape must have rank 1.");
+    return absl::InvalidArgumentError("block_shape must have rank 1.");
   }
 
   const DimensionHandle num_block_dims_handle = c->Dim(block_shape_shape, 0);
   if (!c->ValueKnown(num_block_dims_handle)) {
-    return errors::InvalidArgument("block_shape must have known size.");
+    return absl::InvalidArgumentError("block_shape must have known size.");
   }
 
   const int64_t num_block_dims = c->Value(num_block_dims_handle);
@@ -2272,7 +2302,7 @@ Status SpaceToBatchShapeHelper(InferenceContext* c, ShapeHandle input_shape,
     for (int64_t dim = 0; dim < num_block_dims; ++dim) {
       const int64_t block_shape_value = block_shape_vec[dim];
       if (block_shape_value < 1) {
-        return errors::InvalidArgument("block_shape must be positive");
+        return absl::InvalidArgumentError("block_shape must be positive");
       }
       if (c->ValueKnown(batch_size)) {
         TF_RETURN_IF_ERROR(
@@ -2294,7 +2324,7 @@ Status SpaceToBatchShapeHelper(InferenceContext* c, ShapeHandle input_shape,
       const int64_t pad_start = paddings_vec[dim * 2],
                     pad_end = paddings_vec[dim * 2 + 1];
       if (pad_start < 0 || pad_end < 0) {
-        return errors::InvalidArgument("paddings cannot be negative");
+        return absl::InvalidArgumentError("paddings cannot be negative");
       }
       if (block_shape_t) {
         DimensionHandle padded_size;
@@ -2319,17 +2349,19 @@ Status SpaceToBatchShapeHelper(InferenceContext* c, ShapeHandle input_shape,
   return absl::OkStatus();
 }
 
-Status BatchToSpaceShapeHelper(InferenceContext* c, ShapeHandle input_shape,
-                               ShapeHandle block_shape_shape,
-                               const Tensor* block_shape_t,
-                               ShapeHandle crops_shape, const Tensor* crops_t) {
+absl::Status BatchToSpaceShapeHelper(InferenceContext* c,
+                                     ShapeHandle input_shape,
+                                     ShapeHandle block_shape_shape,
+                                     const Tensor* block_shape_t,
+                                     ShapeHandle crops_shape,
+                                     const Tensor* crops_t) {
   if (c->Rank(block_shape_shape) != 1) {
-    return errors::InvalidArgument("block_shape must have rank 1.");
+    return absl::InvalidArgumentError("block_shape must have rank 1.");
   }
 
   const DimensionHandle num_block_dims_handle = c->Dim(block_shape_shape, 0);
   if (!c->ValueKnown(num_block_dims_handle)) {
-    return errors::InvalidArgument("block_shape must have known size.");
+    return absl::InvalidArgumentError("block_shape must have known size.");
   }
 
   const int64_t num_block_dims = c->Value(num_block_dims_handle);
@@ -2347,7 +2379,7 @@ Status BatchToSpaceShapeHelper(InferenceContext* c, ShapeHandle input_shape,
     for (int64_t dim = 0; dim < num_block_dims; ++dim) {
       const int64_t block_shape_value = block_shape_vec[dim];
       if (block_shape_value < 1) {
-        return errors::InvalidArgument("block_shape must be positive");
+        return absl::InvalidArgumentError("block_shape must be positive");
       }
       if (c->ValueKnown(batch_size)) {
         TF_RETURN_IF_ERROR(c->Divide(batch_size, block_shape_value,
@@ -2369,7 +2401,7 @@ Status BatchToSpaceShapeHelper(InferenceContext* c, ShapeHandle input_shape,
       const int64_t crop_start = crops_vec[dim * 2],
                     crop_end = crops_vec[dim * 2 + 1];
       if (crop_start < 0 || crop_end < 0) {
-        return errors::InvalidArgument("crops cannot be negative");
+        return absl::InvalidArgumentError("crops cannot be negative");
       }
       if (block_shape_t) {
         DimensionHandle cropped_size;
@@ -2485,7 +2517,7 @@ REGISTER_OP("SpaceToDepth")
     .Attr("data_format: {'NHWC', 'NCHW', 'NCHW_VECT_C'} = 'NHWC'")
     // TODO(pauldonnelly): Implement GPU kernels for NCHW_VECT_C.
     .SetShapeFn([](InferenceContext* c) {
-      string data_format_str;
+      std::string data_format_str;
       TF_RETURN_IF_ERROR(c->GetAttr("data_format", &data_format_str));
       TensorFormat data_format;
       FormatFromString(data_format_str, &data_format);
@@ -2539,7 +2571,7 @@ REGISTER_OP("DepthToSpace")
     .Attr("data_format: {'NHWC', 'NCHW', 'NCHW_VECT_C'} = 'NHWC'")
     // TODO(pauldonnelly): Implement GPU kernels for NCHW and NCHW_VECT_C.
     .SetShapeFn([](InferenceContext* c) {
-      string data_format_str;
+      std::string data_format_str;
       TF_RETURN_IF_ERROR(c->GetAttr("data_format", &data_format_str));
       TensorFormat data_format;
       FormatFromString(data_format_str, &data_format);
@@ -2598,31 +2630,31 @@ REGISTER_OP("ExtractImagePatches")
       ShapeHandle input_shape;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 4, &input_shape));
 
-      std::vector<int32> ksizes;
+      std::vector<int32_t> ksizes;
       TF_RETURN_IF_ERROR(c->GetAttr("ksizes", &ksizes));
       if (ksizes.size() != 4) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "ExtractImagePatches requires the ksizes attribute to contain 4 "
             "values, but got: ",
-            ksizes.size());
+            ksizes.size()));
       }
 
-      std::vector<int32> strides;
+      std::vector<int32_t> strides;
       TF_RETURN_IF_ERROR(c->GetAttr("strides", &strides));
       if (strides.size() != 4) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "ExtractImagePatches requires the stride attribute to contain 4 "
             "values, but got: ",
-            strides.size());
+            strides.size()));
       }
 
-      std::vector<int32> rates;
+      std::vector<int32_t> rates;
       TF_RETURN_IF_ERROR(c->GetAttr("rates", &rates));
       if (rates.size() != 4) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "ExtractImagePatches requires the rates attribute to contain 4 "
             "values, but got: ",
-            rates.size());
+            rates.size()));
       }
 
       int32_t ksize_rows = ksizes[1];
@@ -2688,22 +2720,22 @@ REGISTER_OP("ExtractVolumePatches")
       ShapeHandle input_shape;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 5, &input_shape));
 
-      std::vector<int32> ksizes;
+      std::vector<int32_t> ksizes;
       TF_RETURN_IF_ERROR(c->GetAttr("ksizes", &ksizes));
       if (ksizes.size() != 5) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "ExtractVolumePatches requires the ksizes attribute to contain 5 "
             "values, but got: ",
-            ksizes.size());
+            ksizes.size()));
       }
 
-      std::vector<int32> strides;
+      std::vector<int32_t> strides;
       TF_RETURN_IF_ERROR(c->GetAttr("strides", &strides));
       if (strides.size() != 5) {
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "ExtractVolumePatches requires the stride attribute to contain 5 "
             "values, but got: ",
-            strides.size());
+            strides.size()));
       }
 
       /*
@@ -2795,7 +2827,7 @@ REGISTER_OP("OneHot")
     .SetShapeFn([](InferenceContext* c) {
       int32_t axis;
       TF_RETURN_IF_ERROR(c->GetAttr("axis", &axis));
-      if (axis < -1) return errors::InvalidArgument("axis must be >= -1");
+      if (axis < -1) return absl::InvalidArgumentError("axis must be >= -1");
 
       DimensionHandle depth;
       TF_RETURN_IF_ERROR(c->MakeDimForScalarInput(1, &depth));
@@ -2855,13 +2887,13 @@ REGISTER_OP("QuantizeAndDequantizeV2")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
       if (axis < -1) {
-        return errors::InvalidArgument("axis should be at least -1, got ",
-                                       axis);
+        return absl::InvalidArgumentError(
+            absl::StrCat("axis should be at least -1, got ", axis));
       } else if (axis != -1) {
         ShapeHandle input;
-        if (axis >= kint32max) {
-          return errors::InvalidArgument(
-              "Axis cannot be >= kint32max value, got ", axis);
+        if (axis >= std::numeric_limits<int32_t>::max()) {
+          return absl::InvalidArgumentError(
+              absl::StrCat("Axis cannot be >= kint32max value, got ", axis));
         }
         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
         DimensionHandle depth;
@@ -2894,13 +2926,13 @@ REGISTER_OP("QuantizeAndDequantizeV4")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
       if (axis < -1) {
-        return errors::InvalidArgument("axis should be at least -1, got ",
-                                       axis);
+        return absl::InvalidArgumentError(
+            absl::StrCat("axis should be at least -1, got ", axis));
       } else if (axis != -1) {
         ShapeHandle input;
-        if (axis >= kint32max) {
-          return errors::InvalidArgument(
-              "Axis cannot be >= kint32max value, got ", axis);
+        if (axis >= std::numeric_limits<int32_t>::max()) {
+          return absl::InvalidArgumentError(
+              absl::StrCat("Axis cannot be >= kint32max value, got ", axis));
         }
         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
         DimensionHandle depth;
@@ -2929,13 +2961,13 @@ REGISTER_OP("QuantizeAndDequantizeV4Grad")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), minmax_rank, &minmax));
       TF_RETURN_IF_ERROR(c->Merge(c->input(3), minmax, &minmax));
       if (axis < -1) {
-        return errors::InvalidArgument("axis should be at least -1, got ",
-                                       axis);
+        return absl::InvalidArgumentError(
+            absl::StrCat("axis should be at least -1, got ", axis));
       } else if (axis != -1) {
         ShapeHandle input;
-        if (axis >= kint32max) {
-          return errors::InvalidArgument(
-              "Axis cannot be >= kint32max value, got ", axis);
+        if (axis >= std::numeric_limits<int32_t>::max()) {
+          return absl::InvalidArgumentError(
+              absl::StrCat("Axis cannot be >= kint32max value, got ", axis));
         }
         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
         DimensionHandle depth;
@@ -2969,13 +3001,13 @@ REGISTER_OP("QuantizeAndDequantizeV3")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
       if (axis < -1) {
-        return errors::InvalidArgument("axis should be at least -1, got ",
-                                       axis);
+        return absl::InvalidArgumentError(
+            absl::StrCat("axis should be at least -1, got ", axis));
       } else if (axis != -1) {
         ShapeHandle input;
-        if (axis >= kint32max) {
-          return errors::InvalidArgument(
-              "Axis cannot be >= kint32max value, got ", axis);
+        if (axis >= std::numeric_limits<int32_t>::max()) {
+          return absl::InvalidArgumentError(
+              absl::StrCat("Axis cannot be >= kint32max value, got ", axis));
         }
         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
         DimensionHandle depth;
@@ -3017,19 +3049,19 @@ REGISTER_OP("Dequantize")
     .Attr("dtype: {bfloat16, float} = DT_FLOAT")
     .SetShapeFn([](InferenceContext* c) {
       int axis = -1;
-      Status s = c->GetAttr("axis", &axis);
+      absl::Status s = c->GetAttr("axis", &axis);
       if (!s.ok() && s.code() != error::NOT_FOUND) {
         return s;
       }
       if (axis < -1) {
-        return errors::InvalidArgument("axis should be at least -1, got ",
-                                       axis);
+        return absl::InvalidArgumentError(
+            absl::StrCat("axis should be at least -1, got ", axis));
       }
       auto input_dims = c->Rank(c->input(0));
       if (axis > input_dims) {
-        return errors::InvalidArgument(
-            "Axis must be less than input dimension(", input_dims, "), got ",
-            axis);
+        return absl::InvalidArgumentError(
+            absl::StrCat("Axis must be less than input dimension(", input_dims,
+                         "), got ", axis));
       }
       const int minmax_rank = (axis == -1) ? 0 : 1;
       TF_RETURN_IF_ERROR(shape_inference::UnchangedShape(c));
@@ -3038,12 +3070,12 @@ REGISTER_OP("Dequantize")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), minmax_rank, &minmax));
       if (axis != -1) {
         ShapeHandle input;
-        if (axis >= kint32max) {
+        if (axis >= std::numeric_limits<int32_t>::max()) {
           // Check int32 max bound for a corner case to prevent integer flow
           // when input actually has kint32max rank and above bound check is not
           // triggered.
-          return errors::InvalidArgument(
-              "Axis cannot be >= kint32max value, got ", axis);
+          return absl::InvalidArgumentError(
+              absl::StrCat("Axis cannot be >= kint32max value, got ", axis));
         }
         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
         DimensionHandle depth;
@@ -3125,7 +3157,7 @@ REGISTER_OP("QuantizedInstanceNorm")
 
 namespace {
 
-Status ScatterNdTensorShape(InferenceContext* c) {
+absl::Status ScatterNdTensorShape(InferenceContext* c) {
   ShapeHandle output_shape;
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 1, &output_shape));
   ShapeHandle indices_shape;
@@ -3173,6 +3205,7 @@ REGISTER_OP("ScatterNd")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int16, int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle indices_shape;
       TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 1, &indices_shape));
@@ -3191,6 +3224,7 @@ REGISTER_OP("TensorScatterUpdate")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int16, int32, int64, uint16}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterAdd")
@@ -3200,6 +3234,7 @@ REGISTER_OP("TensorScatterAdd")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterSub")
@@ -3209,6 +3244,7 @@ REGISTER_OP("TensorScatterSub")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterMin")
@@ -3218,6 +3254,7 @@ REGISTER_OP("TensorScatterMin")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterMax")
@@ -3227,6 +3264,7 @@ REGISTER_OP("TensorScatterMax")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("ScatterNdNonAliasingAdd")
@@ -3236,6 +3274,7 @@ REGISTER_OP("ScatterNdNonAliasingAdd")
     .Output("output: T")
     .Attr("T: {numbertype, bool}")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("FakeQuantWithMinMaxArgs")
@@ -3368,11 +3407,12 @@ REGISTER_OP("Fingerprint")
           return errors::InvalidArgument("`method` must be rank 0: ",
                                          method->shape());
         }
-        const string& method_string = method->scalar<tstring>()();
+        const std::string& method_string = method->scalar<tstring>()();
         if (method_string != "farmhash64") {
-          return errors::InvalidArgument("Unsupported method: ", method_string);
+          return absl::InvalidArgumentError(
+              absl::StrCat("Unsupported method: ", method_string));
         }
-        fingerprint_size = c->MakeDim(sizeof(uint64));
+        fingerprint_size = c->MakeDim(sizeof(uint64_t));
       }
 
       DimensionHandle batch = c->Dim(c->input(0), 0);

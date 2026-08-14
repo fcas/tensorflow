@@ -13,11 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cassert>
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -37,6 +40,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
@@ -144,8 +148,8 @@ bool AddAccessedResourceIds(
 bool IsResourceMergeable(Attribute& resource_attr, Attribute& device_attr) {
   return resource_attr &&
          ((resource_attr == device_attr) ||
-          (resource_attr.cast<mlir::StringAttr>().getValue().find(
-               "COMPOSITE") != llvm::StringRef::npos));
+          (llvm::cast<StringAttr>(resource_attr).getValue().find("COMPOSITE") !=
+           llvm::StringRef::npos));
 }
 
 // Finds the variable access info for a TPUExecute op.
@@ -193,7 +197,7 @@ VariableAccessesForTPUExecute BuildVariableAccessInfo(
         // Check device matching for the node defining the resource.
         if (!IsResourceMergeable(resource_attr, device_attr)) continue;
       } else {
-        auto resource_arg = resource.dyn_cast<BlockArgument>();
+        auto resource_arg = dyn_cast<BlockArgument>(resource);
         assert(resource_arg);
         if (resource_arg.getOwner() != &func.front()) continue;
         // Check device matching for the argument defining the resource.
@@ -409,8 +413,8 @@ void ReplaceParallelExecute(
       &output_types, parallel_execute, region_index + 1, num_regions);
 
   builder->setInsertionPoint(parallel_execute);
-  auto new_parallel_execute = builder->create<tf_device::ParallelExecuteOp>(
-      parallel_execute.getLoc(), num_regions, output_types);
+  auto new_parallel_execute = tf_device::ParallelExecuteOp::create(
+      *builder, parallel_execute.getLoc(), num_regions, output_types);
 
   // Replace the uses of the original parallel_execute before region containing
   // merged execute.
@@ -445,8 +449,8 @@ void ReplaceParallelExecute(
   // execute results.
   Operation* old_terminator = execute_region->front().getTerminator();
   builder->setInsertionPointToEnd(&execute_region->front());
-  builder->create<tf_device::ReturnOp>(old_terminator->getLoc(),
-                                       merged_execute_launch.getResults());
+  tf_device::ReturnOp::create(*builder, old_terminator->getLoc(),
+                              merged_execute_launch.getResults());
   old_terminator->erase();
 
   // Remove the original TPUExecute op.
@@ -515,8 +519,8 @@ LogicalResult MergeForOneTPUExecute(
   // Check that all resources are either read or written to.
   for (auto it : llvm::enumerate(var_access_info.new_operand_values)) {
     Type type = it.value().getType();
-    if (type.isa<TensorType>() &&
-        type.cast<TensorType>().getElementType().isa<TF::ResourceType>()) {
+    if (isa<TensorType>(type) &&
+        isa<TF::ResourceType>(cast<TensorType>(type).getElementType())) {
       if (!llvm::is_contained(device_var_reads_indices, it.index()) &&
           !llvm::is_contained(device_var_updates_indices, it.index())) {
         return execute_launch.GetBody().front().emitError("operand #")
@@ -528,8 +532,8 @@ LogicalResult MergeForOneTPUExecute(
   }
 
   // Create the merged execute and update variables op.
-  auto merged_execute = builder->create<TF::TPUExecuteAndUpdateVariablesOp>(
-      execute_launch.getLoc(), new_output_types,
+  auto merged_execute = TF::TPUExecuteAndUpdateVariablesOp::create(
+      *builder, execute_launch.getLoc(), new_output_types,
       var_access_info.new_operand_values,
       llvm::ArrayRef<NamedAttribute>{
           builder->getNamedAttr(
@@ -540,14 +544,14 @@ LogicalResult MergeForOneTPUExecute(
               builder->getI64ArrayAttr(device_var_updates_indices))});
 
   // Wrap in launch for device assignment.
-  auto merged_execute_launch = builder->create<tf_device::LaunchOp>(
-      merged_execute.getLoc(), execute_launch.getDeviceAttr(),
+  auto merged_execute_launch = tf_device::LaunchOp::create(
+      *builder, merged_execute.getLoc(), execute_launch.getDeviceAttr(),
       merged_execute.getResultTypes());
   merged_execute_launch.getBody().push_back(new Block);
 
   builder->setInsertionPointToEnd(&merged_execute_launch.GetBody());
-  builder->create<tf_device::ReturnOp>(merged_execute.getLoc(),
-                                       merged_execute.getResults());
+  tf_device::ReturnOp::create(*builder, merged_execute.getLoc(),
+                              merged_execute.getResults());
 
   merged_execute.getOperation()->moveBefore(
       merged_execute_launch.GetBody().getTerminator());

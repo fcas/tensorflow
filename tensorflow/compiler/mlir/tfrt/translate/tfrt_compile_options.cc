@@ -16,8 +16,8 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tfrt/translate/tfrt_compile_options.h"
 
 #include <ostream>
-#include <string>
-#include <vector>
+
+#include "absl/strings/str_join.h"
 
 namespace tensorflow {
 
@@ -56,11 +56,41 @@ std::ostream& operator<<(std::ostream& os, const TfrtCompileOptions& options) {
             << options.enable_while_parallel_iterations
             << ", cost_threshold = " << options.cost_threshold
             << ", min_num_batch_threads = " << options.min_num_batch_threads
+            << ", min_max_enqueued_batches = "
+            << options.min_max_enqueued_batches
+            << ", batch_padding_policy = " << options.batch_padding_policy
+            << ", num_batch_threads = "
+            << options.batch_options.num_batch_threads()
+            << ", max_batch_size = " << options.batch_options.max_batch_size()
+            << ", batch_timeout_micros = "
+            << options.batch_options.batch_timeout_micros()
+            << ", allowed_batch_sizes = "
+            << absl::StrJoin(options.batch_options.allowed_batch_sizes(), ",")
+            << ", max_enqueued_batches = "
+            << options.batch_options.max_enqueued_batches()
+            << ", low_priority_max_batch_size = "
+            << options.batch_options.low_priority_max_batch_size()
+            << ", low_priority_batch_timeout_micros = "
+            << options.batch_options.low_priority_batch_timeout_micros()
+            << ", low_priority_allowed_batch_sizes = "
+            << absl::StrJoin(
+                   options.batch_options.low_priority_allowed_batch_sizes(),
+                   ",")
+            << ", low_priority_max_enqueued_batches = "
+            << options.batch_options.low_priority_max_enqueued_batches()
+            << ", num_warmup_batch_threads = "
+            << options.batch_options.num_warmup_batch_threads()
+            << ", enable_large_batch_splitting = "
+            << options.batch_options.enable_large_batch_splitting()
+            << ", mixed_priority_batching_policy = "
+            << options.batch_options.mixed_priority_batching_policy()
             << ", merge_inter_dependent_streams = "
             << options.merge_inter_dependent_streams
             << ", decompose_resource_ops = " << options.decompose_resource_ops
             << ", compile_to_sync_tfrt_dialect = "
-            << options.compile_to_sync_tfrt_dialect << "}";
+            << options.compile_to_sync_tfrt_dialect
+            << ", batch_queue_global_prioritization_num_threads = "
+            << options.batch_queue_global_prioritization_num_threads << "}";
 }
 
 }  // namespace tensorflow

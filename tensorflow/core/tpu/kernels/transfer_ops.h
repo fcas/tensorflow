@@ -17,19 +17,12 @@ limitations under the License.
 #define TENSORFLOW_CORE_TPU_KERNELS_TRANSFER_OPS_H_
 
 #include <deque>
-#include <memory>
-#include <string>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/literal.h"
-#include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/tpu/noncopyable_buffer.h"
-#include "xla/stream_executor/tpu/tpu_platform_interface.h"
-#include "xla/stream_executor/tpu/tpu_transfer_manager_interface.h"
+#include "xla/tpu/noncopyable_buffer.h"
 #include "tensorflow/core/framework/op_kernel.h"
-#include "tensorflow/core/platform/mutex.h"
-#include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/statusor.h"
-#include "tensorflow/core/platform/threadpool.h"
 
 namespace tensorflow {
 
@@ -39,12 +32,12 @@ class TpuTransferOpInterface {
   virtual void Cancel() = 0;
   virtual absl::StatusOr<int> GetDeviceOrdinal(OpKernelContext* ctx) = 0;
 
-  virtual Status TransferBuffersToInfeed(
+  virtual absl::Status TransferBuffersToInfeed(
       int device_ordinal,
       const std::deque<tensorflow::tpu::NoncopyableBuffer>& buffers) = 0;
-  virtual Status TransferLiteralToInfeed(int device_ordinal,
-                                         const xla::LiteralSlice& literal) = 0;
-  virtual Status TransferLiteralFromOutfeed(
+  virtual absl::Status TransferLiteralToInfeed(
+      int device_ordinal, const xla::LiteralSlice& literal) = 0;
+  virtual absl::Status TransferLiteralFromOutfeed(
       int device_ordinal, xla::MutableBorrowingLiteral literal) = 0;
 };
 
@@ -60,14 +53,14 @@ class TpuTransferAsyncOpKernelBase : public AsyncOpKernel {
   void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override;
 
  protected:
-  virtual Status DoWork(OpKernelContext* context, int device_ordinal) = 0;
+  virtual absl::Status DoWork(OpKernelContext* context, int device_ordinal) = 0;
 
-  Status RunTransferWithOrdinal(OpKernelContext* ctx, int device_ordinal);
+  absl::Status RunTransferWithOrdinal(OpKernelContext* ctx, int device_ordinal);
   std::string transfer_type_;
   std::unique_ptr<TpuTransferOpInterface> transfer_op_;
 
  private:
-  virtual Status RunTransfer(OpKernelContext* ctx) = 0;
+  virtual absl::Status RunTransfer(OpKernelContext* ctx) = 0;
 
   std::unique_ptr<thread::ThreadPool> thread_pool_;
   mutex mu_;
@@ -86,7 +79,7 @@ class TpuTransferAsyncOpKernel : public TpuTransferAsyncOpKernelBase {
       std::unique_ptr<TpuTransferOpInterface> transfer_op);
 
  private:
-  Status RunTransfer(OpKernelContext* ctx) override;
+  absl::Status RunTransfer(OpKernelContext* ctx) override;
   int device_ordinal_;
 
   // TpuTransferAsyncOpKernel is neither copyable nor movable.
@@ -103,36 +96,13 @@ class TpuTransferAsyncDynamicOrdinalOpKernel
       std::unique_ptr<TpuTransferOpInterface> transfer_op);
 
  private:
-  Status RunTransfer(OpKernelContext* ctx) override;
+  absl::Status RunTransfer(OpKernelContext* ctx) override;
 
   // TpuTransferAsyncDynamicOpKernel is neither copyable nor movable.
   TpuTransferAsyncDynamicOrdinalOpKernel(
       const TpuTransferAsyncDynamicOrdinalOpKernel&) = delete;
   TpuTransferAsyncDynamicOrdinalOpKernel& operator=(
       const TpuTransferAsyncDynamicOrdinalOpKernel&) = delete;
-};
-
-class StreamExecutorTransferOpImpl : public TpuTransferOpInterface {
- public:
-  explicit StreamExecutorTransferOpImpl();
-  ~StreamExecutorTransferOpImpl() override = default;
-  void Cancel() override;
-  absl::StatusOr<int> GetDeviceOrdinal(OpKernelContext* ctx) override;
-
-  Status TransferBuffersToInfeed(
-      int device_ordinal,
-      const std::deque<tensorflow::tpu::NoncopyableBuffer>& buffers) override;
-  Status TransferLiteralToInfeed(int device_ordinal,
-                                 const xla::LiteralSlice& literal) override;
-
-  Status TransferLiteralFromOutfeed(
-      int device_ordinal, xla::MutableBorrowingLiteral literal) override;
-
- private:
-  absl::StatusOr<stream_executor::StreamExecutor*> GetStreamExecutor(
-      int device_ordinal);
-  xla::TpuTransferManagerInterface* transfer_manager_;
-  tpu::TpuPlatformInterface* tpu_platform_;
 };
 
 }  // namespace tensorflow

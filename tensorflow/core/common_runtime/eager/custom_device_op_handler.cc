@@ -18,6 +18,8 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/status.h"
 
@@ -25,28 +27,28 @@ namespace tensorflow {
 
 void CustomDeviceOpHandler::Clear() { custom_devices_.clear(); }
 
-Status CustomDeviceOpHandler::RegisterCustomDevice(
-    const string& device_name, std::unique_ptr<CustomDevice> device) {
+absl::Status CustomDeviceOpHandler::RegisterCustomDevice(
+    const std::string& device_name, std::unique_ptr<CustomDevice> device) {
   DeviceNameUtils::ParsedName parsed;
   if (!DeviceNameUtils::ParseFullName(device_name, &parsed) ||
       !parsed.has_job || !parsed.has_replica || !parsed.has_task ||
       !parsed.has_type || !parsed.has_id) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         device_name,
         " could not be parsed as a device name. Use the full "
         "/job:<name>/replica:<replica>/task:<task>/device:<type>:<device_num> "
-        "format.");
+        "format."));
   }
 
   if (!custom_devices_.emplace(device_name, std::move(device)).second) {
-    return errors::AlreadyExists(device_name,
-                                 " already registered as a custom device.");
+    return absl::AlreadyExistsError(
+        absl::StrCat(device_name, " already registered as a custom device."));
   }
   return absl::OkStatus();
 }
 
 bool CustomDeviceOpHandler::FindCustomDeviceFromName(
-    const string& name, CustomDevice** device) const {
+    const std::string& name, CustomDevice** device) const {
   auto dev_it = custom_devices_.find(name);
   if (dev_it == custom_devices_.end()) {
     return false;
@@ -55,9 +57,9 @@ bool CustomDeviceOpHandler::FindCustomDeviceFromName(
   return true;
 }
 
-Status CustomDeviceOpHandler::Execute(ImmediateExecutionOperation* op,
-                                      ImmediateExecutionTensorHandle** retvals,
-                                      int* num_retvals) {
+absl::Status CustomDeviceOpHandler::Execute(
+    ImmediateExecutionOperation* op, ImmediateExecutionTensorHandle** retvals,
+    int* num_retvals) {
   tensorflow::CustomDevice* custom_device = nullptr;
 
   TF_RETURN_IF_ERROR(MaybePinToCustomDevice(&custom_device, *op));
@@ -67,7 +69,7 @@ Status CustomDeviceOpHandler::Execute(ImmediateExecutionOperation* op,
   }
 
   // The op will be placed on physical device. However, it contains custom
-  // device tensor handles. The tensor handles will be copy to physical device
+  // device tensor handles. The tensor handles will be copied to physical device
   // first.
   if (op->HasCustomDeviceInput()) {
     auto inputs = op->GetInputs();
@@ -80,12 +82,11 @@ Status CustomDeviceOpHandler::Execute(ImmediateExecutionOperation* op,
       // here.
       if (tensorflow::CustomDeviceTensorHandle::classof(inputs[i])) {
         tensorflow::CustomDeviceTensorHandle* previous =
-            tensorflow::down_cast<tensorflow::CustomDeviceTensorHandle*>(
-                inputs[i]);
+            absl::down_cast<CustomDeviceTensorHandle*>(inputs[i]);
         tensorflow::ImmediateExecutionTensorHandle* new_tensor;
         TF_RETURN_IF_ERROR(previous->device()->CopyTensorFromDevice(
             previous, target_device, &new_tensor));
-        Status s = op->SetInput(i, new_tensor);
+        absl::Status s = op->SetInput(i, new_tensor);
         new_tensor->Unref();
         TF_RETURN_IF_ERROR(s);
       }
@@ -101,7 +102,7 @@ Status CustomDeviceOpHandler::Execute(ImmediateExecutionOperation* op,
 
 ImmediateExecutionTensorHandle* CustomDeviceOpHandler::CopyTensorHandleToDevice(
     ImmediateExecutionContext* context, ImmediateExecutionTensorHandle* handle,
-    const char* device_name, Status* status) {
+    const char* device_name, absl::Status* status) {
   *status = absl::OkStatus();
   ImmediateExecutionTensorHandle* result = nullptr;
   tensorflow::CustomDevice* dev;
@@ -132,7 +133,7 @@ ImmediateExecutionTensorHandle* CustomDeviceOpHandler::CopyTensorHandleToDevice(
   return context->CopyTensorHandleToDevice(handle, device_name, status);
 }
 
-Status CustomDeviceOpHandler::MaybePinToCustomDevice(
+absl::Status CustomDeviceOpHandler::MaybePinToCustomDevice(
     CustomDevice** device, const ImmediateExecutionOperation& op) const {
   *device = nullptr;
   if (!FindCustomDeviceFromName(op.DeviceName(), device) &&
@@ -154,12 +155,12 @@ Status CustomDeviceOpHandler::MaybePinToCustomDevice(
       // here.
       if (CustomDeviceTensorHandle::classof(generic_input)) {
         const CustomDeviceTensorHandle* input =
-            down_cast<const CustomDeviceTensorHandle*>(generic_input);
+            absl::down_cast<const CustomDeviceTensorHandle*>(generic_input);
         CustomDevice* current = input->device();
         if (first == nullptr) {
           first = current;
         } else if (first != current) {
-          return errors::InvalidArgument(absl::StrCat(
+          return absl::InvalidArgumentError(absl::StrCat(
               "If an operation has one of its inputs in a custom device, then "
               "all inputs should be on that same custom device or another "
               "physical device. Operation ",
@@ -190,7 +191,7 @@ Status CustomDeviceOpHandler::MaybePinToCustomDevice(
       if (generic_input->DataType() == DT_RESOURCE) {
         if (CustomDeviceTensorHandle::classof(generic_input)) {
           const CustomDeviceTensorHandle* input =
-              down_cast<const CustomDeviceTensorHandle*>(generic_input);
+              absl::down_cast<const CustomDeviceTensorHandle*>(generic_input);
           // There's only one custom device input, and it's a resource input, so
           // we'll force-place the op on to that custom device. As with physical
           // devices, this overrides any explicit placement for the op.

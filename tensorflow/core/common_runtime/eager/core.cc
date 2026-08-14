@@ -37,7 +37,7 @@ namespace tensorflow {
 
 // TODO(b/152902651): This should not depend on EagerContext. This can be
 // resolved by storing ctx->HostCPU() in the TensorHandle class.
-AbstractTensorInterface* TensorHandle::Resolve(Status* status) {
+AbstractTensorInterface* TensorHandle::Resolve(absl::Status* status) {
   *status = WaitUnknownDevice();
   if (!status->ok()) {
     return nullptr;
@@ -94,7 +94,7 @@ AbstractTensorInterface* TensorHandle::Resolve(Status* status) {
     AbstractTensorInterface* retval = TensorInterfaceFromTensor(tensor, status);
     return retval;
   } else {
-    *status = errors::InvalidArgument(
+    *status = absl::InvalidArgumentError(
         "Resolve() is not supported on packed TensorHandles.");
     return nullptr;
   }
@@ -102,13 +102,13 @@ AbstractTensorInterface* TensorHandle::Resolve(Status* status) {
 
 ImmediateExecutionTensorHandle* EagerContext::CopyTensorHandleToDevice(
     ImmediateExecutionTensorHandle* handle, const char* device_name,
-    Status* status) {
+    absl::Status* status) {
   ImmediateExecutionTensorHandle* result = nullptr;
   Device* device;
   *status = this->FindDeviceFromName(device_name, &device);
   if (!status->ok()) {
-    *status =
-        tensorflow::errors::InvalidArgument(device_name, " unknown device.");
+    *status = absl::InvalidArgumentError(
+        absl::StrCat(device_name, " unknown device."));
     return nullptr;
   }
 
@@ -155,11 +155,12 @@ ImmediateExecutionOperation* EagerContext::CreateOperation() {
 
 // TODO(b/152902651): Once we move many execute.cc functions into
 // eager_operation.cc we can avoid a circular dependency between them.
-Status EagerOperation::Execute(absl::Span<AbstractTensorHandle*> retvals,
-                               int* num_retvals) {
+absl::Status EagerOperation::Execute(absl::Span<AbstractTensorHandle*> retvals,
+                                     int* num_retvals) {
   for (ImmediateExecutionTensorHandle* handle : inputs_) {
     if (TensorHandle::classof(handle)) {
-      TF_RETURN_IF_ERROR(down_cast<TensorHandle*>(handle)->WaitUnknownDevice());
+      TF_RETURN_IF_ERROR(
+          absl::down_cast<TensorHandle*>(handle)->WaitUnknownDevice());
     }
   }
 

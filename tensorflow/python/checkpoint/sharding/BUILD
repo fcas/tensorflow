@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 #   Utilities for sharding object-based checkpoints.
 
@@ -15,7 +30,6 @@ package(
 pytype_strict_library(
     name = "sharding_policies",
     srcs = ["sharding_policies.py"],
-    srcs_version = "PY3",
     deps = [
         ":sharding_util",
         "//tensorflow/python/eager:context",
@@ -36,7 +50,10 @@ pytype_strict_library(
 tf_py_strict_test(
     name = "sharding_policies_test",
     srcs = ["sharding_policies_test.py"],
-    srcs_version = "PY3",
+    tags = [
+        "notap",
+        "oss_excluded",
+    ],  # See b/455621783.
     deps = [
         ":sharding_policies",
         ":sharding_util",
@@ -64,7 +81,6 @@ tf_py_strict_test(
 pytype_strict_library(
     name = "sharding_util",
     srcs = ["sharding_util.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorflow/python/framework:device",
         "//tensorflow/python/framework:dtypes",
@@ -81,7 +97,6 @@ pytype_strict_library(
 tf_py_strict_test(
     name = "sharding_util_test",
     srcs = ["sharding_util_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":sharding_policies",
         ":sharding_util",

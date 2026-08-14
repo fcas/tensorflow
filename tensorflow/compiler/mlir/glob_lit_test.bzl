@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Test definitions for Lit, the LLVM test runner.
 #
 # This is reusing the LLVM Lit test runner in the interim until the new build
@@ -7,6 +22,7 @@
 """
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
+load("@rules_python//python:py_test.bzl", "py_test")
 
 # Default values used by the test runner.
 _default_test_file_exts = ["mlir", ".pbtxt", ".td"]
@@ -25,6 +41,13 @@ _ALWAYS_EXCLUDE = [
     "**/* *",
     "**/* */**",
 ]
+
+def get_canonical_repo_name(apparent_repo_name):
+    """Returns the canonical repo name for the given apparent repo name seen by the module this bzl file belongs to."""
+    if not apparent_repo_name.startswith("@"):
+        apparent_repo_name = "@" + apparent_repo_name
+
+    return Label(apparent_repo_name).workspace_name
 
 def _run_lit_test(name, data, size, tags, driver, features, exec_properties):
     """Runs lit on all tests it can find in `data` under tensorflow/compiler/mlir.
@@ -45,7 +68,7 @@ def _run_lit_test(name, data, size, tags, driver, features, exec_properties):
     """
 
     # Disable tests on windows for now, to enable testing rest of all xla and mlir.
-    native.py_test(
+    py_test(
         name = name,
         srcs = ["@llvm-project//llvm:lit"],
         tags = tags + ["no_pip", "no_windows"],
@@ -58,9 +81,13 @@ def _run_lit_test(name, data, size, tags, driver, features, exec_properties):
             "@llvm-project//llvm:count",
             "@llvm-project//llvm:not",
         ],
-        deps = ["@pypi_lit//:pkg"],
+        deps = ["@pypi//lit"],
         size = size,
         main = "lit.py",
+        env = {
+            "LLVM_CANONICAL_REPO_NAME": get_canonical_repo_name("@llvm-project"),
+            "XLA_CANONICAL_REPO_NAME": get_canonical_repo_name("@xla"),
+        },
         exec_properties = exec_properties,
     )
 
@@ -76,7 +103,8 @@ def glob_lit_tests(
         tags_override = {},
         driver = _default_driver,
         features = [],
-        exec_properties = {}):
+        exec_properties = {},
+        use_lit_test_suite = None):  # @unused
     """Creates all plausible Lit tests (and their inputs) under this directory.
 
     Args:
@@ -94,6 +122,7 @@ def glob_lit_tests(
               and specifying a default driver will abort the tests.
       features: [str], list of extra features to enable.
       exec_properties: a dictionary of properties to pass on.
+      use_lit_test_suite: unused. For compatibility.
     """
 
     # Ignore some patterns by default for tests and input data.
@@ -113,7 +142,8 @@ def glob_lit_tests(
         # Instantiate this test with updated parameters.
         _run_lit_test(
             name = curr_test + ".test",
-            data = data + [curr_test] + per_test_extra_data.get(curr_test, []),
+            data = data + [curr_test] +
+                   per_test_extra_data.get(curr_test, []),
             size = size_override.get(curr_test, default_size),
             tags = default_tags + tags_override.get(curr_test, []),
             driver = driver,

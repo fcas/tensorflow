@@ -12,10 +12,10 @@ limitations under the License.
 #include "tensorflow/core/kernels/data/parallel_map_dataset_op.h"
 
 #include <gtest/gtest.h>
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tensorflow/core/data/dataset_test_base.h"
 #include "tensorflow/core/data/name_utils.h"
 #include "tensorflow/core/framework/tensor_shape.h"
-#include "tsl/lib/core/status_test_util.h"
 
 namespace tensorflow {
 namespace data {
@@ -34,7 +34,7 @@ class ParallelMapDatasetParams : public DatasetParams {
       const DataTypeVector& output_dtypes,
       const std::vector<PartialTensorShape>& output_shapes,
       bool use_inter_op_parallelism, const std::string& deterministic,
-      bool preserve_cardinality, string node_name)
+      bool preserve_cardinality, std::string node_name)
       : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
                       std::move(node_name)),
         other_arguments_(std::move(other_arguments)),
@@ -61,7 +61,8 @@ class ParallelMapDatasetParams : public DatasetParams {
     return input_tensors;
   }
 
-  Status GetInputNames(std::vector<string>* input_names) const override {
+  absl::Status GetInputNames(
+      std::vector<std::string>* input_names) const override {
     input_names->emplace_back(ParallelMapDatasetOp::kInputDataset);
     for (int i = 0; i < other_arguments_.size(); ++i) {
       input_names->emplace_back(
@@ -71,7 +72,7 @@ class ParallelMapDatasetParams : public DatasetParams {
     return absl::OkStatus();
   }
 
-  Status GetAttributes(AttributeVector* attr_vector) const override {
+  absl::Status GetAttributes(AttributeVector* attr_vector) const override {
     *attr_vector = {{"f", func_},
                     {"Targuments", type_arguments_},
                     {"output_shapes", output_shapes_},
@@ -83,7 +84,7 @@ class ParallelMapDatasetParams : public DatasetParams {
     return absl::OkStatus();
   }
 
-  string dataset_type() const override {
+  std::string dataset_type() const override {
     return ParallelMapDatasetOp::kDatasetType;
   }
 
@@ -102,7 +103,7 @@ class ParallelMapDatasetParams : public DatasetParams {
 
 class ParallelMapDatasetOpTest : public DatasetOpsTestBase {};
 
-FunctionDefHelper::AttrValueWrapper MapFunc(const string& func_name,
+FunctionDefHelper::AttrValueWrapper MapFunc(const std::string& func_name,
                                             const DataType& dtype) {
   return FunctionDefHelper::FunctionRef(func_name, {{"T", dtype}});
 }

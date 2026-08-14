@@ -1,25 +1,43 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library", "py_strict_test")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "slices",
     srcs = ["slices.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/lang:directives",
         "//tensorflow/python/autograph/pyct:templates",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "continue_statements",
     srcs = ["continue_statements.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -31,21 +49,23 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "logical_expressions",
     srcs = ["logical_expressions.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/pyct:parser",
         "//tensorflow/python/autograph/pyct:templates",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "break_statements",
     srcs = ["break_statements.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -57,21 +77,23 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "conditional_expressions",
     srcs = ["conditional_expressions.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/pyct:parser",
         "//tensorflow/python/autograph/pyct:templates",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "call_trees",
     srcs = ["call_trees.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -80,38 +102,41 @@ py_strict_library(
         "//tensorflow/python/autograph/pyct:qual_names",
         "//tensorflow/python/autograph/pyct:templates",
         "//tensorflow/python/autograph/utils:ag_logging",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "directives",
     srcs = ["directives.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/lang:directives",
         "//tensorflow/python/autograph/pyct:anno",
         "//tensorflow/python/util:tf_inspect",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "variables",
     srcs = ["variables.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/pyct:anno",
         "//tensorflow/python/autograph/pyct:templates",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "control_flow",
     srcs = ["control_flow.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -127,13 +152,14 @@ py_strict_library(
         "//tensorflow/python/autograph/pyct/static_analysis:liveness",
         "//tensorflow/python/autograph/pyct/static_analysis:reaching_definitions",
         "//tensorflow/python/autograph/pyct/static_analysis:reaching_fndefs",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "functions",
     srcs = ["functions.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -143,13 +169,14 @@ py_strict_library(
         "//tensorflow/python/autograph/pyct:templates",
         "//tensorflow/python/autograph/pyct/static_analysis:activity",
         "//tensorflow/python/autograph/pyct/static_analysis:annos",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "lists",
     srcs = ["lists.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -160,13 +187,14 @@ py_strict_library(
         "//tensorflow/python/autograph/pyct:templates",
         "//tensorflow/python/autograph/pyct/static_analysis:activity",
         "//tensorflow/python/autograph/pyct/static_analysis:annos",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "return_statements",
     srcs = ["return_statements.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
@@ -176,26 +204,26 @@ py_strict_library(
         "//tensorflow/python/autograph/pyct:templates",
         "//tensorflow/python/autograph/pyct/static_analysis:activity",
         "//tensorflow/python/autograph/pyct/static_analysis:annos",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "asserts",
     srcs = ["asserts.py"],
+    strict_deps = True,
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/core:converter",
         "//tensorflow/python/autograph/pyct:templates",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "asserts_test",
     srcs = ["asserts_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":asserts",
         ":functions",
@@ -208,11 +236,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "break_statements_test",
     srcs = ["break_statements_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":break_statements",
         #internal proto upb dep
@@ -222,11 +249,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "call_trees_test",
     srcs = ["call_trees_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":call_trees",
         ":functions",
@@ -236,11 +262,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "conditional_expressions_test",
     srcs = ["conditional_expressions_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":conditional_expressions",
         #internal proto upb dep
@@ -249,11 +274,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "continue_statements_test",
     srcs = ["continue_statements_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":continue_statements",
         #internal proto upb dep
@@ -263,11 +287,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "control_flow_test",
     srcs = ["control_flow_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":break_statements",
         ":continue_statements",
@@ -286,11 +309,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "directives_test",
     srcs = ["directives_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":directives",
         #internal proto upb dep
@@ -301,10 +323,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "functions_test",
     srcs = ["functions_test.py"],
-    python_version = "PY3",
+    strict_deps = True,
     deps = [
         ":functions",
         ":return_statements",
@@ -318,11 +340,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "lists_test",
     srcs = ["lists_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":directives",
         ":lists",
@@ -338,11 +359,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "logical_expressions_test",
     srcs = ["logical_expressions_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":logical_expressions",
         #internal proto upb dep
@@ -353,11 +373,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "return_statements_test",
     srcs = ["return_statements_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":functions",
         ":return_statements",
@@ -368,11 +387,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "slices_test",
     srcs = ["slices_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":directives",
         ":slices",
@@ -386,11 +404,10 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "variables_test",
     srcs = ["variables_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":variables",
         #internal proto upb dep

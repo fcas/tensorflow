@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # tf.data service client library.
 
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
@@ -45,21 +60,25 @@ cc_library(
         "//tensorflow/core/data/service:grpc_util",
         "//tensorflow/core/data/service:worker_client",
         "//tensorflow/core/data/service:worker_impl",
+        "//tensorflow/core/data/service:worker_proto_cc",
         "//tensorflow/core/platform:errors",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:statusor",
-        "//tensorflow/core/platform:thread_annotations",
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/core/profiler/lib:traceme_encode",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
-        "@local_tsl//tsl/platform:platform_port",
-        "@local_tsl//tsl/platform:retrying_utils",
-        "@local_tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl//tsl/platform:random",
+        "@tsl//tsl/platform:retrying_utils",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -76,12 +95,16 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core/data/service:common",
+        "//tensorflow/core/data/service:common_proto_cc",
         "//tensorflow/core/data/service:test_cluster",
         "//tensorflow/core/data/service:test_util",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:status_matchers",
         "//tensorflow/core/platform:statusor",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ] + tf_grpc_cc_dependencies() + tf_protos_profiler_service(),
 )
 
@@ -100,10 +123,11 @@ cc_library(
         "//tensorflow/core/platform:env_time",
         "//tensorflow/core/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/protobuf:protos_all_cc",
+        "@tsl//tsl/platform:errors",
+        "@xla//xla/tsl/protobuf:protos_all_cc",
     ],
 )
 
@@ -120,10 +144,11 @@ tf_cc_test(
         "//tensorflow/core/data/service:dispatcher_client",
         "//tensorflow/core/data/service:test_cluster",
         "//tensorflow/core/data/service:test_util",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/protobuf:protos_all_cc",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+        "@xla//xla/tsl/lib/core:status_test_util",
+        "@xla//xla/tsl/protobuf:protos_all_cc",
     ] + tf_grpc_cc_dependencies() + tf_protos_profiler_service(),
 )
 
@@ -141,6 +166,8 @@ cc_library(
         "//tensorflow/core/data/service:worker_impl",
         "//tensorflow/core/platform:errors",
         "//tensorflow/core/platform:status",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -159,5 +186,7 @@ tf_cc_test(
         "//tensorflow/core/data/service:worker_impl",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )

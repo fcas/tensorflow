@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Tests of TensorFlow linalg kernels written using the Python API.
 
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
@@ -213,7 +228,10 @@ cuda_py_strict_test(
     size = "medium",
     srcs = ["linear_operator_block_lower_triangular_test.py"],
     shard_count = 8,
-    tags = ["optonly"],
+    tags = [
+        "no_gpu",  # Seg fault. http://b/365525243
+        "optonly",
+    ],
     deps = [
         "//tensorflow/python/eager:backprop",
         "//tensorflow/python/eager:context",
@@ -442,6 +460,7 @@ cuda_py_strict_test(
         "//tensorflow/python/ops/linalg",
         "//tensorflow/python/ops/linalg:linear_operator_test_util",
         "//tensorflow/python/platform:client_testlib",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 
@@ -747,7 +766,6 @@ cuda_py_strict_test(
     size = "medium",
     srcs = ["normalize_op_test.py"],
     shard_count = 20,
-    # TODO(b/117236102): Re-enable in msan build.
     tags = ["no_windows_gpu"],
     # TODO(b/208263392): Re-enable. tf.Squeeze op after tf.Where op doesn't reshape.
     xla_enable_strict_auto_jit = False,
@@ -764,7 +782,6 @@ cuda_py_strict_test(
     size = "medium",
     srcs = ["norm_op_test.py"],
     shard_count = 20,
-    # TODO(b/117236102): Re-enable in msan build.
     tags = ["no_windows_gpu"],
     # TODO(b/208263392): Re-enable. tf.Squeeze op after tf.Where op doesn't reshape.
     xla_enable_strict_auto_jit = False,

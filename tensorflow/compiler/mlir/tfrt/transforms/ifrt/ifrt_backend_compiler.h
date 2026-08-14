@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_TFRT_TRANSFORMS_IFRT_IFRT_BACKEND_COMPILER_H_
 #define TENSORFLOW_COMPILER_MLIR_TFRT_TRANSFORMS_IFRT_IFRT_BACKEND_COMPILER_H_
 
+#include <memory>
+#include <utility>
+
 #include "absl/status/status.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tfrt/backend_compiler.h"
@@ -28,8 +31,23 @@ namespace ifrt_serving {
 // Implements the custom backend compiler for IFRT based serving in TFRT.
 class IfrtBackendCompiler : public tensorflow::BackendCompiler {
  public:
-  explicit IfrtBackendCompiler(TpuCompiler* tpu_compiler = nullptr)
-      : tpu_compiler_(tpu_compiler) {}
+  struct Options {
+    // If true, disable running TFRTSetTPUDeviceAttrPass which set the default
+    // `tf.device` and `device_assignment` attributes.
+    // This is a server-level option for now. We can consider to make it a
+    // per-model option in the future.
+    bool disable_set_default_tpu_device_and_device_assignment_attributes = true;
+  };
+
+  explicit IfrtBackendCompiler(
+      std::unique_ptr<TpuCompiler> tpu_compiler = nullptr)
+      : tpu_compiler_(std::move(tpu_compiler)) {}
+
+  explicit IfrtBackendCompiler(
+      const Options& ifrt_backend_compile_options,
+      std::unique_ptr<TpuCompiler> tpu_compiler = nullptr)
+      : tpu_compiler_(std::move(tpu_compiler)),
+        compile_options_(ifrt_backend_compile_options) {}
 
   void GetDependentDialects(mlir::DialectRegistry& registry) const override {
     if (tpu_compiler_) {
@@ -44,7 +62,8 @@ class IfrtBackendCompiler : public tensorflow::BackendCompiler {
       mlir::ModuleOp module) const override;
 
  private:
-  TpuCompiler* tpu_compiler_;  // Not owned.
+  std::unique_ptr<TpuCompiler> tpu_compiler_;
+  Options compile_options_;
 };
 
 }  // namespace ifrt_serving

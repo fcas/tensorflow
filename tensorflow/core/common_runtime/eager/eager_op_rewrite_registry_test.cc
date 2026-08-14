@@ -23,13 +23,14 @@ namespace tensorflow {
 
 class TestEagerOpRewrite : public EagerOpRewrite {
  public:
-  TestEagerOpRewrite(string name, string file, string line)
+  TestEagerOpRewrite(std::string name, std::string file, std::string line)
       : EagerOpRewrite(name, file, line),
         executor_(/*async=*/false, /*enable_streaming_enqueue=*/true) {}
   static int count_;
   EagerExecutor executor_;
-  Status Run(EagerOperation* orig_op,
-             std::unique_ptr<tensorflow::EagerOperation>* out_op) override {
+  absl::Status Run(
+      EagerOperation* orig_op,
+      std::unique_ptr<tensorflow::EagerOperation>* out_op) override {
     ++count_;
     // Create a new NoOp Eager operation.
     tensorflow::EagerOperation* op =

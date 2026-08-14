@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:tensorflow.bzl", "if_google", "if_oss", "tf_cc_binary", "tf_cc_test")
 load("//tensorflow/compiler/aot:tfcompile.bzl", "tf_library")
 load(
@@ -37,6 +52,30 @@ filegroup(
 )
 
 cc_library(
+    name = "thunk_proto_execution_deserializer",
+    srcs = ["thunk_proto_execution_deserializer.cc"],
+    hdrs = ["thunk_proto_execution_deserializer.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@xla//xla:debug_options_flags",
+        "@xla//xla:shape_util",
+        "@xla//xla:status_macros",
+        "@xla//xla:util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/backends/cpu/runtime:convolution_dims",
+        "@xla//xla/backends/cpu/runtime:dot_dims",
+        "@xla//xla/backends/cpu/runtime:kernel_thunk",
+        "@xla//xla/backends/cpu/runtime:thunk_proto_cc",
+        "@xla//xla/service/cpu:executable_proto_cc",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "tfcompile_lib",
     srcs = [
         "codegen.cc",
@@ -69,8 +108,11 @@ cc_library(
         ":aot_only_var_handle_op",
         ":embedded_protocol_buffers",
         ":llvm_targets",  # fixdeps: keep
+        ":thunk_proto_execution_deserializer",
         "//tensorflow/compiler/tf2xla",
-        "//tensorflow/compiler/tf2xla:mlir_tf2xla",
+        "//tensorflow/compiler/tf2xla:allocator",
+        "//tensorflow/compiler/tf2xla:encoded_buffer_allocation_info",
+        "//tensorflow/compiler/tf2xla:mlir_tf2xla",  # fixdeps: keep
         "//tensorflow/compiler/tf2xla:tf2xla_proto_cc",
         "//tensorflow/compiler/tf2xla:tf2xla_util",
         "//tensorflow/compiler/tf2xla:xla_compiler",
@@ -83,34 +125,42 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/platform:regexp",
         "//tensorflow/core/platform:status",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
-        "@local_xla//xla:cpu_function_runtime",
-        "@local_xla//xla:shape_util",
-        "@local_xla//xla:statusor",
-        "@local_xla//xla:util",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla/client:client_library",
-        "@local_xla//xla/client:compile_only_client",
-        "@local_xla//xla/client:xla_computation",
-        "@local_xla//xla/service:compiler",
-        "@local_xla//xla/service/cpu:buffer_info_util",
-        "@local_xla//xla/service/cpu:cpu_compiler",
-        "@local_xla//xla/stream_executor:platform_manager",
+        "@xla//xla:debug_options_flags",
+        "@xla//xla:shape_util",
+        "@xla//xla:status_macros",
+        "@xla//xla:util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/backends/cpu:buffer_allocation_info",
+        "@xla//xla/backends/cpu:buffer_allocation_info_util",
+        "@xla//xla/backends/cpu/codegen:symbol_name_util",
+        "@xla//xla/backends/cpu/runtime:thunk_proto_cc",
+        "@xla//xla/backends/cpu/runtime:thunk_proto_serdes",
+        "@xla//xla/client:client_library",
+        "@xla//xla/client:compile_only_client",
+        "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/service:compiler",
+        "@xla//xla/service/cpu:cpu_aot_compilation_result",
+        "@xla//xla/service/cpu:cpu_compiler",
+        "@xla//xla/service/cpu:cpu_executable",
+        "@xla//xla/stream_executor:platform",
+        "@xla//xla/stream_executor:platform_manager",
+        "@xla//xla/util:embedded_constant_buffers",
     ],
 )
 
 tf_cc_test(
     name = "codegen_test",
     srcs = ["codegen_test.cc"],
-    data = [
-        "codegen_test_h.golden",
-        "codegen_test_o.golden",
-    ],
     defines = if_llvm_x86_available(["TF_LLVM_X86_AVAILABLE=1"]),
     deps = [
         ":tfcompile_lib",
@@ -119,10 +169,11 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core/platform:resource_loader",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",  # fixdeps: keep
-        "@local_xla//xla:cpu_function_runtime",
-        "@local_xla//xla:shape_util",
+        "@xla//xla:shape_util",
+        "@xla//xla/service/cpu:cpu_aot_compilation_result",
     ] + if_llvm_x86_available([
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
     ]),
@@ -167,17 +218,15 @@ cc_library(
     deps = [
         ":tfcompile_lib",
         "//tensorflow/compiler/tf2xla:tf2xla_proto_cc",
-        "//tensorflow/compiler/tf2xla:tf2xla_util",
-        "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_internal",
-        "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
-        "//tensorflow/core:graph",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@local_xla//xla:debug_options_flags",
-        "@local_xla//xla/service:compiler",
+        "@xla//xla:debug_options_flags",
+        "@xla//xla/tsl/platform:status",
     ],
 )
 
@@ -320,18 +369,20 @@ cc_library(
     name = "embedded_protocol_buffers",
     srcs = ["embedded_protocol_buffers.cc"],
     hdrs = ["embedded_protocol_buffers.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tensorflow/core:lib",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
-        "@local_xla//xla:statusor",
-        "@local_xla//xla:util",
-        "@local_xla//xla/service/llvm_ir:llvm_type_conversion_util",
+        "@xla//xla:util",
+        "@xla//xla/service/llvm_ir:llvm_type_conversion_util",
     ],
 )
 

@@ -53,11 +53,10 @@ limitations under the License.
 #include "tensorflow/core/util/tensor_format.h"
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
-#include "tsl/framework/contraction/eigen_contraction_kernel.h"
+#include "xla/tsl/framework/contraction/eigen_contraction_kernel.h"
 #endif
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "tensorflow/core/kernels/conv_ops_gpu.h"
@@ -161,11 +160,12 @@ struct LaunchFusedMatMulOp<CPUDevice, T> {
         executeWithOutputKernel(WithBiasAddAndLeakyRelu<T>(bias_add_args));
         break;
       case FusedComputationType::kUndefined:
-        OP_REQUIRES_OK(context, errors::Internal("Fusion type is undefined"));
+        OP_REQUIRES_OK(context,
+                       absl::InternalError("Fusion type is undefined"));
         break;
       default:
         OP_REQUIRES_OK(context,
-                       errors::Internal("Fusion type is not supported"));
+                       absl::InternalError("Fusion type is not supported"));
     }
   }
 
@@ -199,8 +199,7 @@ struct LaunchFusedMatMulOp<CPUDevice, T> {
 
 namespace {
 
-#if GOOGLE_CUDA || TF_HIPBLASLT
-StatusOr<se::gpu::BlasLt::Epilogue> GetBlasLtEpilogOp(
+absl::StatusOr<stream_executor::gpu::BlasLt::Epilogue> GetBlasLtEpilogOp(
     FusedComputationType fusion) {
   if (fusion == FusedComputationType::kBiasAdd) {
     return se::gpu::BlasLt::Epilogue::kBias;
@@ -209,7 +208,7 @@ StatusOr<se::gpu::BlasLt::Epilogue> GetBlasLtEpilogOp(
   } else if (fusion == FusedComputationType::kBiasAddWithGeluApproximate) {
     return se::gpu::BlasLt::Epilogue::kBiasThenGELU;
   } else {
-    return errors::Internal("Unsupported fusion for BlasLt Matmul");
+    return absl::InternalError("Unsupported fusion for BlasLt Matmul");
   }
 }
 
@@ -236,7 +235,7 @@ se::blas::AlgorithmConfig AutotuneMatmul(
       // scratch space is deallocated between runs.
       BlasScratchAllocator scratch_allocator(context);
 
-      Status cublaslt_launch =
+      absl::Status cublaslt_launch =
           launch_func(scratch_allocator, i, &profile_result);
 
       VLOG(4) << "  Autotune algorithm " << i
@@ -263,10 +262,9 @@ se::blas::AlgorithmConfig AutotuneMatmul(
   }
   return algorithm_config;
 }
-#endif
 
 template <typename LaunchFunc, typename Sig>
-StatusOr<std::vector<xla::AutotuneResult>> AutotuneMatMulImpl(
+absl::StatusOr<std::vector<xla::AutotuneResult>> AutotuneMatMulImpl(
     OpKernelContext* ctx,
     std::vector<std::unique_ptr<const se::dnn::OpRunner<Sig>>>& runners,
     bool actually_do_autotune, const LaunchFunc& launch_func,
@@ -283,7 +281,7 @@ StatusOr<std::vector<xla::AutotuneResult>> AutotuneMatMulImpl(
     // TODO(zhengxq): profile each algorithm multiple times to better
     // accuracy.
     se::RedzoneAllocator rz_scratch_allocator(
-        stream, &tf_allocator_adapter, se::GpuAsmOpts(),
+        stream, &tf_allocator_adapter,
         /*memory_limit=*/scratch_size_limit);
     BlasScratchAllocator scratch_allocator(ctx, scratch_size_limit);
     se::ScratchAllocator* allocator_used =
@@ -293,10 +291,10 @@ StatusOr<std::vector<xla::AutotuneResult>> AutotuneMatMulImpl(
 
     TF_ASSIGN_OR_RETURN(auto desc, runner->ToAlgorithmDesc());
     se::dnn::ProfileResult profile_result;
-    Status cudnn_launch_status =
+    absl::Status cudnn_launch_status =
         actually_do_autotune
             ? launch_func(allocator_used, runner, &profile_result)
-            : OkStatus();
+            : absl::OkStatus();
     if (!actually_do_autotune) {
       // Make the result valid according to `is_valid`.
       profile_result.set_algorithm(desc);
@@ -330,7 +328,7 @@ StatusOr<std::vector<xla::AutotuneResult>> AutotuneMatMulImpl(
 }
 
 struct FusedMatmulAutotuneGroup {
-  static string name() { return "FusedMatmul"; }
+  static std::string name() { return "FusedMatmul"; }
 };
 
 typedef AutotuneSingleton<FusedMatmulAutotuneGroup, MatmulParameters,
@@ -338,7 +336,8 @@ typedef AutotuneSingleton<FusedMatmulAutotuneGroup, MatmulParameters,
     FusedMatmulAutotuneMap;
 
 template <typename T>
-StatusOr<AutotuneEntry<se::dnn::FusedMatmulOp>> AutotuneFusedMatmul(
+absl::StatusOr<AutotuneEntry<stream_executor::dnn::FusedMatmulOp>>
+AutotuneFusedMatmul(
     bool cudnn_use_autotune,
     AutotuneMap<MatmulParameters, AutotuneEntry<se::dnn::FusedMatmulOp>>*
         autotune_map,
@@ -351,29 +350,28 @@ StatusOr<AutotuneEntry<se::dnn::FusedMatmulOp>> AutotuneFusedMatmul(
   AutotuneEntry<se::dnn::FusedMatmulOp> autotune_entry;
   auto* stream = ctx->op_device_context()->stream();
   if (!autotune_map->Find(params, &autotune_entry)) {
-    profiler::ScopedAnnotation trace("cudnn_autotuning");
+    tsl::profiler::ScopedAnnotation trace("cudnn_autotuning");
 
     se::TfAllocatorAdapter tf_allocator_adapter(ctx->device()->GetAllocator({}),
                                                 stream);
-    se::RedzoneAllocator rz_allocator(stream, &tf_allocator_adapter,
-                                      se::GpuAsmOpts());
+    se::RedzoneAllocator rz_allocator(stream, &tf_allocator_adapter);
     se::DeviceMemory<T> c_ptr_rz(WrapRedzoneBestEffort(&rz_allocator, c_ptr));
 
     std::vector<std::unique_ptr<const se::dnn::FusedMatmulRunner>> runners;
     auto element_type = se::dnn::ToDataType<T>::value;
     auto dnn = stream->parent()->AsDnn();
     if (dnn == nullptr) {
-      return errors::Internal("No DNN in stream executor.");
+      return absl::InternalError("No DNN in stream executor.");
     }
     TF_RETURN_IF_ERROR(dnn->GetFusedMatmulRunners(
-        CudnnUseFrontend(), element_type, element_type, element_type, stream,
-        trans_a, trans_b, m, n, k, lda, ldb, ldc, activation_mode,
-        /*use_fallback=*/false, GetNumericOptions(), &runners));
+        element_type, element_type, element_type, stream, trans_a, trans_b, m,
+        n, k, lda, ldb, ldc, activation_mode,
+        /*use_fallback=*/false, GetNumericOptionsForCuDnn(), &runners));
 
     auto launch_func =
         [&](se::ScratchAllocator* allocator_used,
             const std::unique_ptr<const se::dnn::FusedMatmulRunner>& runner,
-            se::dnn::ProfileResult* profile_result) -> Status {
+            se::dnn::ProfileResult* profile_result) -> absl::Status {
       TF_ASSIGN_OR_RETURN(auto scratch, allocator_used->AllocateBytes(
                                             runner->GetWorkspaceSize()));
       return (*runner)(stream, profile_result, scratch, a_ptr, b_ptr, bias_ptr,
@@ -410,9 +408,10 @@ StatusOr<AutotuneEntry<se::dnn::FusedMatmulOp>> AutotuneFusedMatmul(
       std::vector<std::unique_ptr<const se::dnn::FusedMatmulRunner>>
           fallback_runners;
       TF_RETURN_IF_ERROR(dnn->GetFusedMatmulRunners(
-          CudnnUseFrontend(), element_type, element_type, element_type, stream,
-          trans_a, trans_b, m, n, k, lda, ldb, ldc, activation_mode,
-          /*use_fallback=*/true, GetNumericOptions(), &fallback_runners));
+          element_type, element_type, element_type, stream, trans_a, trans_b, m,
+          n, k, lda, ldb, ldc, activation_mode,
+          /*use_fallback=*/true, GetNumericOptionsForCuDnn(),
+          &fallback_runners));
 
       TF_ASSIGN_OR_RETURN(
           auto fallback_results,
@@ -444,19 +443,20 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
       Tensor* output, bool use_autotune) {
     OP_REQUIRES(
         context, DataTypeToEnum<T>::value != DT_BFLOAT16,
-        errors::InvalidArgument("_FusedMatMul doesn't support "
-                                "DT_BFLOAT16 data type on CPU devices."));
+        absl::InvalidArgumentError("_FusedMatMul doesn't support "
+                                   "DT_BFLOAT16 data type on CPU devices."));
     auto* stream = context->op_device_context()->stream();
-    OP_REQUIRES(context, stream, errors::Internal("No GPU stream available."));
+    OP_REQUIRES(context, stream,
+                absl::InternalError("No GPU stream available."));
 
     // All fusion patterns supported by GPU are in the form of MatMul + BiasAdd
     // + <other pointwise operations>. Therefore, the bias tensor is required.
     const Tensor& bias = context->input(2);
 
     if (bias.dims() != 1) {
-      OP_REQUIRES_OK(context,
-                     errors::InvalidArgument("bias must be 1-dimensional",
-                                             bias.shape().DebugString()));
+      OP_REQUIRES_OK(context, absl::InvalidArgumentError(
+                                  absl::StrCat("bias must be 1-dimensional",
+                                               bias.shape().DebugString())));
     }
 
     auto a_ptr = AsDeviceMemory(a.template flat<T>().data(),
@@ -511,16 +511,12 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
       default:
         use_cudnn = false;
     }
-#if !(GOOGLE_CUDA || TF_HIPBLASLT)
-    use_cudnn = true;
-#endif
 
-#if TF_HIPBLASLT
-    auto cap = stream->GetRocmComputeCapability();
-    // as of ROCm 5.5, hipblaslt only supports MI200.
-    if (cap.gcn_arch_name().substr(0, 6) != "gfx90a") use_cudnn = true;
-#endif
-
+    const auto& cc =
+        stream->parent()->GetDeviceDescription().gpu_compute_capability();
+    if (auto* procm = cc.rocm_compute_capability()) {
+      use_cudnn = !procm->gfx9_mi200_or_later();
+    }
     BlasScratchAllocator scratch_allocator(context);
 
     // The Gelu exact fusion is supported by the cuDNN.
@@ -528,8 +524,8 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
       // printf("trans_a %d trans_b %d\n", (int)trans_a, (int)trans_b);
       MatmulParameters cudnn_matmul_params(
           stream->parent(),
-          /*ab_type=*/a.dtype(),
-          /*c_type=*/output->dtype(), trans_a, trans_b,
+          /*ab_dtype=*/a.dtype(),
+          /*c_dtype=*/output->dtype(), trans_a, trans_b,
           static_cast<uint64_t>(m), static_cast<uint64_t>(n),
           static_cast<uint64_t>(k), a.dim_size(1), b.dim_size(1),
           output->dim_size(1), matmul_activation_mode);
@@ -564,13 +560,13 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
       auto runner_and_scratch = std::move(runner_and_scratch_or).value();
       auto& runner =
           *std::get<const se::dnn::FusedMatmulRunner*>(runner_and_scratch);
-      Status cudnn_launch_status = runner(
-          stream, nullptr, std::get<se::DeviceMemoryBase>(runner_and_scratch),
+      absl::Status cudnn_launch_status = runner(
+          stream, nullptr,
+          std::get<stream_executor::DeviceAddressBase>(runner_and_scratch),
           a_ptr, b_ptr, bias_ptr, c_ptr);
       OP_REQUIRES_OK(context, cudnn_launch_status);
       return;
     }
-#if GOOGLE_CUDA || TF_HIPBLASLT
     auto epilog_op_or = GetBlasLtEpilogOp(fusion);
     OP_REQUIRES_OK(context, epilog_op_or.status());
     se::gpu::BlasLt::Epilogue epilog_op = epilog_op_or.value();
@@ -590,20 +586,20 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
                                          epilog_op};
     absl::Mutex* pmu;
     auto plan_and_algorithms_or =
-        GetPlanAndAlgorithms(stream, matmul_params, &pmu);
+        PlanAndAlgorithms::GetOrCreate(stream, matmul_params, &pmu);
     OP_REQUIRES_OK(context, plan_and_algorithms_or.status());
-    absl::MutexLock lock(pmu);
+    absl::MutexLock lock(*pmu);
     const auto* plan_and_algorithms = std::move(plan_and_algorithms_or).value();
     const auto& algorithms = plan_and_algorithms->algorithms;
     OP_REQUIRES(context, algorithms.size() > 0,
-                errors::InvalidArgument("No matmul algorithm returned!"));
+                absl::InvalidArgumentError("No matmul algorithm returned!"));
 
     auto launch_func = [&](BlasScratchAllocator& scratch_allocator,
                            size_t alg_idx,
                            se::blas::ProfileResult* profile_result) {
-      return DoBlasLtMatmul(stream, *plan_and_algorithms, a_ptr, b_ptr, c_ptr,
-                            alg_idx, scratch_allocator, bias_ptr,
-                            profile_result);
+      return plan_and_algorithms->ExecuteOnStream(stream, a_ptr, b_ptr, c_ptr,
+                                                  alg_idx, scratch_allocator,
+                                                  bias_ptr, profile_result);
     };
 
     size_t alg_idx = 0;
@@ -615,7 +611,6 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
     }
 
     OP_REQUIRES_OK(context, launch_func(scratch_allocator, alg_idx, nullptr));
-#endif
   }
 };
 
@@ -659,7 +654,7 @@ class FusedMatMulOp : public OpKernel {
          fused_computation_ == FCT::kBiasAddWithTanh ||
          fused_computation_ == FCT::kBiasAddWithSigmoid)) {
       OP_REQUIRES(context, DataTypeToEnum<T>::value == DT_HALF,
-                  errors::InvalidArgument(
+                  absl::InvalidArgumentError(
                       "Matmul with BiasAdd+GeluExact|Tanh|Sigmoid supports "
                       "only DT_HALF data type."));
     }
@@ -671,27 +666,28 @@ class FusedMatMulOp : public OpKernel {
     const Tensor& b = ctx->input(1);
 
     // Check that the dimensions of the two matrices are valid.
-    OP_REQUIRES(ctx, a.dims() == b.dims(),
-                errors::InvalidArgument("In[0] and In[1] has different ndims: ",
-                                        a.shape().DebugString(), " vs. ",
-                                        b.shape().DebugString()));
     OP_REQUIRES(
-        ctx, TensorShapeUtils::IsMatrix(a.shape()),
-        errors::InvalidArgument("In[0] is not a matrix. Instead it has shape ",
-                                a.shape().DebugString()));
-    OP_REQUIRES(
-        ctx, TensorShapeUtils::IsMatrix(b.shape()),
-        errors::InvalidArgument("In[1] is not a matrix. Instead it has shape ",
-                                b.shape().DebugString()));
+        ctx, a.dims() == b.dims(),
+        absl::InvalidArgumentError(absl::StrCat(
+            "In[0] and In[1] has different ndims: ", a.shape().DebugString(),
+            " vs. ", b.shape().DebugString())));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(a.shape()),
+                absl::InvalidArgumentError(
+                    absl::StrCat("In[0] is not a matrix. Instead it has shape ",
+                                 a.shape().DebugString())));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(b.shape()),
+                absl::InvalidArgumentError(
+                    absl::StrCat("In[1] is not a matrix. Instead it has shape ",
+                                 b.shape().DebugString())));
     Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> dim_pair;
     dim_pair[0].first = transpose_a_ ? 0 : 1;
     dim_pair[0].second = transpose_b_ ? 1 : 0;
 
     OP_REQUIRES(
         ctx, a.dim_size(dim_pair[0].first) == b.dim_size(dim_pair[0].second),
-        errors::InvalidArgument(
+        absl::InvalidArgumentError(absl::StrCat(
             "Matrix size-incompatible: In[0]: ", a.shape().DebugString(),
-            ", In[1]: ", b.shape().DebugString()));
+            ", In[1]: ", b.shape().DebugString())));
     int a_dim_remaining = 1 - dim_pair[0].first;
     int b_dim_remaining = 1 - dim_pair[0].second;
     TensorShape out_shape(
@@ -739,6 +735,7 @@ class FusedMatMulOp : public OpKernel {
 
 TF_CALL_float(REGISTER_FUSED_CPU_MATMUL);
 TF_CALL_half(REGISTER_FUSED_CPU_MATMUL);
+TF_CALL_bfloat16(REGISTER_FUSED_CPU_MATMUL);
 
 #undef REGISTER_FUSED_CPU_MATMUL
 
@@ -752,6 +749,7 @@ TF_CALL_half(REGISTER_FUSED_CPU_MATMUL);
 
 TF_CALL_float(REGISTER_FUSED_GPU_MATMUL);
 TF_CALL_half(REGISTER_FUSED_GPU_MATMUL);
+TF_CALL_bfloat16(REGISTER_FUSED_GPU_MATMUL);
 
 #undef REGISTER_FUSED_GPU_MATMUL
 

@@ -1,4 +1,20 @@
-# Placeholder: load py_proto_library
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:proto.bzl", "py_proto_library")
 load("//tensorflow:tensorflow.bzl", "if_google", "tf_cc_shared_object", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load("//tensorflow/core/platform:build_config.bzl", "tf_proto_library")
@@ -11,16 +27,10 @@ package(
 
 package_group(
     name = "friends",
+    # TODO(b/476497239): Remove the old JSV codebase once the migration is done.
     packages = [
-        # copybara:uncomment "//learning/brain/experimental/tfrt/native_lowering/...",
-        # copybara:uncomment "//learning/brain/tfrt/...",
-        # copybara:uncomment "//learning/serving/servables/tfrt/...",
-        # copybara:uncomment "//smartass/brain/inference/...",
-        # copybara:uncomment "//tensorflow/compiler/mlir/tfrt/...",
         "//tensorflow/core/tfrt/...",
         "//tensorflow/core/tfrt/graph_executor/python/...",
-        # copybara:uncomment "//tensorflow_serving/servables/tensorflow/...",
-        # copybara:uncomment "//tensorflow_serving/servables/tensorflow/google/...",
     ],
 )
 
@@ -77,6 +87,7 @@ cc_library(
         "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//tensorflow/compiler/mlir/tensorflow:import_model",
         "//tensorflow/compiler/mlir/tensorflow:mlir_roundtrip_flags",
+        "//tensorflow/compiler/mlir/tf2xla/api/v2:graph_to_tf_executor",
         "//tensorflow/compiler/mlir/tfrt:backend_compiler",
         "//tensorflow/compiler/mlir/tfrt:import_model",
         "//tensorflow/compiler/mlir/tfrt:tfrt_compile_options",
@@ -130,11 +141,6 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
-        "@local_tsl//tsl/platform:refcount",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/profiler/lib:traceme",
-        "@local_xla//xla/tsl/concurrency:async_value",
-        "@local_xla//xla/tsl/concurrency:ref_count",
         "@tf_runtime//:basic_kernels_alwayslink",
         "@tf_runtime//:bef",
         "@tf_runtime//:befexecutor",
@@ -142,6 +148,11 @@ cc_library(
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:mlirtobef",
         "@tf_runtime//:support",
+        "@tsl//tsl/platform:refcount",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@xla//xla/tsl/concurrency:async_value",
+        "@xla//xla/tsl/concurrency:ref_count",
     ] + if_google(
         [
             "//learning/brain/experimental/tfrt/native_lowering/stubs:tfrt_native_lowering_impl",
@@ -154,6 +165,7 @@ tf_cc_test(
     srcs = ["graph_executor_test.cc"],
     tags = ["no_oss"],
     deps = [
+        ":config",
         ":graph_execution_options",
         ":graph_executor",
         "//tensorflow/cc:array_ops",
@@ -175,7 +187,9 @@ tf_cc_test(
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:statusor",
         "//tensorflow/core/protobuf:for_core_protos_cc",
+        "//tensorflow/core/runtime_fallback/kernel:kernel_fallback_compat_request_state",
         "//tensorflow/core/tfrt/fallback:fallback_state",
+        "//tensorflow/core/tfrt/fallback:op_kernel_runner",
         "//tensorflow/core/tfrt/mlrt/interpreter:context",
         "//tensorflow/core/tfrt/mlrt/interpreter:value",
         "//tensorflow/core/tfrt/mlrt/kernel",
@@ -184,11 +198,11 @@ tf_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:statusor",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:tensor",
         "@tf_runtime//cpp_tests:common",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ] + if_google(
         [
             "//learning/brain/experimental/tfrt/native_lowering/kernels:kernels_alwayslink",
@@ -221,7 +235,6 @@ tf_proto_library(
 # copybara:uncomment_begin(google-only)
 # py_proto_library(
 #     name = "config_proto_py_pb2",
-#     api_version = 2,
 #     visibility = ["//visibility:public"],
 #     deps = [":config_proto"],
 # )
@@ -246,9 +259,9 @@ tf_cc_test(
         ":test_config_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 

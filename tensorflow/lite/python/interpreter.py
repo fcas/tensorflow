@@ -18,6 +18,7 @@ import enum
 import os
 import platform
 import sys
+import warnings
 
 import numpy as np
 
@@ -39,6 +40,17 @@ else:
 
 
 # pylint: enable=g-import-not-at-top
+
+# This file is part of the ai_edge_litert package.
+_IS_LITERT_PACKAGE = os.path.splitext(__file__)[0].endswith(
+    os.path.join('ai_edge_litert', 'interpreter')
+)
+_INTERPRETER_DELETION_WARNING = """\
+    Warning: tf.lite.Interpreter is deprecated and is scheduled for deletion in
+    TF 2.20. Please use the LiteRT interpreter from the ai_edge_litert package.
+    See the [migration guide](https://ai.google.dev/edge/litert/migration)
+    for details.
+    """
 
 
 class Delegate:
@@ -204,7 +216,7 @@ class SignatureRunner:
     self._signature_key = signature_key
     signature_defs = interpreter._get_full_signature_list()
     if signature_key not in signature_defs:
-      raise ValueError('Invalid signature_key provided.')
+      raise ValueError(f'Invalid signature_key provided: "{signature_key}".')
     self._signature_def = signature_defs[signature_key]
     self._outputs = self._signature_def['outputs'].items()
     self._inputs = self._signature_def['inputs']
@@ -397,6 +409,9 @@ class Interpreter:
       experimental_preserve_all_tensors=False,
       experimental_disable_delegate_clustering=False,
       experimental_default_delegate_latest_features=False,
+      experimental_compress_quantization_zero_points=False,
+      experimental_disable_delegate_node_fusion=False,
+      experimental_force_delegate_node_profiling=False,
   ):
     """Constructor.
 
@@ -410,21 +425,18 @@ class Interpreter:
         available to CPU kernels. If not set, the interpreter will use an
         implementation-dependent default number of threads. Currently, only a
         subset of kernels, such as conv, support multi-threading. num_threads
-        should be >= -1. Setting num_threads to 0 has the effect to disable
-        multithreading, which is equivalent to setting num_threads to 1. If set
-        to the value -1, the number of threads used will be
-        implementation-defined and platform-dependent.
+        should be >= 1.
       experimental_op_resolver_type: The op resolver used by the interpreter. It
         must be an instance of OpResolverType. By default, we use the built-in
         op resolver which corresponds to tflite::ops::builtin::BuiltinOpResolver
         in C++.
       experimental_preserve_all_tensors: If true, then intermediate tensors used
         during computation are preserved for inspection, and if the passed op
-        resolver type is AUTO or BUILTIN, the type will be changed to
-        BUILTIN_WITHOUT_DEFAULT_DELEGATES so that no Tensorflow Lite default
-        delegates are applied. If false, getting intermediate tensors could
-        result in undefined values or None, especially when the graph is
-        successfully modified by the Tensorflow Lite default delegate.
+        resolver type is AUTO or BUILTIN, the type will be changed to BUILTIN so
+        that Tensorflow Lite default delegates are applied. If false, getting
+        intermediate tensors could result in undefined values or None,
+        especially when the graph is successfully modified by the Tensorflow
+        Lite default delegate.
       experimental_disable_delegate_clustering: If true, don't perform delegate
         clustering during delegate graph partitioning phase. Disabling delegate
         clustering will make the execution order of ops respect the
@@ -440,18 +452,38 @@ class Interpreter:
         model. Default is False.
       experimental_default_delegate_latest_features: If true, default delegates
         may enable all flag protected features. Default is False;
+      experimental_compress_quantization_zero_points: If true, compress
+        quantization zero points in the model. Default is False.
+      experimental_disable_delegate_node_fusion: If true, node fusion
+        (clustering) when partitioning delegated graphs is disabled, forcing
+        single-operator delegated subsets. Default is False.
+      experimental_force_delegate_node_profiling: If true, force TFLite to
+        profile delegated nodes even if the delegate supports per-operator
+        internal profiling. Default is False.
 
     Raises:
       ValueError: If the interpreter was unable to create.
     """
+    if not _IS_LITERT_PACKAGE:
+      warnings.warn(_INTERPRETER_DELETION_WARNING)
     if not hasattr(self, '_custom_op_registerers'):
       self._custom_op_registerers = []
+
+    self._experimental_compress_quantization_zero_points = (
+        experimental_compress_quantization_zero_points
+    )
 
     actual_resolver_type = experimental_op_resolver_type
     if experimental_preserve_all_tensors and (
         experimental_op_resolver_type == OpResolverType.AUTO or
         experimental_op_resolver_type == OpResolverType.BUILTIN):
-      actual_resolver_type = OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
+      warnings.warn(
+          'Warning: Enabling `experimental_preserve_all_tensors` with the'
+          ' BUILTIN or AUTO op resolver is intended for debugging purposes'
+          ' only. Be aware that this can significantly increase memory usage by'
+          ' storing all intermediate tensors. If you encounter memory problems'
+          ' or are not actively debugging, consider disabling this option.'
+      )
     op_resolver_id = _get_op_resolver_id(actual_resolver_type)
     if op_resolver_id is None:
       raise ValueError('Unrecognized passed in op resolver type: {}'.format(
@@ -471,7 +503,7 @@ class Interpreter:
           x for x in self._custom_op_registerers if not isinstance(x, str)
       ]
       self._interpreter = _interpreter_wrapper.CreateWrapperFromFile(
-          model_path,
+          os.fspath(model_path),
           op_resolver_id,
           custom_op_registerers_by_name,
           custom_op_registerers_by_func,
@@ -479,6 +511,9 @@ class Interpreter:
           experimental_disable_delegate_clustering,
           int(num_threads or 1),
           experimental_default_delegate_latest_features,
+          experimental_compress_quantization_zero_points,
+          experimental_disable_delegate_node_fusion,
+          experimental_force_delegate_node_profiling,
       )
       if not self._interpreter:
         raise ValueError('Failed to open {}'.format(model_path))
@@ -502,6 +537,9 @@ class Interpreter:
           experimental_disable_delegate_clustering,
           int(num_threads or 1),
           experimental_default_delegate_latest_features,
+          experimental_compress_quantization_zero_points,
+          experimental_disable_delegate_node_fusion,
+          experimental_force_delegate_node_profiling,
       )
     elif not model_content and not model_path:
       raise ValueError('`model_path` or `model_content` must be specified.')
@@ -605,7 +643,7 @@ class Interpreter:
     Returns:
       A dictionary containing the following fields of the tensor:
         'name': The tensor name.
-        'index': The tensor index in the interpreter.
+        'index': The tensor index in the subgraph.
         'shape': The shape of the tensor.
         'quantization': Deprecated, use 'quantization_parameters'. This field
             only works for per-tensor quantization, whereas
@@ -647,8 +685,9 @@ class Interpreter:
             'scales': tensor_quantization_params[0],
             'zero_points': tensor_quantization_params[1],
             'quantized_dimension': tensor_quantization_params[2],
+            'block_size': tensor_quantization_params[3],
         },
-        'sparsity_parameters': tensor_sparsity_params
+        'sparsity_parameters': tensor_sparsity_params,
     }
 
     return details
@@ -665,25 +704,44 @@ class Interpreter:
         self._get_op_details(idx) for idx in range(self._interpreter.NumNodes())
     ]
 
-  def get_tensor_details(self):
-    """Gets tensor details for every tensor with valid tensor details.
+  def num_subgraphs(self):
+    """Returns the number of subgraphs in the model."""
+    return self._interpreter.NumSubgraphs()
+
+  def get_tensor_details(self, subgraph_index=0):
+    """Gets tensor details for every tensor with valid tensor details from a subgraph.
 
     Tensors where required information about the tensor is not found are not
     added to the list. This includes temporary tensors without a name.
+
+    Args:
+      subgraph_index: Index of the subgraph to fetch the tensor.
 
     Returns:
       A list of dictionaries containing tensor information.
     """
     tensor_details = []
-    for idx in range(self._interpreter.NumTensors(0)):
+    num_subgraphs = self._interpreter.NumSubgraphs()
+    if subgraph_index < 0 or subgraph_index >= num_subgraphs:
+      raise ValueError(
+          f'subgraph_index is out of range: {subgraph_index} for the model,'
+          f' which has {num_subgraphs} subgraphs.'
+      )
+
+    for idx in range(self._interpreter.NumTensors(subgraph_index)):
       try:
-        tensor_details.append(self._get_tensor_details(idx, subgraph_index=0))
+        tensor_details.append(self._get_tensor_details(idx, subgraph_index))
       except ValueError:
         pass
+
     return tensor_details
 
   def get_input_details(self):
     """Gets model input tensor details.
+
+    The list order may differ from the argument order of the original
+    TensorFlow function. For models with signatures, use
+    `get_signature_runner()` to provide inputs by name.
 
     Returns:
       A list in which each item is a dictionary with details about
@@ -762,6 +820,10 @@ class Interpreter:
 
   def get_output_details(self):
     """Gets model output tensor details.
+
+    The list order may differ from the return order of the original TensorFlow
+    function or the output order in a model signature. For models with
+    signatures, use `get_signature_runner()` to access outputs by name.
 
     Returns:
       A list in which each item is a dictionary with details about
@@ -954,6 +1016,10 @@ class Interpreter:
 
   def reset_all_variables(self):
     return self._interpreter.ResetVariableTensors()
+
+  @property
+  def experimental_compress_quantization_zero_points(self):
+    return self._experimental_compress_quantization_zero_points
 
   # Experimental and subject to change.
   def _native_handle(self):

@@ -1,12 +1,24 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
-load("//tensorflow:strict.default.bzl", "py_strict_test")
-load("//tensorflow:tensorflow.bzl", "if_google")
+load("//tensorflow:tensorflow.bzl", "if_google", "py_test")
 load(
     "//tensorflow/dtensor:build_defs.bzl",
     "ALL_BACKENDS",
     "GPU_2DEVS_BACKEND",
-    "PATHWAYS",
-    "PATHWAYS_V3_DONUT_BACKEND",
     "TPU_V3_DONUT_BACKEND",
     "TPU_V4_DONUT_BACKEND",
     "dtensor_test",
@@ -35,13 +47,11 @@ pytype_strict_library(
     visibility = [
         "//tensorflow/dtensor:dtensor-internal",
         "//tensorflow/dtensor:dtensor-users",
-        "//tensorflow/tools/pip_package:__pkg__",
         "//tensorflow/tools/pip_package:__subpackages__",
     ],
     deps = [
         "//tensorflow/dtensor/python:api",
         "//tensorflow/dtensor/python:config",
-        "//tensorflow/dtensor/python:dtensor_device",
         "//tensorflow/dtensor/python:layout",
         "//tensorflow/dtensor/python:numpy_util",
         "//tensorflow/dtensor/python:tpu_util",
@@ -65,18 +75,20 @@ pytype_strict_library(
         "//tensorflow/python/ops:stateless_random_ops_gen",
         "//tensorflow/python/ops:stateless_random_ops_v2_gen",
         "//tensorflow/python/platform:client_testlib",
+        "//tensorflow/python/util:numpy_compat",
         "//third_party/py/numpy",
         "@absl_py//absl/flags",
+        "@absl_py//absl/logging",
         "@absl_py//absl/testing:parameterized",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "api_test",
     srcs = [
         "api_test.py",
     ],
-    python_version = "PY3",
+    strict_deps = True,
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
@@ -193,13 +205,10 @@ dtensor_test(
     additional_backends = [
         TPU_V3_DONUT_BACKEND,
         GPU_2DEVS_BACKEND,
-        PATHWAYS,
-        PATHWAYS_V3_DONUT_BACKEND,
     ],
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
-        "//tensorflow/dtensor/python:config",
         "//tensorflow/dtensor/python:d_variable",
         "//tensorflow/dtensor/python:dtensor_device",
         "//tensorflow/dtensor/python:layout",
@@ -231,7 +240,6 @@ dtensor_test(
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
-        "//tensorflow/dtensor/python:config",
         "//tensorflow/dtensor/python:d_variable",
         "//tensorflow/dtensor/python:dtensor_device",
         "//tensorflow/dtensor/python:layout",
@@ -312,11 +320,12 @@ dtensor_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "input_util_test",
     size = "medium",
     srcs = ["input_util_test.py"],
     shard_count = 8,
+    strict_deps = True,
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
@@ -339,7 +348,7 @@ py_strict_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "multi_client_input_util_test",
     timeout = "long",
     srcs = ["multi_client_input_util_test.py"],
@@ -347,6 +356,7 @@ py_strict_test(
         "TF2_BEHAVIOR": "1",
     },
     shard_count = 8,
+    strict_deps = True,
     tags = [
         # ThreadSanitizer does not support starting new threads after multi-threaded fork.
         "notsan",
@@ -393,6 +403,9 @@ dtensor_test(
         "tpu",
     ],
     main = "layout_test.py",
+    tags = [
+        "no_windows",
+    ],
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
@@ -459,6 +472,9 @@ dtensor_test(
         TPU_V3_DONUT_BACKEND,
         GPU_2DEVS_BACKEND,
     ],
+    env = {
+        "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+    },
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:config",
@@ -481,15 +497,13 @@ pytype_strict_library(
     srcs = ["multi_client_test_util.py"],
     visibility = [
         "//tensorflow/dtensor:dtensor-internal",
-        "//tensorflow/dtensor:dtensor-users",
-        "//tensorflow/tools/pip_package:__pkg__",
         "//tensorflow/tools/pip_package:__subpackages__",
     ],
     deps = [
         ":test_util",
         "//tensorflow/python/platform:client_testlib",
         "@absl_py//absl/flags",
-        "@pypi_portpicker//:pkg",
+        "@pypi//portpicker",
     ],
 )
 
@@ -552,8 +566,11 @@ dtensor_test(
     env = {
         "DTENSOR_GPU_USE_NCCL_COMMUNICATION": "1",
         "NCCL_P2P_DISABLE": "1",  # FIXME(b/251183104): p2p detection in cuda 10.1+ is broken.
+        "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
     },
     tags = [
+        "exclusive-if-local",
         "no_windows",
         "nosan",  # b/195537906
     ],
@@ -597,8 +614,12 @@ dtensor_test(
     env = {
         "DTENSOR_GPU_USE_NCCL_COMMUNICATION": "1",
         "NCCL_P2P_DISABLE": "1",  # FIXME(b/251183104): p2p detection in cuda 10.1+ is broken.
+        "NCCL_CUMEM_HOST_ENABLE": "0",  # TODO(b/414413290): workaround for cuda 12.8.1 failure.
+        "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
     },
     tags = [
+        "exclusive-if-local",
         "no_windows",
         "nosan",  # b/195537906
     ],
@@ -726,6 +747,7 @@ dtensor_test(
         "//tensorflow/python/platform:client_testlib",
         "//tensorflow/python/util:nest",
         "//third_party/py/numpy",
+        "@absl_py//absl/logging",
         "@absl_py//absl/testing:parameterized",
     ],
 )

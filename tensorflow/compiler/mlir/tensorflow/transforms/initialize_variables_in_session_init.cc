@@ -13,6 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cassert>
+
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringRef.h"
@@ -29,6 +33,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/utils/convert_tensor.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/session_utils.h"
 #include "tensorflow/core/framework/resource_var.h"
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/public/session.h"
 
 namespace mlir {
@@ -38,7 +43,7 @@ namespace {
 void InitializeVariable(TF::VarHandleOp var_handle_op,
                         tensorflow::Tensor* tensor,
                         func::FuncOp session_init_func, OpBuilder builder) {
-  tensorflow::StatusOr<ElementsAttr> tensor_attr_or =
+  absl::StatusOr<ElementsAttr> tensor_attr_or =
       tensorflow::ConvertTensor(*tensor, &builder);
   assert(tensor_attr_or.ok() && "Expect valid tensor");
   ElementsAttr tensor_attr = tensor_attr_or.value();
@@ -46,11 +51,11 @@ void InitializeVariable(TF::VarHandleOp var_handle_op,
   builder.setInsertionPointToStart(&session_init_func.getBlocks().front());
   auto var_handle_op_in_init = var_handle_op->clone();
   builder.insert(var_handle_op_in_init);
-  auto const_op = builder.create<mlir::arith::ConstantOp>(
-      session_init_func.getLoc(), tensor_attr.getType(), tensor_attr);
+  auto const_op = mlir::arith::ConstantOp::create(
+      builder, session_init_func.getLoc(), tensor_attr.getType(), tensor_attr);
 
-  builder.create<TF::AssignVariableOp>(
-      session_init_func.getLoc(), llvm::ArrayRef<mlir::Type>{},
+  TF::AssignVariableOp::create(
+      builder, session_init_func.getLoc(), llvm::ArrayRef<mlir::Type>{},
       llvm::ArrayRef<mlir::Value>{var_handle_op_in_init->getResult(0),
                                   const_op.getResult()});
 }
@@ -61,23 +66,23 @@ func::FuncOp CreateSessionInitFunc(ModuleOp module) {
   mlir::OpBuilder builder(module.getBodyRegion());
   auto func_type =
       FunctionType::get(module.getContext(), /*inputs=*/{}, /*results=*/{});
-  auto func = builder.create<func::FuncOp>(module->getLoc(),
-                                           kSessionInitFuncName, func_type);
+  auto func = func::FuncOp::create(builder, module->getLoc(),
+                                   kSessionInitFuncName, func_type);
   func->setAttr(kTfSavedModelExportedNamesAttr,
                 builder.getStrArrayAttr({kSessionInitFuncName}));
   func->setAttr(kTfSavedModelInitializerTypeAttr,
                 builder.getStringAttr(kTfSavedModelInitializerRestoreType));
   func.setVisibility(mlir::func::FuncOp::Visibility::Public);
   auto func_builder = OpBuilder::atBlockBegin(func.addEntryBlock());
-  func_builder.create<mlir::func::ReturnOp>(func.getLoc());
+  mlir::func::ReturnOp::create(func_builder, func.getLoc());
   // In cases where there is a session initializer op with empty initializer,
   // replace the session initializer with the new one that points to the session
   // initializer func.
   SessionInitializerOp session_init_op = GetSessionInitializerOp(module);
-  auto new_session_init_op =
-      builder.create<tf_saved_model::SessionInitializerOp>(
-          module->getLoc(), builder.getArrayAttr(SymbolRefAttr::get(
-                                builder.getContext(), kSessionInitFuncName)));
+  auto new_session_init_op = tf_saved_model::SessionInitializerOp::create(
+      builder, module->getLoc(),
+      builder.getArrayAttr(
+          SymbolRefAttr::get(builder.getContext(), kSessionInitFuncName)));
   if (session_init_op) {
     session_init_op->replaceAllUsesWith(new_session_init_op);
     session_init_op->erase();

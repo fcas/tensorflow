@@ -15,17 +15,19 @@ limitations under the License.
 #ifndef XLA_PJRT_EXCEPTIONS_H_
 #define XLA_PJRT_EXCEPTIONS_H_
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdlib>
-#include <cstring>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/cord.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
-#include "xla/status.h"
+#include "absl/strings/string_view.h"
 
 namespace xla {
 
@@ -40,26 +42,40 @@ class XlaRuntimeError : public std::runtime_error {
 
   explicit XlaRuntimeError(const std::string what) : std::runtime_error(what) {}
 
-  std::optional<Status> status() const { return status_; }
+  std::optional<absl::Status> status() const { return status_; }
 
  private:
   static std::string StatusToString(const absl::Status& st) {
     if (!ShowStackTraces()) {
-      return st.ToString(absl::StatusToStringMode::kWithNoExtraData);
+      std::string result =
+          st.ToString(absl::StatusToStringMode::kWithNoExtraData);
+      static constexpr size_t kMaxPayloadSize = 128;
+      // Arbitrary constant to avoid reallocation.
+      static constexpr size_t kErrorContextOverhead = kMaxPayloadSize * 4;
+      result.reserve(result.size() + kErrorContextOverhead);
+      st.ForEachPayload([&](absl::string_view key, const absl::Cord& payload) {
+        absl::Cord truncated_payload =
+            payload.Subcord(0, std::min(payload.size(), kMaxPayloadSize));
+        absl::StrAppend(&result, " [", key, "='",
+                        absl::CHexEscape(truncated_payload.Flatten()));
+        if (payload.size() > kMaxPayloadSize) {
+          absl::StrAppend(&result, "...[truncated]");
+        }
+        absl::StrAppend(&result, "']");
+      });
+      return result;
     }
-    std::stringstream ss;
-    ss << st;
-    return ss.str();
+    return st.ToString(absl::StatusToStringMode::kWithEverything);
   }
 
   static bool ShowStackTraces() {
-    if (char* value = getenv("JAX_TRACEBACK_FILTERING")) {
-      return strcmp(value, "off");
+    if (char* env = getenv("JAX_TRACEBACK_FILTERING")) {
+      return absl::string_view(env) == "off";
     }
     return false;
   }
 
-  std::optional<Status> status_;
+  std::optional<absl::Status> status_;
 };
 
 }  // namespace xla

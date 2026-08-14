@@ -16,11 +16,9 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/legalize_hlo_conversions/util.h"
 
 #include <cassert>
-#include <cstddef>
 #include <cstdint>
 #include <utility>
 
-#include "absl/algorithm/container.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Block.h"  // from @llvm-project
@@ -30,7 +28,6 @@ limitations under the License.
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/IR/Region.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
@@ -43,9 +40,9 @@ limitations under the License.
 namespace mlir {
 namespace odml {
 
-bool IsIotaAttr(ArrayRef<int64_t> arr, int64_t size) {
+bool IsIotaAttr(ArrayRef<int64_t> arr, int64_t size, int64_t start) {
   if (arr.size() != size) return false;
-  int64_t iota = 0;
+  int64_t iota = start;
   for (auto s : arr) {
     if (s != iota) return false;
     ++iota;
@@ -73,25 +70,7 @@ Value BuildIntConstOp(ImplicitLocOpBuilder& builder,
                       ConversionPatternRewriter& rewriter, int64_t const_value,
                       Type type) {
   Value result_const =
-      builder.create<TF::ConstOp>(rewriter.getIntegerAttr(type, const_value));
-  return result_const;
-}
-
-Value BuildIntArrayConstOp(ImplicitLocOpBuilder& builder,
-                           ConversionPatternRewriter& rewriter,
-                           ArrayRef<int64_t> const_value, Type type) {
-  DenseIntElementsAttr const_value_raw;
-  if (type == rewriter.getI64Type()) {
-    const_value_raw = rewriter.getI64TensorAttr(const_value);
-  } else {
-    // Convert I64 const array to I32.
-    llvm::SmallVector<int32_t> const_i32_vec;
-    for (auto element : const_value) {
-      const_i32_vec.push_back(static_cast<int32_t>(element));
-    }
-    const_value_raw = rewriter.getI32TensorAttr(const_i32_vec);
-  }
-  Value result_const = builder.create<TF::ConstOp>(const_value_raw);
+      TF::ConstOp::create(builder, rewriter.getIntegerAttr(type, const_value));
   return result_const;
 }
 
@@ -136,8 +115,8 @@ LogicalResult NormalizeIndexVector(Operation* parent_op, Value& indices,
     new_start_indices_shape.push_back(1);
     indices_type = RankedTensorType::get(new_start_indices_shape,
                                          indices_type.getElementType());
-    indices = rewriter.create<mhlo::ReshapeOp>(parent_op->getLoc(),
-                                               indices_type, indices);
+    indices = mhlo::ReshapeOp::create(rewriter, parent_op->getLoc(),
+                                      indices_type, indices);
   } else if (index_vector_dim != indices_type.getRank() - 1) {
     // If index_vector_dim isn't the last dimension in indices then it isn't
     // supported yet.
@@ -218,8 +197,8 @@ Value InsertTranspose(Value value, int batch_dim, int feature_dim,
                                     default_batch_dim, default_feature_dim,
                                     default_spatial_dim_start, num_spatial_dims,
                                     type, rewriter);
-  return rewriter.create<mhlo::TransposeOp>(value.getLoc(), type, value,
-                                            permutation);
+  return mhlo::TransposeOp::create(rewriter, value.getLoc(), type, value,
+                                   permutation);
 }
 
 Value CreateCastToInt32(Value val, Location loc, PatternRewriter& rewriter) {
@@ -227,10 +206,22 @@ Value CreateCastToInt32(Value val, Location loc, PatternRewriter& rewriter) {
   if (auto shaped_type = mlir::dyn_cast<RankedTensorType>(val.getType())) {
     ShapedType new_type =
         RankedTensorType::get(shaped_type.getShape(), new_ele_type);
-    return rewriter.create<TFL::CastOp>(loc, new_type, val);
+    return TFL::CastOp::create(rewriter, loc, new_type, val);
   }
-  return rewriter.create<TFL::CastOp>(
-      loc, UnrankedTensorType::get(new_ele_type), val);
+  return TFL::CastOp::create(rewriter, loc,
+                             UnrankedTensorType::get(new_ele_type), val);
+}
+
+// Replaces `region`'s terminator to TFL::Yield.
+void ReplaceTerminatorWithYield(Region& region, PatternRewriter& rewriter) {
+  OpBuilder::InsertionGuard guard(rewriter);
+
+  for (auto& block : region.getBlocks()) {
+    auto* terminator = block.getTerminator();
+    rewriter.setInsertionPoint(terminator);
+    rewriter.replaceOpWithNewOp<TFL::YieldOp>(terminator,
+                                              terminator->getOperands());
+  }
 }
 
 }  // namespace odml

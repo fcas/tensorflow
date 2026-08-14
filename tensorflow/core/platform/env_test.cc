@@ -19,6 +19,8 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/strings/string_view.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/platform/cord.h"
@@ -29,14 +31,13 @@ limitations under the License.
 #include "tensorflow/core/platform/strcat.h"
 #include "tensorflow/core/platform/stringpiece.h"
 #include "tensorflow/core/platform/test.h"
-#include "tsl/lib/core/status_test_util.h"
 
 namespace tsl {
 
 namespace {
 
-string CreateTestFile(Env* env, const string& filename, int length) {
-  string input(length, 0);
+std::string CreateTestFile(Env* env, const std::string& filename, int length) {
+  std::string input(length, 0);
   for (int i = 0; i < length; i++) input[i] = i;
   TF_EXPECT_OK(WriteStringToFile(env, filename, input));
   return input;
@@ -53,14 +54,14 @@ tensorflow::GraphDef CreateTestProto() {
   return g;
 }
 
-static void ExpectHasSubstr(StringPiece s, StringPiece expected) {
+static void ExpectHasSubstr(absl::string_view s, absl::string_view expected) {
   EXPECT_TRUE(absl::StrContains(s, expected))
       << "'" << s << "' does not contain '" << expected << "'";
 }
 
 }  // namespace
 
-string BaseDir() { return io::JoinPath(testing::TmpDir(), "base_dir"); }
+std::string BaseDir() { return io::JoinPath(testing::TmpDir(), "base_dir"); }
 
 class DefaultEnvTest : public ::testing::Test {
  protected:
@@ -76,33 +77,34 @@ class DefaultEnvTest : public ::testing::Test {
 };
 
 TEST_F(DefaultEnvTest, IncompleteReadOutOfRange) {
-  const string filename = io::JoinPath(BaseDir(), "out_of_range");
-  const string input = CreateTestFile(env_, filename, 2);
+  const std::string filename = io::JoinPath(BaseDir(), "out_of_range");
+  const std::string input = CreateTestFile(env_, filename, 2);
   std::unique_ptr<RandomAccessFile> f;
   TF_EXPECT_OK(env_->NewRandomAccessFile(filename, &f));
 
   // Reading past EOF should give an OUT_OF_RANGE error
-  StringPiece result;
+  absl::string_view result;
   char scratch[3];
-  EXPECT_EQ(error::OUT_OF_RANGE, f->Read(0, 3, &result, scratch).code());
+  EXPECT_EQ(error::OUT_OF_RANGE,
+            f->Read(0, result, absl::MakeSpan(scratch, 3)).code());
   EXPECT_EQ(input, result);
 
   // Exact read to EOF works.
-  TF_EXPECT_OK(f->Read(0, 2, &result, scratch));
+  TF_EXPECT_OK(f->Read(0, result, absl::MakeSpan(scratch, 2)));
   EXPECT_EQ(input, result);
 }
 
 TEST_F(DefaultEnvTest, ReadFileToString) {
   for (const int length : {0, 1, 1212, 2553, 4928, 8196, 9000, (1 << 20) - 1,
                            1 << 20, (1 << 20) + 1, (256 << 20) + 100}) {
-    const string filename =
-        io::JoinPath(BaseDir(), "bar", "..", strings::StrCat("file", length));
+    const std::string filename =
+        io::JoinPath(BaseDir(), "bar", "..", absl::StrCat("file", length));
 
     // Write a file with the given length
-    const string input = CreateTestFile(env_, filename, length);
+    const std::string input = CreateTestFile(env_, filename, length);
 
     // Read the file back and check equality
-    string output;
+    std::string output;
     TF_EXPECT_OK(ReadFileToString(env_, filename, &output));
     EXPECT_EQ(length, output.size());
     EXPECT_EQ(input, output);
@@ -117,7 +119,7 @@ TEST_F(DefaultEnvTest, ReadFileToString) {
 
 TEST_F(DefaultEnvTest, ReadWriteBinaryProto) {
   const tensorflow::GraphDef proto = CreateTestProto();
-  const string filename = strings::StrCat(BaseDir(), "binary_proto");
+  const std::string filename = absl::StrCat(BaseDir(), "binary_proto");
 
   // Write the binary proto
   TF_EXPECT_OK(WriteBinaryProto(env_, filename, proto));
@@ -135,10 +137,10 @@ TEST_F(DefaultEnvTest, ReadWriteBinaryProto) {
 
 TEST_F(DefaultEnvTest, ReadWriteTextProto) {
   const tensorflow::GraphDef proto = CreateTestProto();
-  const string filename = strings::StrCat(BaseDir(), "text_proto");
+  const std::string filename = absl::StrCat(BaseDir(), "text_proto");
 
   // Write the text proto
-  string as_text;
+  std::string as_text;
   EXPECT_TRUE(protobuf::TextFormat::PrintToString(proto, &as_text));
   TF_EXPECT_OK(WriteStringToFile(env_, filename, as_text));
 
@@ -156,19 +158,19 @@ TEST_F(DefaultEnvTest, ReadWriteTextProto) {
 TEST_F(DefaultEnvTest, FileToReadonlyMemoryRegion) {
   for (const int length : {1, 1212, 2553, 4928, 8196, 9000, (1 << 20) - 1,
                            1 << 20, (1 << 20) + 1}) {
-    const string filename =
-        io::JoinPath(BaseDir(), strings::StrCat("file", length));
+    const std::string filename =
+        io::JoinPath(BaseDir(), absl::StrCat("file", length));
 
     // Write a file with the given length
-    const string input = CreateTestFile(env_, filename, length);
+    const std::string input = CreateTestFile(env_, filename, length);
 
     // Create the region.
     std::unique_ptr<ReadOnlyMemoryRegion> region;
     TF_EXPECT_OK(env_->NewReadOnlyMemoryRegionFromFile(filename, &region));
     ASSERT_NE(region, nullptr);
     EXPECT_EQ(length, region->length());
-    EXPECT_EQ(input, string(reinterpret_cast<const char*>(region->data()),
-                            region->length()));
+    EXPECT_EQ(input, std::string(reinterpret_cast<const char*>(region->data()),
+                                 region->length()));
     FileStatistics stat;
     TF_EXPECT_OK(env_->Stat(filename, &stat));
     EXPECT_EQ(length, stat.length);
@@ -181,18 +183,18 @@ TEST_F(DefaultEnvTest, DeleteRecursively) {
   // root_dir -> dirs: child_dir1, child_dir2; files: root_file1, root_file2
   // child_dir1 -> files: child1_file1
   // child_dir2 -> empty
-  const string parent_dir = io::JoinPath(BaseDir(), "root_dir");
-  const string child_dir1 = io::JoinPath(parent_dir, "child_dir1");
-  const string child_dir2 = io::JoinPath(parent_dir, "child_dir2");
+  const std::string parent_dir = io::JoinPath(BaseDir(), "root_dir");
+  const std::string child_dir1 = io::JoinPath(parent_dir, "child_dir1");
+  const std::string child_dir2 = io::JoinPath(parent_dir, "child_dir2");
   TF_EXPECT_OK(env_->CreateDir(parent_dir));
-  const string root_file1 = io::JoinPath(parent_dir, "root_file1");
-  const string root_file2 = io::JoinPath(parent_dir, "root_file2");
-  const string root_file3 = io::JoinPath(parent_dir, ".root_file3");
+  const std::string root_file1 = io::JoinPath(parent_dir, "root_file1");
+  const std::string root_file2 = io::JoinPath(parent_dir, "root_file2");
+  const std::string root_file3 = io::JoinPath(parent_dir, ".root_file3");
   CreateTestFile(env_, root_file1, 100);
   CreateTestFile(env_, root_file2, 100);
   CreateTestFile(env_, root_file3, 100);
   TF_EXPECT_OK(env_->CreateDir(child_dir1));
-  const string child1_file1 = io::JoinPath(child_dir1, "child1_file1");
+  const std::string child1_file1 = io::JoinPath(child_dir1, "child1_file1");
   CreateTestFile(env_, child1_file1, 100);
   TF_EXPECT_OK(env_->CreateDir(child_dir2));
 
@@ -209,7 +211,7 @@ TEST_F(DefaultEnvTest, DeleteRecursively) {
 
 TEST_F(DefaultEnvTest, DeleteRecursivelyFail) {
   // Try to delete a non-existent directory.
-  const string parent_dir = io::JoinPath(BaseDir(), "root_dir");
+  const std::string parent_dir = io::JoinPath(BaseDir(), "root_dir");
 
   int64_t undeleted_files, undeleted_dirs;
   absl::Status s =
@@ -220,7 +222,7 @@ TEST_F(DefaultEnvTest, DeleteRecursivelyFail) {
 }
 
 TEST_F(DefaultEnvTest, RecursivelyCreateDir) {
-  const string create_path = io::JoinPath(BaseDir(), "a", "b", "c", "d");
+  const std::string create_path = io::JoinPath(BaseDir(), "a", "b", "c", "d");
   TF_CHECK_OK(env_->RecursivelyCreateDir(create_path));
   TF_CHECK_OK(env_->RecursivelyCreateDir(create_path));  // repeat creation.
   TF_EXPECT_OK(env_->FileExists(create_path));
@@ -232,13 +234,13 @@ TEST_F(DefaultEnvTest, RecursivelyCreateDirEmpty) {
 
 TEST_F(DefaultEnvTest, RecursivelyCreateDirSubdirsExist) {
   // First create a/b.
-  const string subdir_path = io::JoinPath(BaseDir(), "a", "b");
+  const std::string subdir_path = io::JoinPath(BaseDir(), "a", "b");
   TF_CHECK_OK(env_->CreateDir(io::JoinPath(BaseDir(), "a")));
   TF_CHECK_OK(env_->CreateDir(subdir_path));
   TF_EXPECT_OK(env_->FileExists(subdir_path));
 
   // Now try to recursively create a/b/c/d/
-  const string create_path = io::JoinPath(BaseDir(), "a", "b", "c", "d");
+  const std::string create_path = io::JoinPath(BaseDir(), "a", "b", "c", "d");
   TF_CHECK_OK(env_->RecursivelyCreateDir(create_path));
   TF_CHECK_OK(env_->RecursivelyCreateDir(create_path));  // repeat creation.
   TF_EXPECT_OK(env_->FileExists(create_path));
@@ -248,21 +250,21 @@ TEST_F(DefaultEnvTest, RecursivelyCreateDirSubdirsExist) {
 TEST_F(DefaultEnvTest, LocalFileSystem) {
   // Test filename with file:// syntax.
   int expected_num_files = 0;
-  std::vector<string> matching_paths;
+  std::vector<std::string> matching_paths;
   for (const int length : {0, 1, 1212, 2553, 4928, 8196, 9000, (1 << 20) - 1,
                            1 << 20, (1 << 20) + 1}) {
-    string filename = io::JoinPath(BaseDir(), strings::StrCat("len", length));
+    std::string filename = io::JoinPath(BaseDir(), absl::StrCat("len", length));
 
-    filename = strings::StrCat("file://", filename);
+    filename = absl::StrCat("file://", filename);
 
     // Write a file with the given length
-    const string input = CreateTestFile(env_, filename, length);
+    const std::string input = CreateTestFile(env_, filename, length);
     ++expected_num_files;
 
     // Ensure that GetMatchingPaths works as intended.
     TF_EXPECT_OK(env_->GetMatchingPaths(
         // Try it with the "file://" URI scheme.
-        strings::StrCat("file://", io::JoinPath(BaseDir(), "l*")),
+        absl::StrCat("file://", io::JoinPath(BaseDir(), "l*")),
         &matching_paths));
     EXPECT_EQ(expected_num_files, matching_paths.size());
     TF_EXPECT_OK(env_->GetMatchingPaths(
@@ -271,7 +273,7 @@ TEST_F(DefaultEnvTest, LocalFileSystem) {
     EXPECT_EQ(expected_num_files, matching_paths.size());
 
     // Read the file back and check equality
-    string output;
+    std::string output;
     TF_EXPECT_OK(ReadFileToString(env_, filename, &output));
     EXPECT_EQ(length, output.size());
     EXPECT_EQ(input, output);
@@ -297,32 +299,31 @@ TEST_F(DefaultEnvTest, SleepForMicroseconds) {
 
 class TmpDirFileSystem : public NullFileSystem {
  public:
-  TF_USE_FILESYSTEM_METHODS_WITH_NO_TRANSACTION_SUPPORT;
-
-  absl::Status FileExists(const string& dir, TransactionToken* token) override {
-    StringPiece scheme, host, path;
+  absl::Status FileExists(absl::string_view dir) override {
+    absl::string_view scheme, host, path;
     io::ParseURI(dir, &scheme, &host, &path);
-    if (path.empty()) return errors::NotFound(dir, " not found");
+    if (path.empty())
+      return absl::NotFoundError(absl::StrCat(dir, " not found"));
     // The special "flushed" file exists only if the filesystem's caches have
     // been flushed.
     if (path == "/flushed") {
       if (flushed_) {
         return absl::OkStatus();
       } else {
-        return errors::NotFound("FlushCaches() not called yet");
+        return absl::NotFoundError("FlushCaches() not called yet");
       }
     }
     return Env::Default()->FileExists(io::JoinPath(BaseDir(), path));
   }
 
-  absl::Status CreateDir(const string& dir, TransactionToken* token) override {
-    StringPiece scheme, host, path;
+  absl::Status CreateDir(const std::string& dir) override {
+    absl::string_view scheme, host, path;
     io::ParseURI(dir, &scheme, &host, &path);
     if (scheme != "tmpdirfs") {
-      return errors::FailedPrecondition("scheme must be tmpdirfs");
+      return absl::FailedPreconditionError("scheme must be tmpdirfs");
     }
     if (host != "testhost") {
-      return errors::FailedPrecondition("host must be testhost");
+      return absl::FailedPreconditionError("host must be testhost");
     }
     absl::Status status =
         Env::Default()->CreateDir(io::JoinPath(BaseDir(), path));
@@ -333,16 +334,15 @@ class TmpDirFileSystem : public NullFileSystem {
     return status;
   }
 
-  absl::Status IsDirectory(const string& dir,
-                           TransactionToken* token) override {
-    StringPiece scheme, host, path;
+  absl::Status IsDirectory(const std::string& dir) override {
+    absl::string_view scheme, host, path;
     io::ParseURI(dir, &scheme, &host, &path);
     for (const auto& existing_dir : created_directories_)
       if (existing_dir == path) return absl::OkStatus();
-    return errors::NotFound(dir, " not found");
+    return absl::NotFoundError(absl::StrCat(dir, " not found"));
   }
 
-  void FlushCaches(TransactionToken* token) override { flushed_ = true; }
+  void FlushCaches() override { flushed_ = true; }
 
  private:
   bool flushed_ = false;
@@ -353,8 +353,8 @@ REGISTER_FILE_SYSTEM("tmpdirfs", TmpDirFileSystem);
 
 TEST_F(DefaultEnvTest, FlushFileSystemCaches) {
   Env* env = Env::Default();
-  const string flushed =
-      strings::StrCat("tmpdirfs://", io::JoinPath("testhost", "flushed"));
+  const std::string flushed =
+      absl::StrCat("tmpdirfs://", io::JoinPath("testhost", "flushed"));
   EXPECT_EQ(error::Code::NOT_FOUND, env->FileExists(flushed).code());
   TF_EXPECT_OK(env->FlushFileSystemCaches());
   TF_EXPECT_OK(env->FileExists(flushed));
@@ -362,8 +362,8 @@ TEST_F(DefaultEnvTest, FlushFileSystemCaches) {
 
 TEST_F(DefaultEnvTest, RecursivelyCreateDirWithUri) {
   Env* env = Env::Default();
-  const string create_path = strings::StrCat(
-      "tmpdirfs://", io::JoinPath("testhost", "a", "b", "c", "d"));
+  const std::string create_path =
+      absl::StrCat("tmpdirfs://", io::JoinPath("testhost", "a", "b", "c", "d"));
   EXPECT_EQ(error::Code::NOT_FOUND, env->FileExists(create_path).code());
   TF_CHECK_OK(env->RecursivelyCreateDir(create_path));
   TF_CHECK_OK(env->RecursivelyCreateDir(create_path));  // repeat creation.
@@ -377,7 +377,7 @@ TEST_F(DefaultEnvTest, GetExecutablePath) {
 
 TEST_F(DefaultEnvTest, LocalTempFilename) {
   Env* env = Env::Default();
-  string filename;
+  std::string filename;
   EXPECT_TRUE(env->LocalTempFilename(&filename));
   EXPECT_FALSE(env->FileExists(filename).ok());
 
@@ -405,11 +405,12 @@ TEST_F(DefaultEnvTest, LocalTempFilename) {
   // Read from the temporary file and check content.
   std::unique_ptr<RandomAccessFile> file_to_read;
   TF_CHECK_OK(env->NewRandomAccessFile(filename, &file_to_read));
-  StringPiece content;
+  absl::string_view content;
   char scratch[1024];
-  CHECK_EQ(
-      error::OUT_OF_RANGE,
-      file_to_read->Read(/*offset=*/0, /*n=*/1024, &content, scratch).code());
+  CHECK_EQ(error::OUT_OF_RANGE, file_to_read
+                                    ->Read(/*offset=*/0, content,
+                                           absl::MakeSpan(scratch, /*n=*/1024))
+                                    .code());
   EXPECT_EQ("Null", content);
 
   // Delete the temporary file.
@@ -420,14 +421,14 @@ TEST_F(DefaultEnvTest, LocalTempFilename) {
 TEST_F(DefaultEnvTest, CreateUniqueFileName) {
   Env* env = Env::Default();
 
-  string prefix = "tempfile-prefix-";
-  string suffix = ".tmp";
-  string filename = prefix;
+  std::string prefix = "tempfile-prefix-";
+  std::string suffix = ".tmp";
+  std::string filename = prefix;
 
   EXPECT_TRUE(env->CreateUniqueFileName(&filename, suffix));
 
   EXPECT_TRUE(absl::StartsWith(filename, prefix));
-  EXPECT_TRUE(str_util::EndsWith(filename, suffix));
+  EXPECT_TRUE(absl::EndsWith(filename, suffix));
 }
 
 TEST_F(DefaultEnvTest, GetProcessId) {
@@ -441,7 +442,7 @@ TEST_F(DefaultEnvTest, GetThreadInformation) {
 #if !defined(__APPLE__)
   EXPECT_NE(env->GetCurrentThreadId(), 0);
 #endif
-  string thread_name;
+  std::string thread_name;
   bool res = env->GetCurrentThreadName(&thread_name);
 #if defined(PLATFORM_WINDOWS) || defined(__ANDROID__)
   EXPECT_FALSE(res);
@@ -458,7 +459,7 @@ TEST_F(DefaultEnvTest, GetChildThreadInformation) {
 #if !defined(__APPLE__)
     EXPECT_NE(env->GetCurrentThreadId(), 0);
 #endif
-    string thread_name;
+    std::string thread_name;
     bool res = env->GetCurrentThreadName(&thread_name);
     EXPECT_TRUE(res);
     ExpectHasSubstr(thread_name, "tf_child_thread");

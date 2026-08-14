@@ -17,10 +17,10 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/TypeUtilities.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter_value.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/registration.h"
@@ -45,7 +45,7 @@ llvm::SmallVector<InterpreterValue> UnrealizedConversionCast(
         return {DispatchScalarType(r, [&](auto dummy) -> InterpreterValue {
           TensorOrMemref<decltype(dummy)> result;
           result.view = args[0].View();
-          result.buffer = args[0].Buffer();
+          result.buffer = args[0].GetBuffer();
           return {result};
         })};
       }

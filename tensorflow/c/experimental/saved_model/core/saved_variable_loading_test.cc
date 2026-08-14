@@ -13,9 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <memory>
+#include <tuple>
+#include <utility>
 #include <vector>
 
+#include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "absl/types/optional.h"
 #include "tensorflow/c/eager/immediate_execution_tensor_handle.h"
 #include "tensorflow/c/experimental/saved_model/core/revived_types/constant.h"
 #include "tensorflow/c/experimental/saved_model/core/saved_model_utils.h"
@@ -46,7 +52,7 @@ class SavedVariableLoadingTest
     std::vector<std::unique_ptr<Device>> devices;
     TF_CHECK_OK(DeviceFactory::AddDevices(
         options, "/job:localhost/replica:0/task:0", &devices));
-    device_mgr_ = absl::make_unique<StaticDeviceMgr>(std::move(devices));
+    device_mgr_ = std::make_unique<StaticDeviceMgr>(std::move(devices));
     ctx_ = testing::CreateTestingEagerContext(device_mgr_.get());
   }
 
@@ -88,8 +94,9 @@ TEST_P(SavedVariableLoadingTest, LoadSavedVariableWithDevice) {
 
   std::unique_ptr<Variable> var;
   TF_ASSERT_OK(internal::LoadSavedVariable(context(), saved_variable, &var));
-  EXPECT_EQ(down_cast<TensorHandle*>(var->handle())->resource_device()->name(),
-            "/job:localhost/replica:0/task:0/device:CPU:1");
+  EXPECT_EQ(
+      absl::down_cast<TensorHandle*>(var->handle())->resource_device()->name(),
+      "/job:localhost/replica:0/task:0/device:CPU:1");
 }
 
 // Verify load failure if a non-existing device is specified.
@@ -117,10 +124,10 @@ TEST_P(SavedVariableLoadingTest, AssignAndReadVariableSuccesful) {
   TensorShape shape(shape_vector);
 
   // Create the variable.
-  Status status;
+  absl::Status status;
   std::unique_ptr<Variable> var;
   TF_EXPECT_OK(Variable::CreateUninitialized(context(), dtype, shape,
-                                             absl::nullopt, nullptr, {}, &var));
+                                             std::nullopt, nullptr, {}, &var));
 
   // Create a TensorHandle
   ImmediateTensorHandlePtr expected_handle =

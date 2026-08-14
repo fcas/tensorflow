@@ -1,6 +1,22 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Generates CUDA kernels using MLIR codegen.
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "if_cuda_or_rocm",
@@ -171,7 +187,7 @@ tf_kernel_library(
         ":gpu_sinh_kernels",
         ":gpu_tan_kernels",
         ":gpu_tanh_kernels",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -253,16 +269,12 @@ tf_kernel_library(
         ":gpu_greater_equal_kernels",
         ":gpu_less_equal_kernels",
         ":gpu_less_kernels",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
     name = "cwise_op",
     srcs = [],
-    visibility = [
-        ":friends",
-        "//tensorflow/core/kernels:__subpackages__",
-    ],
     deps = if_cuda_or_rocm([
         ":gpu_cwise_unary_op",
         ":gpu_cwise_binary_op",
@@ -279,7 +291,7 @@ tf_kernel_library(
         ":base_gpu_op",
         ":gpu_cast_kernels",
         "@eigen_archive//:eigen3",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -306,7 +318,7 @@ tf_kernel_library(
         ":gpu_ones_like_kernels",
         ":gpu_zeros_like_kernels",
         "@eigen_archive//:eigen3",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -327,7 +339,7 @@ tf_kernel_library(
     deps = if_mlir_generated_gpu_kernels_enabled([
         ":base_gpu_op",
         ":gpu_next_after_kernels",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -353,7 +365,7 @@ tf_kernel_library(
         ":gpu_relu_kernels",
         ":gpu_selu_kernels",
         "@eigen_archive//:eigen3",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -375,7 +387,7 @@ tf_kernel_library(
         ":base_gpu_op",
         ":gpu_softplus_kernels",
         "@eigen_archive//:eigen3",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -397,7 +409,7 @@ tf_kernel_library(
         ":base_gpu_op",
         ":gpu_softsign_kernels",
         "@eigen_archive//:eigen3",
-    ]),
+    ]) + ["//tensorflow/core/framework:types_proto_cc"],
 )
 
 tf_kernel_library(
@@ -418,6 +430,7 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:tensorflow",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
     ],
@@ -463,8 +476,16 @@ tf_cuda_cc_test(
     deps = [
         ":base_ops_test",
         ":base_unary_ops_test",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_types_hdr",
+        "//tensorflow/core:lib",
         "//tensorflow/core/common_runtime:device",
         "//tensorflow/core/common_runtime:device_factory",
+        "//tensorflow/core/framework:types_proto_cc",
+        "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
+        "@llvm-project//llvm:Support",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -484,8 +505,11 @@ tf_cuda_cc_test(
     deps = [
         ":base_ops_test",
         ":base_unary_ops_test",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_types_hdr",
         "//tensorflow/core/common_runtime:device",
         "//tensorflow/core/common_runtime:device_factory",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -554,6 +578,7 @@ tf_cuda_cc_test(
         ":base_ops_test",
         "//tensorflow/core/common_runtime:device",
         "//tensorflow/core/common_runtime:device_factory",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

@@ -1,20 +1,20 @@
 # GPU acceleration delegate with C/C++ API
 
 Using graphics processing units (GPUs) to run your machine learning (ML) models
-can dramatically improve the performance and the user experience
-of your ML-enabled applications. On Android devices, you can enable
-GPU-accelerated execution of your models using a
-[*delegate*](../../performance/delegates) and one of the following APIs:
+can dramatically improve the performance and the user experience of your
+ML-enabled applications. On Android devices, you can enable GPU-accelerated
+execution of your models using a
+[*delegate*](https://ai.google.dev/edge/litert/performance/delegates) and one of
+the following APIs:
 
-- Interpreter API - [guide](./gpu)
-- Task library API - [guide](./gpu_task)
-- Native (C/C++) API - this guide
+-   Interpreter API - [guide](./gpu)
+-   Task library API - [guide](./gpu_task.md)
+-   Native (C/C++) API - this guide
 
-This guide covers advanced
-uses of the GPU delegate for the C API, C++ API, and use of quantized models.
-For more information about using the GPU delegate for TensorFlow Lite,
-including best practices and advanced techniques, see the
-[GPU delegates](../../performance/gpu) page.
+This guide covers advanced uses of the GPU delegate for the C API, C++ API, and
+use of quantized models. For more information about using the GPU delegate for
+TensorFlow Lite, including best practices and advanced techniques, see the
+[GPU delegates](https://ai.google.dev/edge/litert/performance/gpu) page.
 
 ## Enable GPU acceleration
 
@@ -27,12 +27,15 @@ delegate with `TfLiteGpuDelegateV2Create()` and destroying it with
 auto model = FlatBufferModel::BuildFromFile(model_path);
 if (!model) return false;
 ops::builtin::BuiltinOpResolver op_resolver;
-std::unique_ptr<Interpreter> interpreter;
-InterpreterBuilder(*model, op_resolver)(&interpreter);
+InterpreterBuilder builder(*model, op_resolver);
 
 // NEW: Prepare GPU delegate.
 auto* delegate = TfLiteGpuDelegateV2Create(/*default options=*/nullptr);
-if (interpreter->ModifyGraphWithDelegate(delegate) != kTfLiteOk) return false;
+builder.AddDelegate(delegate);
+
+// Build interpreter.
+std::unique_ptr<Interpreter> interpreter;
+if (builder(&interpreter) != kTfLiteOk) return false;
 
 // Run inference.
 WriteToInputTensor(interpreter->typed_input_tensor<float>(0));
@@ -56,23 +59,26 @@ bazel build -c opt --config android_arm64 tensorflow/lite/delegates/gpu:delegate
 bazel build -c opt --config android_arm64 tensorflow/lite/delegates/gpu:libtensorflowlite_gpu_delegate.so  # for dynamic library
 ```
 
-When calling `Interpreter::ModifyGraphWithDelegate()` or
+When calling `InterpreterBuilder::operator()` (e.g. `builder(&interpreter)`),
+`Interpreter::ModifyGraphWithDelegate()`, or
 `Interpreter::Invoke()`, the caller must have an `EGLContext` in the current
 thread and `Interpreter::Invoke()` must be called from the same `EGLContext`. If
 an `EGLContext` does not exist, the delegate creates one internally, but then
 you must ensure that `Interpreter::Invoke()` is always called from the same
-thread in which `Interpreter::ModifyGraphWithDelegate()` was called.
+thread in which `InterpreterBuilder::operator()` or
+`Interpreter::ModifyGraphWithDelegate` was called.
 
 #### With TensorFlow Lite in Google Play Services:
 
-If you are using TensorFlow Lite in Google Play Services [C API](../native),
-you’ll need to use the Java/Kotlin API to check if a GPU delegate is available
-for your device before initializing the TensorFlow Lite runtime.
+If you are using TensorFlow Lite in Google Play Services
+[C API](https://ai.google.dev/edge/litert/android/native), you’ll need to use
+the Java/Kotlin API to check if a GPU delegate is available for your device
+before initializing the TensorFlow Lite runtime.
 
 Add the GPU delegate gradle dependencies to your application:
 
 ```
-implementation 'com.google.android.gms:play-services-tflite-gpu:16.2.0'
+implementation 'com.google.android.gms:play-services-tflite-gpu:16.4.0'
 ```
 
 Then, check the GPU availability and initialize TfLiteNative if the check is
@@ -162,13 +168,13 @@ The following code shows how to ***disable*** support for quantized models.
       <p><pre class="prettyprint lang-c++">
 TfLiteGpuDelegateOptionsV2 options = TfLiteGpuDelegateOptionsV2Default();
 options.experimental_flags = TFLITE_GPU_EXPERIMENTAL_FLAGS_NONE;
-
-auto* delegate = TfLiteGpuDelegateV2Create(options);
-if (interpreter->ModifyGraphWithDelegate(delegate) != kTfLiteOk) return false;
+auto* delegate = TfLiteGpuDelegateV2Create(&options);
+builder.AddDelegate(delegate);
       </pre></p>
     </section>
   </devsite-selector>
 </div>
 
-For more information about running quantized models with GPU acceleration,
-see [GPU delegate](../../performance/gpu#quantized-models) overview.
+For more information about running quantized models with GPU acceleration, see
+[GPU delegate](https://ai.google.dev/edge/litert/performance/gpu#quantized_models)
+overview.

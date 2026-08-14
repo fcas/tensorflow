@@ -88,7 +88,7 @@ void TF_Run_wrapper_helper(TF_DeprecatedSession* session, const char* handle,
   PyObject* value;
   Py_ssize_t pos = 0;
   int index = 0;
-  Status s;
+  absl::Status s;
 
   while (PyDict_Next(feed_dict, &pos, &key, &value)) {
     char* key_string = PyBytes_AsString(key);
@@ -191,11 +191,11 @@ void MakeCallableHelper(tensorflow::Session* session,
                                              callable_options->length)) {
     tsl::Set_TF_Status_from_Status(
         out_status,
-        absl::InvalidArgumentError("Unparseable CallableOptions proto"));
+        absl::InvalidArgumentError("Unparsable CallableOptions proto"));
     return;
   }
   tensorflow::Session::CallableHandle handle;
-  Status s = session->MakeCallable(callable_options_proto, &handle);
+  absl::Status s = session->MakeCallable(callable_options_proto, &handle);
   if (!s.ok()) {
     tsl::Set_TF_Status_from_Status(out_status, s);
     return;
@@ -221,7 +221,7 @@ void RunCallableHelper(tensorflow::Session* session, int64_t handle,
                        PyObjectVector* out_values, TF_Buffer* run_metadata) {
   // Convert feed values to a vector of tensorflow::Tensor objects.
   std::vector<Tensor> input_tensors;
-  Status s;
+  absl::Status s;
   {
     feed_values =
         PySequence_Fast(feed_values, "feed_values must be a sequence");
@@ -369,7 +369,7 @@ void TF_SessionRun_wrapper_helper(TF_Session* session, const char* handle,
   DCHECK_EQ(inputs.size(), input_ndarrays.size());
   DCHECK(py_outputs != nullptr);
   DCHECK(py_outputs->empty());
-  Status s;
+  absl::Status s;
 
   // Convert input ndarray PyObjects to TF_Tensors. We maintain a continuous
   // array of TF_Tensor*s as well as scoped containers to make sure they're
@@ -460,7 +460,8 @@ void TF_SessionRun_wrapper(TF_Session* session, const TF_Buffer* run_options,
   ClearDecrefCache();
 }
 
-string EqualGraphDefWrapper(const string& actual, const string& expected) {
+std::string EqualGraphDefWrapper(const std::string& actual,
+                                 const std::string& expected) {
   GraphDef actual_def;
   if (!actual_def.ParseFromString(actual)) {
     return "actual is not a valid serialized GraphDef";
@@ -469,11 +470,12 @@ string EqualGraphDefWrapper(const string& actual, const string& expected) {
   if (!expected_def.ParseFromString(expected)) {
     return "expected is not a valid serialized GraphDef";
   }
-  string diff;
+  std::string diff;
   return EqualGraphDef(actual_def, expected_def, &diff) ? "" : diff;
 }
 
-string EqualAttrValueWrapper(const string& actual, const string& expected) {
+std::string EqualAttrValueWrapper(const std::string& actual,
+                                  const std::string& expected) {
   AttrValue actual_attr_value;
   if (!actual_attr_value.ParseFromString(actual)) {
     return "actual is not a valid serialized AttrValue";
@@ -484,9 +486,9 @@ string EqualAttrValueWrapper(const string& actual, const string& expected) {
     return "expected is not a valid serialized AttrValue";
   }
 
-  string diff;
+  std::string diff;
   if (!AreAttrValuesEqual(actual_attr_value, expected_attr_value)) {
-    diff = strings::Printf(
+    diff = absl::StrFormat(
         "Actual AttrValue %s does not match Expected AttrValue %s.",
         SummarizeAttrValue(actual_attr_value).c_str(),
         SummarizeAttrValue(expected_attr_value).c_str());
@@ -646,7 +648,7 @@ void TF_GraphSetOutputHandleShapesAndTypes_wrapper(
                                         types.data(), status);
 }
 
-void CreatePlaceholder(TF_Graph* graph, TF_Status* s, string&& name,
+void CreatePlaceholder(TF_Graph* graph, TF_Status* s, std::string&& name,
                        TF_DataType dtype, TF_Output* output) {
   TF_OperationDescription* desc =
       TF_NewOperation(graph, "Placeholder", name.data());
@@ -699,14 +701,15 @@ void TF_GraphSetTensorShape_wrapper(TF_Graph* graph, TF_Output output,
   TF_GraphSetTensorShape(graph, output, dims.data(), dims.size(), status);
 }
 
-std::vector<string> TF_ImportGraphDefResultsMissingUnusedInputMappings_wrapper(
+std::vector<std::string>
+TF_ImportGraphDefResultsMissingUnusedInputMappings_wrapper(
     TF_ImportGraphDefResults* results) {
   int num_missing_unused_input_mappings;
   const char** src_names;
   int* src_indexes;
   TF_ImportGraphDefResultsMissingUnusedInputMappings(
       results, &num_missing_unused_input_mappings, &src_names, &src_indexes);
-  std::vector<string> input_strs(num_missing_unused_input_mappings);
+  std::vector<std::string> input_strs(num_missing_unused_input_mappings);
   for (int i = 0; i < num_missing_unused_input_mappings; ++i) {
     input_strs[i] = TensorId(src_names[i], src_indexes[i]).ToString();
   }
@@ -722,7 +725,7 @@ PyObject* TF_TryEvaluateConstant_wrapper(TF_Graph* graph, TF_Output output,
 
   Safe_TF_TensorPtr safe_result_tensor(result_tensor);
   PyObject* out;
-  Status s = TF_TensorToPyArray(std::move(safe_result_tensor), &out);
+  absl::Status s = TF_TensorToPyArray(std::move(safe_result_tensor), &out);
   tsl::Set_TF_Status_from_Status(status, s);
   if (!s.ok()) Py_RETURN_NONE;
   return PyArray_Return(reinterpret_cast<PyArrayObject*>(out));

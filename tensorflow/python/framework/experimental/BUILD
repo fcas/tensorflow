@@ -1,7 +1,23 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Experimental Unified APIs for Eager and Graph modes.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_python_pybind_extension")
+load("//tensorflow/core/platform:build_config_root.bzl", "if_pywrap")
 load(
     "//tensorflow/tools/test:performance.bzl",
     "cuda_py_benchmark_test",
@@ -20,13 +36,22 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "_unified_api.pyi",
     ],
+    starlark_only = True,
+    visibility = [
+        "//tensorflow/python:__pkg__",
+    ],
     deps = [
         "//tensorflow/c/eager:tfe_tensorhandle_internal",
+        "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/lib/llvm_rtti",
+        "//tensorflow/core/platform:refcount",
         "//tensorflow/python:unified_api_pywrap_required_headers",
         "//tensorflow/python/lib/core:pybind11_lib",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@pybind11",
     ],
 )
@@ -35,6 +60,10 @@ tf_python_pybind_extension(
     name = "_tape",
     srcs = ["tape.cc"],
     features = ["-layering_check"],
+    starlark_only = True,
+    visibility = [
+        "//tensorflow/python:__pkg__",
+    ],
     deps = [
         "//tensorflow/c/eager:tfe_tensorhandle_internal",
         "//tensorflow/core:lib",
@@ -42,8 +71,16 @@ tf_python_pybind_extension(
         "//tensorflow/core/lib/llvm_rtti",
         "//tensorflow/python:unified_api_pywrap_required_headers",
         "//tensorflow/python/lib/core:pybind11_lib",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
         "@pybind11",
-    ],
+    ] + if_pywrap(
+        if_true = [
+            "//tensorflow/c/experimental/gradients/tape:tape_context",
+            "//tensorflow/c/experimental/gradients:math_grad",
+            "//tensorflow/c/experimental/gradients:nn_grad",
+        ],
+    ),
 )
 
 tf_python_pybind_extension(
@@ -53,6 +90,10 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "_math_ops.pyi",
     ],
+    starlark_only = True,
+    visibility = [
+        "//tensorflow/python:__pkg__",
+    ],
     deps = [
         "//tensorflow/c/eager:tfe_tensorhandle_internal",
         "//tensorflow/core:framework",
@@ -63,7 +104,11 @@ tf_python_pybind_extension(
         "//tensorflow/python/lib/core:pybind11_lib",
         "@com_google_absl//absl/types:span",
         "@pybind11",
-    ],
+    ] + if_pywrap(
+        if_true = [
+            "//tensorflow/c/experimental/ops:math_ops",
+        ],
+    ),
 )
 
 tf_python_pybind_extension(
@@ -73,6 +118,10 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "_nn_ops.pyi",
     ],
+    starlark_only = True,
+    visibility = [
+        "//tensorflow/python:__pkg__",
+    ],
     deps = [
         "//tensorflow/c/eager:tfe_tensorhandle_internal",
         "//tensorflow/core:framework",
@@ -81,42 +130,47 @@ tf_python_pybind_extension(
         "//tensorflow/core/lib/llvm_rtti",
         "//tensorflow/python:unified_api_pywrap_required_headers",
         "//tensorflow/python/lib/core:pybind11_lib",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@pybind11",
-    ],
+    ] + if_pywrap(
+        if_true = [
+            "//tensorflow/c/experimental/ops:nn_ops",
+        ],
+    ),
 )
 
-py_strict_library(
+py_library(
     name = "gradient_registry",
     srcs = ["gradient_registry.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":_tape"],
 )
 
-py_strict_library(
+py_library(
     name = "math_ops",
     srcs = ["math_ops.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":_math_ops",
         ":context_stack",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "nn_ops",
     srcs = ["nn_ops.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":_nn_ops",
         ":context_stack",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "tape",
     srcs = ["tape.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":_tape",
         ":context_stack",
@@ -125,10 +179,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "def_function",
     srcs = ["def_function.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":_unified_api",
         ":context_stack",
@@ -136,16 +190,16 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "thread_local_stack",
     srcs = ["thread_local_stack.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
 )
 
-py_strict_library(
+py_library(
     name = "context_stack",
     srcs = ["context_stack.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [":thread_local_stack"],
 )
 

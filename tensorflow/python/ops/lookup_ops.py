@@ -659,7 +659,7 @@ class TextFileInitializer(TableInitializerBase):
   ...   key_dtype=tf.string, key_index=tf.lookup.TextFileIndex.WHOLE_LINE,
   ...   value_dtype=tf.int64, value_index=tf.lookup.TextFileIndex.LINE_NUMBER)
   >>> table = tf.lookup.StaticHashTable(init, -1)
-  >>> table.lookup(tf.constant('palmer 30')).numpy()
+  >>> print(table.lookup(tf.constant('palmer 30')).numpy())
   2
   """
 
@@ -788,29 +788,14 @@ class TextFileInitializer(TableInitializerBase):
 
   @property
   def _shared_name(self):
+    shared_name_parts = ["hash_table", str(self._filename_arg)]
     if self._vocab_size:
-      # Keep the shared_name:
-      # <table_type>_<filename>_<vocab_size>_<key_index>_<value_index>_<offset>
-      if self._offset:
-        shared_name = "hash_table_%s_%d_%s_%s_%s" % (
-            self._filename_arg, self._vocab_size, self._key_index,
-            self._value_index, self._offset)
-      else:
-        shared_name = "hash_table_%s_%d_%s_%s" % (
-            self._filename_arg, self._vocab_size, self._key_index,
-            self._value_index)
-    else:
-      # Keep the shared_name
-      # <table_type>_<filename>_<key_index>_<value_index>_<offset>
-      if self._offset:
-        shared_name = "hash_table_%s_%s_%s_%s" % (
-            self._filename_arg, self._key_index, self._value_index,
-            self._offset)
-      else:
-        shared_name = "hash_table_%s_%s_%s" % (
-            self._filename_arg, self._key_index, self._value_index)
-
-    return shared_name
+      shared_name_parts.append(str(self._vocab_size))
+    shared_name_parts.extend([str(self._key_index), str(self._value_index)])
+    if self._offset:
+      shared_name_parts.append(str(self._offset))
+    shared_name_parts.extend([self.key_dtype.name, self.value_dtype.name])
+    return "_".join(shared_name_parts)
 
 
 class TextFileStringTableInitializer(TextFileInitializer):
@@ -1822,7 +1807,7 @@ class MutableHashTable(LookupInterface):
   array([ 7, 8, -1])
   >>> sorted(table.export()[0].numpy())
   [b'a', b'b']
-  >>> sorted(table.export()[1].numpy())
+  >>> [a.item() for a in sorted(table.export()[1].numpy())]
   [7, 8]
   """
 

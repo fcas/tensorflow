@@ -27,12 +27,14 @@ this file with a file generated from [`api_template.__init__.py`](https://www.gi
 """
 # pylint: disable=g-bad-import-order,protected-access,g-import-not-at-top
 
-import distutils as _distutils
+import sysconfig as _sysconfig
 import importlib
 import inspect as _inspect
 import os as _os
 import site as _site
 import sys as _sys
+
+_os.environ.setdefault("ENABLE_RUNTIME_UPTIME_TELEMETRY", "1")
 
 # Do not remove this line; See https://github.com/tensorflow/tensorflow/issues/42596
 from tensorflow.python import pywrap_tensorflow as _pywrap_tensorflow  # pylint: disable=unused-import
@@ -72,12 +74,12 @@ _tf_uses_legacy_keras = (
     _os.environ.get("TF_USE_LEGACY_KERAS", None) in ("true", "True", "1"))
 setattr(_current_module, "keras", _KerasLazyLoader(globals()))
 _module_dir = _module_util.get_parent_dir_for_name("keras._tf_keras.keras")
-_current_module.__path__ = [_module_dir] + _current_module.__path__
+_current_module.__path__ = [_module_dir] + list(_current_module.__path__)
 if _tf_uses_legacy_keras:
   _module_dir = _module_util.get_parent_dir_for_name("tf_keras.api._v2.keras")
 else:
   _module_dir = _module_util.get_parent_dir_for_name("keras.api._v2.keras")
-_current_module.__path__ = [_module_dir] + _current_module.__path__
+_current_module.__path__ = [_module_dir] + list(_current_module.__path__)
 
 
 # Enable TF2 behaviors
@@ -96,12 +98,15 @@ from tensorflow.python.lib.io import file_io as _fi
 _site_packages_dirs = []
 if _site.ENABLE_USER_SITE and _site.USER_SITE is not None:
   _site_packages_dirs += [_site.USER_SITE]
-_site_packages_dirs += [p for p in _sys.path if "site-packages" in p]
+_site_packages_dirs += [str(p) for p in _sys.path if "site-packages" in str(p)]
 if "getsitepackages" in dir(_site):
   _site_packages_dirs += _site.getsitepackages()
 
-if "sysconfig" in dir(_distutils):
-  _site_packages_dirs += [_distutils.sysconfig.get_python_lib()]
+for _scheme in _sysconfig.get_scheme_names():
+  for _name in ["purelib", "platlib"]:
+    _path = _sysconfig.get_path(_name, _scheme)
+    if _path is not None:
+      _site_packages_dirs.append(_path)
 
 _site_packages_dirs = list(set(_site_packages_dirs))
 

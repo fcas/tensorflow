@@ -1,11 +1,26 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Defines the build rules to disable non-core TF libraries."""
 
-load("//third_party/bazel_rules/rules_python/python:py_binary.bzl", "py_binary")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 
 def _tf_core_transition_impl(settings, attr):
     _ignore = (settings, attr)  # @unused
     return {
-        "@local_tsl//tsl/framework/contraction:disable_onednn_contraction_kernel": True,
+        "@xla//xla/tsl/framework/contraction:disable_onednn_contraction_kernel": True,
         "//tensorflow/compiler/mlir/python:disable_mlir": True,
     }
 
@@ -13,7 +28,7 @@ _tf_core_transition = transition(
     implementation = _tf_core_transition_impl,
     inputs = [],
     outputs = [
-        "@local_tsl//tsl/framework/contraction:disable_onednn_contraction_kernel",
+        "@xla//xla/tsl/framework/contraction:disable_onednn_contraction_kernel",
         "//tensorflow/compiler/mlir/python:disable_mlir",
     ],
 )
@@ -25,6 +40,7 @@ def _py_binary_tf_core_impl(ctx):
     ctx.actions.run_shell(
         inputs = [ctx.executable.py_binary],
         outputs = [out],
+        mnemonic = "TfCorePyBinaryCopy",
         command = "cp %s %s" % (ctx.executable.py_binary.path, out.path),
     )
 

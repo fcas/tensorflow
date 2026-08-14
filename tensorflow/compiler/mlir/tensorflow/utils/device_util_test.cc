@@ -48,10 +48,12 @@ class FakeDevice : public Device {
   explicit FakeDevice(const DeviceAttributes& device_attributes)
       : Device(nullptr, device_attributes) {}
 
-  Status Sync() override { return errors::Unimplemented("FakeDevice::Sync()"); }
+  absl::Status Sync() override {
+    return absl::UnimplementedError("FakeDevice::Sync()");
+  }
 
-  static std::unique_ptr<Device> Make(const string& name,
-                                      const string& desc = "") {
+  static std::unique_ptr<Device> Make(const std::string& name,
+                                      const std::string& desc = "") {
     DeviceNameUtils::ParsedName parsed_name;
     DeviceNameUtils::ParseFullName(name, &parsed_name);
 

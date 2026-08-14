@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <utility>
 
+#include "mhlo/transforms/passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/IR/Attributes.h"
@@ -26,11 +26,11 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
+namespace mhlo {
 
 #define GEN_PASS_DEF_TESTINFERSHAPEDTYPEMETHODSPASS
 #include "mhlo/transforms/mhlo_passes.h.inc"
 
-namespace mhlo {
 namespace {
 
 struct InferReturnTypesPattern : public RewritePattern {
@@ -67,7 +67,7 @@ struct InferReturnTypesPattern : public RewritePattern {
 };
 
 struct ReifyReturnTypeShapesPattern : public RewritePattern {
-  ReifyReturnTypeShapesPattern(MLIRContext *context)
+  explicit ReifyReturnTypeShapesPattern(MLIRContext* context)
       : RewritePattern("mhlo_test.reify_return_type_shapes", 1, context) {}
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
@@ -95,18 +95,13 @@ struct TestInferShapedTypeMethodsPass
     RewritePatternSet patterns(&getContext());
     patterns.add<InferReturnTypesPattern>(&getContext());
     patterns.add<ReifyReturnTypeShapesPattern>(&getContext());
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       return signalPassFailure();
     }
   }
 };
 
 }  // namespace
-
-std::unique_ptr<::mlir::Pass> createTestInferShapedTypeMethodsPass() {
-  return std::make_unique<TestInferShapedTypeMethodsPass>();
-}
 
 }  // namespace mhlo
 }  // namespace mlir

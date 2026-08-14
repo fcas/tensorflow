@@ -1,7 +1,22 @@
-load("//tensorflow:pytype.default.bzl", "pytype_strict_contrib_test", "pytype_strict_library")
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
 
-# Placeholder: load py_proto_library
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:proto.bzl", "py_proto_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:pytype.default.bzl", "pytype_strict_contrib_test", "pytype_strict_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -104,14 +119,12 @@ pytype_strict_contrib_test(
 tf_proto_library(
     name = "calibration_statistics_proto",
     srcs = ["calibration_statistics.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
 )
 
 # copybara:uncomment_begin(google-only)
 # py_proto_library(
 #     name = "calibration_statistics_py_pb2",
-#     api_version = 2,
 #     deps = [
 #         ":calibration_statistics_proto",
 #     ],
@@ -148,7 +161,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:errors",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -163,7 +176,7 @@ tf_gen_op_wrapper_py(
     ],
     # Prevent unintentionally generating Python wrappers for all TF ops.
     op_allowlist = ["CustomAggregator"],
-    py_lib_rule = py_strict_library,
+    py_lib_rule = py_library,
     visibility = ["//visibility:private"],
     deps = [":custom_aggregator_op"],
 )
@@ -189,10 +202,7 @@ tf_kernel_library(
     name = "calibration_statistics_saver_op",
     srcs = ["calibration_statistics_saver_op.cc"],
     compatible_with = get_compatible_with_portable(),
-    visibility = [
-        "//tensorflow:__pkg__",
-        "//tensorflow/compiler/mlir/quantization/tensorflow/python:__pkg__",
-    ],
+    visibility = ["//tensorflow/compiler/mlir/quantization/tensorflow/python:__pkg__"],
     deps = [
         ":calibration_statistics_collector_average_min_max",
         ":calibration_statistics_collector_base",
@@ -205,10 +215,11 @@ tf_kernel_library(
         "//tensorflow/core/platform:logging",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/platform:env",
+        "@xla//xla/tsl/platform:env",
     ],
 )
 
@@ -225,9 +236,9 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:status_matchers",
+        "@xla//xla/tsl/platform:errors",
     ],
 )

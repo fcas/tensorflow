@@ -13,10 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
+#include <cstdint>
 #include <fstream>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -27,13 +35,11 @@ limitations under the License.
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/init_main.h"
 #include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/tstring.h"
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/util/command_line_flags.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/types.h"
 
 // These are all common classes it's handy to reference with no namespace.
 using tensorflow::Flag;
@@ -53,8 +59,8 @@ Status LoadGraph(const string& graph_file_name,
   Status load_graph_status =
       ReadBinaryProto(tensorflow::Env::Default(), graph_file_name, &graph_def);
   if (!load_graph_status.ok()) {
-    return tensorflow::errors::NotFound("Failed to load compute graph at '",
-                                        graph_file_name, "'");
+    return absl::NotFoundError(absl::StrCat("Failed to load compute graph at '",
+                                            graph_file_name, "'"));
   }
   session->reset(tensorflow::NewSession(tensorflow::SessionOptions()));
   Status session_create_status = (*session)->Create(graph_def);
@@ -69,8 +75,8 @@ Status LoadGraph(const string& graph_file_name,
 Status ReadLabelsFile(const string& file_name, std::vector<string>* result) {
   std::ifstream file(file_name);
   if (!file) {
-    return tensorflow::errors::NotFound("Labels file ", file_name,
-                                        " not found.");
+    return absl::NotFoundError(
+        absl::StrCat("Labels file ", file_name, " not found."));
   }
   result->clear();
   string line;

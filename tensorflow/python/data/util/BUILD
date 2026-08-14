@@ -1,4 +1,20 @@
-load("//tensorflow:strict.default.bzl", "py_strict_library", "py_strict_test")
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -6,21 +22,20 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "nest",
     srcs = ["nest.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/util:nest_util",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "nest_test",
     size = "small",
     srcs = ["nest_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nest",
         "//tensorflow/python/data/kernel_tests:test_base",
@@ -37,10 +52,10 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "sparse",
     srcs = ["sparse.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nest",
         "//tensorflow/python/framework:dtypes",
@@ -51,12 +66,11 @@ py_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "sparse_test",
     size = "small",
     srcs = ["sparse_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nest",
         ":sparse",
@@ -72,10 +86,10 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "structure",
     srcs = ["structure.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nest",
         "//tensorflow/python/framework:composite_tensor",
@@ -94,16 +108,15 @@ py_strict_library(
         "//tensorflow/python/util:deprecation",
         "//tensorflow/python/util:nest_util",
         "//tensorflow/python/util:tf_export",
-        "@pypi_wrapt//:pkg",
+        "@pypi//wrapt",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "structure_test",
     size = "small",
     srcs = ["structure_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":nest",
         ":structure",
@@ -125,23 +138,22 @@ py_strict_test(
         "//tensorflow/python/util:compat",
         "//third_party/py/numpy",
         "@absl_py//absl/testing:parameterized",
-        "@pypi_wrapt//:pkg",
+        "@pypi//wrapt",
     ],
 )
 
-py_strict_library(
+py_library(
     name = "options",
     srcs = ["options.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["@absl_py//absl/logging"],
 )
 
-py_strict_test(
+py_test(
     name = "options_test",
     size = "small",
     srcs = ["options_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":options",
         "//tensorflow/python/data/kernel_tests:test_base",
@@ -151,10 +163,10 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "convert",
     srcs = ["convert.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
@@ -163,12 +175,11 @@ py_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "convert_test",
     size = "small",
     srcs = ["convert_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":convert",
         "//tensorflow/python/data/kernel_tests:test_base",
@@ -181,10 +192,10 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "random_seed",
     srcs = ["random_seed.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
@@ -195,12 +206,11 @@ py_strict_library(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "random_seed_test",
     size = "medium",
     srcs = ["random_seed_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":random_seed",
         "//tensorflow/python/data/kernel_tests:test_base",
@@ -213,21 +223,20 @@ py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "traverse",
     srcs = ["traverse.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/framework:dtypes",
     ],
 )
 
-py_strict_test(
+py_test(
     name = "traverse_test",
     size = "small",
     srcs = ["traverse_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":traverse",
         "//tensorflow/python/compat",

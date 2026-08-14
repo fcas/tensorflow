@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <random>
@@ -25,22 +26,24 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "fp16.h"  // from @FP16
-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+#include "flatbuffers/buffer.h"  // from @flatbuffers
+#include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
+#include "flatbuffers/string.h"  // from @flatbuffers
+#include "tensorflow/compiler/mlir/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/core/interpreter_builder.h"
 #include "tensorflow/lite/core/kernels/register.h"
-#include "tensorflow/lite/core/model.h"
 #include "tensorflow/lite/delegates/xnnpack/test_util.h"
 #include "tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h"
 #include "tensorflow/lite/interpreter.h"
-#include "tensorflow/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/lite/profiling/buffered_profiler.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
 namespace tflite {
 namespace xnnpack {
 
-void Conv2DTester::Test(TfLiteDelegate* delegate) const {
-  std::vector<char> buffer = CreateTfLiteModel();
-  const Model* model = GetModel(buffer.data());
+void Conv2DTester::Test(TfLiteDelegate* delegate) {
+  const Model* model = GetModel();
 
   std::unique_ptr<Interpreter> delegate_interpreter;
   ASSERT_EQ(
@@ -69,10 +72,16 @@ void Conv2DTester::Test(TfLiteDelegate* delegate) const {
   ASSERT_EQ(delegate_interpreter->AllocateTensors(), kTfLiteOk);
   ASSERT_EQ(default_interpreter->AllocateTensors(), kTfLiteOk);
 
+  std::unique_ptr<::tflite::profiling::BufferedProfiler> profiler;
+  if (yield_fp16_precision_) {
+    profiler = std::make_unique<::tflite::profiling::BufferedProfiler>(1024);
+    delegate_interpreter->SetProfiler(profiler.get());
+  }
+
   ASSERT_EQ(delegate_interpreter->ModifyGraphWithDelegate(delegate), kTfLiteOk);
 
   if (weights_cache_ != nullptr) {
-    TfLiteXNNPackDelegateWeightsCacheFinalizeHard(weights_cache_);
+    TfLiteXNNPackDelegateWeightsCacheFinalizeSoft(weights_cache_);
   }
 
   std::random_device random_device;
@@ -90,8 +99,18 @@ void Conv2DTester::Test(TfLiteDelegate* delegate) const {
               BatchSize() * InputHeight() * InputWidth() * InputChannels(),
               delegate_input_data);
 
+  if (profiler) {
+    profiler->StartProfiling();
+  }
+
   ASSERT_EQ(default_interpreter->Invoke(), kTfLiteOk);
   ASSERT_EQ(delegate_interpreter->Invoke(), kTfLiteOk);
+
+  if (profiler) {
+    profiler->StopProfiling();
+    EXPECT_TRUE(HasConvertNode(profiler.get()))
+        << "Expected Convert nodes in FP16 rewrite";
+  }
 
   float* default_output_data =
       default_interpreter->typed_output_tensor<float>(0);
@@ -105,8 +124,14 @@ void Conv2DTester::Test(TfLiteDelegate* delegate) const {
           const int32_t index = ((i * OutputHeight() + y) * OutputWidth() + x) *
                                     OutputChannels() +
                                 c;
+          float tolerance =
+              std::abs(default_output_data[index]) * RelativeTolerance();
+          if (RelativeTolerance() > 0.0f) {
+            const float floor = yield_fp16_precision_ ? 1.0e-3f : 1.0e-5f;
+            tolerance = std::max(tolerance, floor);
+          }
           ASSERT_NEAR(default_output_data[index], delegate_output_data[index],
-                      std::abs(default_output_data[index]) * 3.0e-6f)
+                      tolerance)
               << "batch " << i << " / " << BatchSize() << ", y position " << y
               << " / " << OutputHeight() << ", x position " << x << " / "
               << OutputWidth() << ", channel " << c << " / "

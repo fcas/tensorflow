@@ -16,11 +16,15 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_TOOLS_DELEGATES_COMPATIBILITY_NNAPI_NNAPI_COMPATIBILITY_LIB_H_
 #define TENSORFLOW_LITE_TOOLS_DELEGATES_COMPATIBILITY_NNAPI_NNAPI_COMPATIBILITY_LIB_H_
 
+#include <cstdint>
 #include <map>
 #include <vector>
 
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate_kernel.h"
+
+// WARNING: this header file is DEPRECATED.
+// See https://developer.android.com/ndk/guides/neuralnetworks/migration-guide.
 
 namespace tflite {
 namespace tools {

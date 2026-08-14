@@ -149,6 +149,15 @@ def _legacy_contrib_should_record_summaries():
   return _should_record_summaries_internal(default_state=False)
 
 
+def is_recording_summaries():
+  """Returns non-Tensor boolean indicating if summaries are being recorded."""
+  if _summary_state.writer is None:
+    return False
+  if _summary_state.is_recording is None:
+    return False
+  return _summary_state.is_recording
+
+
 @tf_export("summary.record_if", v1=[])
 @tf_contextlib.contextmanager
 def record_if(condition):
@@ -758,6 +767,8 @@ def write(tag, tensor, step=None, metadata=None, name=None):
     ValueError: if a default writer exists, but no step was provided and
       `tf.summary.experimental.get_step()` is None.
   """
+  if step is not None:
+    _choose_step(step)
   with ops.name_scope(name, "write_summary") as scope:
     if _summary_state.writer is None:
       return constant_op.constant(False)
@@ -829,6 +840,8 @@ def write_raw_pb(tensor, step=None, name=None):
     ValueError: if a default writer exists, but no step was provided and
       `tf.summary.experimental.get_step()` is None.
   """
+  if step is not None:
+    _choose_step(step)
   with ops.name_scope(name, "write_raw_pb") as scope:
     if _summary_state.writer is None:
       return constant_op.constant(False)
@@ -893,7 +906,8 @@ def summary_writer_function(name, tensor, function, family=None):
 
 def generic(name, tensor, metadata=None, family=None, step=None):
   """Writes a tensor summary if possible."""
-
+  if step is not None:
+    _choose_step(step)
   def function(tag, scope):
     if metadata is None:
       serialized_metadata = constant_op.constant("")
@@ -931,7 +945,8 @@ def scalar(name, tensor, family=None, step=None):
     The created `tf.Operation` or a `tf.no_op` if summary writing has
     not been enabled for this context.
   """
-
+  if step is not None:
+    _choose_step(step)
   def function(tag, scope):
     # Note the identity to move the tensor to the CPU.
     return gen_summary_ops.write_scalar_summary(
@@ -946,7 +961,8 @@ def scalar(name, tensor, family=None, step=None):
 
 def histogram(name, tensor, family=None, step=None):
   """Writes a histogram summary if possible."""
-
+  if step is not None:
+    _choose_step(step)
   def function(tag, scope):
     # Note the identity to move the tensor to the CPU.
     return gen_summary_ops.write_histogram_summary(
@@ -961,7 +977,8 @@ def histogram(name, tensor, family=None, step=None):
 
 def image(name, tensor, bad_color=None, max_images=3, family=None, step=None):
   """Writes an image summary if possible."""
-
+  if step is not None:
+    _choose_step(step)
   def function(tag, scope):
     bad_color_ = (constant_op.constant([255, 0, 0, 255], dtype=dtypes.uint8)
                   if bad_color is None else bad_color)
@@ -980,7 +997,8 @@ def image(name, tensor, bad_color=None, max_images=3, family=None, step=None):
 
 def audio(name, tensor, sample_rate, max_outputs, family=None, step=None):
   """Writes an audio summary if possible."""
-
+  if step is not None:
+    _choose_step(step)
   def function(tag, scope):
     # Note the identity to move the tensor to the CPU.
     return gen_summary_ops.write_audio_summary(
@@ -1025,6 +1043,9 @@ def graph_v1(param, step=None, name=None):
   Raises:
     TypeError: If `param` isn't already a `tf.Tensor` in graph mode.
   """
+  if step is not None:
+    _choose_step(step)
+
   if not context.executing_eagerly() and not isinstance(
       param, tensor_lib.Tensor
   ):
@@ -1061,8 +1082,8 @@ def graph(graph_data):
 
   @tf.function
   def f():
-    x = constant_op.constant(2)
-    y = constant_op.constant(3)
+    x = tf.constant(2)
+    y = tf.constant(3)
     return x**y
 
   with writer.as_default():
@@ -1203,14 +1224,18 @@ def _serialize_graph(arbitrary_graph):
   else:
     return arbitrary_graph.SerializeToString()
 
-
 def _choose_step(step):
   if step is None:
     return training_util.get_or_create_global_step()
-  if not isinstance(step, tensor_lib.Tensor):
-    return ops.convert_to_tensor(step, dtypes.int64)
-  return step
 
+  step = ops.convert_to_tensor(step, dtypes.int64)
+
+  if step.shape.num_elements() != 1:
+    raise ValueError(
+        "Argument `step` must be a scalar. "
+        f"Received step with shape {step.shape}."
+    )
+  return step
 
 def _check_create_file_writer_args(inside_function, **kwargs):
   """Helper to check the validity of arguments to a create_file_writer() call.
@@ -1403,6 +1428,8 @@ def trace_export(name, step=None, profiler_outdir=None):
   # TODO(stephanlee): See if we can remove profiler_outdir and infer it from
   # the SummaryWriter's logdir.
   global _current_trace_context
+  if step is not None:
+    _choose_step(step)
 
   if ops.inside_function():
     logging.warn("Cannot export trace inside a tf.function.")

@@ -15,8 +15,8 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_TOOLS_SERIALIZATION_ENUM_MAPPING_H_
 #define TENSORFLOW_LITE_TOOLS_SERIALIZATION_ENUM_MAPPING_H_
 
+#include "tensorflow/compiler/mlir/lite/schema/mutable/schema_generated.h"
 #include "tensorflow/lite/builtin_op_data.h"
-#include "tensorflow/lite/schema/mutable/schema_generated.h"
 
 // TODO(aselle): Ideally extract this from the schema.
 
@@ -72,8 +72,16 @@ inline TensorType TfLiteTypeToSchemaType(TfLiteType type) {
       return TensorType_INT32;
     case kTfLiteUInt32:
       return TensorType_UINT32;
+    case kTfLiteUInt4:
+      return TensorType_UINT4;
+    case kTfLiteFloat8E4M3FN:
+      return TensorType_FLOAT8_E4M3FN;
+    case kTfLiteFloat8E5M2:
+      return TensorType_FLOAT8_E5M2;
     case kTfLiteInt4:
       return TensorType_INT4;
+    case kTfLiteInt2:
+      return TensorType_INT2;
     case kTfLiteUInt8:
       return TensorType_UINT8;
     case kTfLiteInt8:

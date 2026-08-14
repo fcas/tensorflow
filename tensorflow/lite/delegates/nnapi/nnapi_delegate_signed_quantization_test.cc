@@ -12,13 +12,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <cstddef>
+#include <cstdint>
 #include <initializer_list>
+#include <map>
 #include <memory>
+#include <vector>
 
 #include <gtest/gtest.h>
-#include "tensorflow/lite/builtin_ops.h"
 #include "tensorflow/lite/core/c/common.h"
-#include "tensorflow/lite/core/model.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate.h"
 #include "tensorflow/lite/delegates/nnapi/nnapi_delegate_mock_test.h"
 #include "tensorflow/lite/interpreter.h"
@@ -26,6 +28,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/test_util.h"
 #include "tensorflow/lite/nnapi/NeuralNetworksTypes.h"
 #include "tensorflow/lite/nnapi/nnapi_implementation.h"
+#include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
 
@@ -40,26 +43,25 @@ TfLiteRegistration* Register_DEQUANTIZE();
 
 namespace {
 
+void StatefulNnApiDelegateDelete(TfLiteDelegate* delegate) {
+  delete static_cast<StatefulNnApiDelegate*>(delegate);
+}
+
 class SingleOpModelWithNNAPI : public SingleOpModel {
  public:
   SingleOpModelWithNNAPI() = default;
-  ~SingleOpModelWithNNAPI() { stateful_delegate_.reset(); }
   void Init(const NnApi* nnapi) {
     options_.disallow_nnapi_cpu = false;
-    stateful_delegate_ =
-        std::make_unique<StatefulNnApiDelegate>(nnapi, options_);
-    SetDelegate(stateful_delegate_.get());
+    SetDelegate({new StatefulNnApiDelegate(nnapi, options_),
+                 StatefulNnApiDelegateDelete});
   }
 
-  StatefulNnApiDelegate* GetDelegate() { return stateful_delegate_.get(); }
-
   void SetBufferHandle(int index, TfLiteBufferHandle handle) {
-    interpreter_->SetBufferHandle(index, handle, stateful_delegate_.get());
+    interpreter_->SetBufferHandle(index, handle, delegate_.get());
   }
   TfLiteStatus GetCompilationStatus() { return compilation_status_; }
 
  protected:
-  std::unique_ptr<StatefulNnApiDelegate> stateful_delegate_;
   StatefulNnApiDelegate::Options options_;
   TfLiteStatus compilation_status_;
 };
@@ -96,10 +98,10 @@ class HybridFullyConnectedOpModel : public SingleOpModelWithNNAPI {
                  BuiltinOptions_FullyConnectedOptions, options);
     resolver_ = std::make_unique<SingleOpResolver>(
         BuiltinOperator_FULLY_CONNECTED,
-        ops::builtin::Register_FULLY_CONNECTED_PIE());
+        ops::builtin::Register_FULLY_CONNECTED_GENERIC_OPT());
     BuildInterpreter({GetShape(input_), GetShape(weights_), GetShape(bias_)},
                      /*num_threads=*/-1,
-                     /* allow_fp32_relax_to_fp16 */ false,
+                     /*allow_fp32_relax_to_fp16=*/false,
                      /*apply_delegate=*/false);
     compilation_status_ = ApplyDelegate();
   }

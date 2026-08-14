@@ -40,16 +40,16 @@ class OpDefBuilderTest : public ::testing::Test {
  protected:
   OpDefBuilder b() { return OpDefBuilder("Test"); }
 
-  void ExpectSuccess(const OpDefBuilder& builder, StringPiece proto,
+  void ExpectSuccess(const OpDefBuilder& builder, absl::string_view proto,
                      OpShapeInferenceFn* shape_fn_out = nullptr) {
     OpRegistrationData op_reg_data;
-    Status status = builder.Finalize(&op_reg_data);
+    absl::Status status = builder.Finalize(&op_reg_data);
     TF_EXPECT_OK(status);
     OpDef& op_def = op_reg_data.op_def;
     if (status.ok()) {
       OpDef expected;
       protobuf::TextFormat::ParseFromString(
-          strings::StrCat("name: 'Test' ", proto), &expected);
+          absl::StrCat("name: 'Test' ", proto), &expected);
       // Allow different orderings
       CanonicalizeAttrTypeListOrder(&op_def);
       CanonicalizeAttrTypeListOrder(&expected);
@@ -61,22 +61,22 @@ class OpDefBuilderTest : public ::testing::Test {
     }
   }
 
-  void ExpectOrdered(const OpDefBuilder& builder, StringPiece proto) {
+  void ExpectOrdered(const OpDefBuilder& builder, absl::string_view proto) {
     OpRegistrationData op_reg_data;
-    Status status = builder.Finalize(&op_reg_data);
+    absl::Status status = builder.Finalize(&op_reg_data);
     TF_EXPECT_OK(status);
     OpDef& op_def = op_reg_data.op_def;
     if (status.ok()) {
       OpDef expected;
       protobuf::TextFormat::ParseFromString(
-          strings::StrCat("name: 'Test' ", proto), &expected);
+          absl::StrCat("name: 'Test' ", proto), &expected);
       EXPECT_EQ(op_def.ShortDebugString(), expected.ShortDebugString());
     }
   }
 
-  void ExpectFailure(const OpDefBuilder& builder, const string& error) {
+  void ExpectFailure(const OpDefBuilder& builder, const std::string& error) {
     OpRegistrationData op_reg_data;
-    Status status = builder.Finalize(&op_reg_data);
+    absl::Status status = builder.Finalize(&op_reg_data);
     EXPECT_FALSE(status.ok());
     if (!status.ok()) {
       EXPECT_EQ(status.message(), error);
@@ -609,7 +609,7 @@ attr {
 
 TEST_F(OpDefBuilderTest, SetShapeFn) {
   auto fn = [](shape_inference::InferenceContext* c) {
-    return errors::Unknown("ShapeFn was called");
+    return absl::UnknownError("ShapeFn was called");
   };
   OpShapeInferenceFn fn_out;
   ExpectSuccess(
@@ -622,7 +622,7 @@ TEST_F(OpDefBuilderTest, SetShapeFn) {
 
 TEST_F(OpDefBuilderTest, SetShapeFnCalledTwiceFailure) {
   auto fn = [](shape_inference::InferenceContext* c) {
-    return errors::Unknown("ShapeFn was called");
+    return absl::UnknownError("ShapeFn was called");
   };
   ExpectFailure(b().SetShapeFn(fn).SetShapeFn(fn),
                 "SetShapeFn called twice for Op Test");

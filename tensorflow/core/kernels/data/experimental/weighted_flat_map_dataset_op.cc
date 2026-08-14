@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -33,6 +34,7 @@ limitations under the License.
 #include "tensorflow/core/data/captured_function.h"
 #include "tensorflow/core/data/name_utils.h"
 #include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/op_requires.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -75,15 +77,16 @@ size_t IntervalIndex(const std::vector<uint64_t>& cardinalities,
 // are {0.2, 0.3, 0.5}, then the cardinalities are {4, 6, 10} because the third
 // input runs out of elements after reading 4 from the first dataset, 6 from the
 // second, and 10 from the third.
-Status NormalizeInputCardinalities(const std::vector<double>& weights,
-                                   std::vector<uint64_t>* input_cardinalities) {
+absl::Status NormalizeInputCardinalities(
+    const std::vector<double>& weights,
+    std::vector<uint64_t>* input_cardinalities) {
   double max_weight = 0.0;
   for (const double weight : weights) {
     max_weight = std::max(max_weight, weight);
   }
   DCHECK_GT(max_weight, 0.0);
   double min_cardinality = std::numeric_limits<double>::max();
-  size_t min_cardinality_index;
+  size_t min_cardinality_index = 0;
   for (size_t i = 0; i < input_cardinalities->size(); ++i) {
     const double cardinality = static_cast<double>((*input_cardinalities)[i]) *
                                weights[i] / max_weight;
@@ -166,7 +169,7 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
     return output_shapes_;
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
@@ -175,14 +178,15 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
                            input_cardinalities_.end(), 0UL);
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     for (const auto& input : inputs_) {
       inputs->push_back(input);
     }
     return absl::OkStatus();
   }
 
-  Status CheckExternalState() const override {
+  absl::Status CheckExternalState() const override {
     for (const auto& input : inputs_) {
       TF_RETURN_IF_ERROR(input->CheckExternalState());
     }
@@ -196,9 +200,9 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
         this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
 
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     std::vector<Node*> input_nodes;
     input_nodes.reserve(inputs_.size());
     for (const auto& input : inputs_) {
@@ -248,7 +252,7 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
 
     absl::Status Initialize(IteratorContext* ctx) override
         ABSL_LOCKS_EXCLUDED(mu_) {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       for (int i = 0; i < dataset()->inputs_.size(); ++i) {
         TF_RETURN_IF_ERROR(dataset()->inputs_[i]->MakeIterator(
             ctx, this, absl::StrCat(prefix(), "[", i, "]"), &input_impls_[i]));
@@ -260,7 +264,7 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
                                  std::vector<Tensor>* out_tensors,
                                  bool* end_of_sequence) override
         ABSL_LOCKS_EXCLUDED(mu_) {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       if (element_count_ >= cumulative_input_cardinalities_.back()) {
         *end_of_sequence = true;
         return absl::OkStatus();
@@ -340,7 +344,7 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
 
     absl::Status SaveInternal(SerializationContext* ctx,
                               IteratorStateWriter* writer) override {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       TF_RETURN_IF_ERROR(
           writer->WriteScalar(prefix(), kInputNumElements, element_count_));
       for (int i = 0; i < inputs_element_count_.size(); ++i) {
@@ -354,7 +358,7 @@ class WeightedFlatMapDatasetOp::Dataset : public DatasetBase {
 
     absl::Status RestoreInternal(IteratorContext* ctx,
                                  IteratorStateReader* reader) override {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       if (ctx->restored_element_count().has_value()) {
         element_count_ = *ctx->restored_element_count();
         // Restores all input's element counts and next positions.
@@ -506,6 +510,10 @@ void WeightedFlatMapDatasetOp::MakeDataset(OpKernelContext* ctx,
                 absl::InvalidArgumentError(
                     absl::StrCat("`weights` must be greater than 0.0. Input ",
                                  i, " has a weight of ", weight)));
+    OP_REQUIRES(ctx, std::isfinite(weight),
+                absl::InvalidArgumentError(
+                    absl::StrCat("`weights` must be finite. Input ", i,
+                                 " has a weight of ", weight)));
     weights.emplace_back(weight);
   }
   std::vector<uint64_t> input_cardinalities(inputs.size());

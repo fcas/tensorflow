@@ -16,8 +16,6 @@ limitations under the License.
 // This file implements logic for flattening tuples in HLO ops.
 
 #include <cassert>
-#include <memory>
-#include <string>
 #include <utility>
 
 #include "llvm/ADT/ArrayRef.h"
@@ -67,7 +65,7 @@ Value createTupleValue(OpBuilder &builder, Location loc,
 
   assert(mlir::cast<TupleType>(tupleType).getTypes().size() ==
          flattenValues.size());
-  return builder.create<mhlo::TupleOp>(loc, flattenValues);
+  return mhlo::TupleOp::create(builder, loc, flattenValues);
 }
 
 void flattenTupleValue(OpBuilder &builder, Location loc, Value value,
@@ -79,8 +77,9 @@ void flattenTupleValue(OpBuilder &builder, Location loc, Value value,
   }
   int flattenIdx = 0;
   for (auto innerType : tupleType.getTypes()) {
-    auto innerValue = builder.create<mhlo::GetTupleElementOp>(
-        loc, innerType, value, builder.getI32IntegerAttr(flattenIdx++));
+    auto innerValue = mhlo::GetTupleElementOp::create(
+        builder, loc, innerType, value,
+        builder.getI32IntegerAttr(flattenIdx++));
     flattenTupleValue(builder, loc, innerValue, flattenedValues);
   }
 }
@@ -115,8 +114,9 @@ struct FlattenCustomCallOp : public OpRewritePattern<CustomCallOp> {
         flattenTupleType(result, flattenedResultTypes);
     }
 
-    auto flattenedCall = rewriter.create<mhlo::CustomCallOp>(
-        op->getLoc(), flattenedResultTypes, flattenedOperands, op->getAttrs());
+    auto flattenedCall =
+        mhlo::CustomCallOp::create(rewriter, op->getLoc(), flattenedResultTypes,
+                                   flattenedOperands, op->getAttrs());
 
     rewriter.replaceOp(op, flattenResult
                                ? createTupleValue(rewriter, op->getLoc(),
@@ -133,19 +133,11 @@ class FlattenTuplePass : public impl::FlattenTuplePassBase<FlattenTuplePass> {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
     patterns.add<FlattenCustomCallOp>(context);
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }
   }
 };
-}  // end namespace
-
-static PassRegistration<FlattenTuplePass> pass;
-
-std::unique_ptr<OperationPass<func::FuncOp>> createFlattenTuplePass() {
-  return std::make_unique<FlattenTuplePass>();
-}
-
-}  // end namespace mhlo
-}  // end namespace mlir
+}  // namespace
+}  // namespace mhlo
+}  // namespace mlir

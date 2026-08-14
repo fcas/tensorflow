@@ -15,7 +15,8 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/lite/utils/tftext_utils.h"
 
-#include <optional>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -23,16 +24,12 @@ limitations under the License.
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Matchers.h"  // from @llvm-project
 #include "mlir/IR/OpDefinition.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
@@ -40,7 +37,9 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/ir/types/dialect.h"
 
 namespace mlir {
 namespace TFL {
@@ -137,10 +136,10 @@ LogicalResult ConvertWhitespaceTokenizer(func::FuncOp func, llvm::StringRef api,
   func->setAttr(kTFImplements, attr);
   OpBuilder builder(func.getBody());
   std::string empty_option_buffer;
-  auto op = builder.create<CustomOp>(
-      func.getLoc(), func.getFunctionType().getResults(), func.getArguments(),
-      api, CustomOption(&builder, empty_option_buffer));
-  builder.create<func::ReturnOp>(func.getLoc(), op.getResults());
+  auto op = CustomOp::create(
+      builder, func.getLoc(), func.getFunctionType().getResults(),
+      func.getArguments(), api, CustomOption(&builder, empty_option_buffer));
+  func::ReturnOp::create(builder, func.getLoc(), op.getResults());
   return success();
 }
 
@@ -268,10 +267,10 @@ LogicalResult ConvertNgrams(func::FuncOp func, llvm::StringRef api,
                                       custom_option_buffer))) {
     return failure();
   }
-  auto op = builder.create<CustomOp>(
-      func.getLoc(), func.getFunctionType().getResults(), func.getArguments(),
-      api, CustomOption(&builder, custom_option_buffer));
-  builder.create<func::ReturnOp>(func.getLoc(), op.getResults());
+  auto op = CustomOp::create(
+      builder, func.getLoc(), func.getFunctionType().getResults(),
+      func.getArguments(), api, CustomOption(&builder, custom_option_buffer));
+  func::ReturnOp::create(builder, func.getLoc(), op.getResults());
   return success();
 }
 
@@ -351,10 +350,10 @@ LogicalResult ConvertSgnnProjection(func::FuncOp func, llvm::StringRef api,
                                               custom_option_buffer))) {
     return failure();
   }
-  auto op = builder.create<CustomOp>(
-      func.getLoc(), func.getFunctionType().getResults(), func.getArguments(),
-      api, CustomOption(&builder, custom_option_buffer));
-  builder.create<func::ReturnOp>(func.getLoc(), op.getResults());
+  auto op = CustomOp::create(
+      builder, func.getLoc(), func.getFunctionType().getResults(),
+      func.getArguments(), api, CustomOption(&builder, custom_option_buffer));
+  func::ReturnOp::create(builder, func.getLoc(), op.getResults());
   return success();
 }
 }  // namespace

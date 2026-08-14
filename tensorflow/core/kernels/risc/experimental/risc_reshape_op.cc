@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/platform/types.h"
@@ -31,7 +33,7 @@ class RiscReshapeOp : public OpKernel {
 };
 
 REGISTER_KERNEL_BUILDER(
-    Name("RiscReshape").Device(DEVICE_CPU).TypeConstraint<int32>("Tshape"),
+    Name("RiscReshape").Device(DEVICE_CPU).TypeConstraint<int32_t>("Tshape"),
     RiscReshapeOp);
 REGISTER_KERNEL_BUILDER(
     Name("RiscReshape").Device(DEVICE_CPU).TypeConstraint<int64_t>("Tshape"),

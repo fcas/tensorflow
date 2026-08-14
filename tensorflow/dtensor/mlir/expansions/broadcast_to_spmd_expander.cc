@@ -15,14 +15,21 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/expansions/broadcast_to_spmd_expander.h"
 
+#include <cstdint>
 #include <string>
-#include <utility>
+#include <vector>
 
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.h"
-#include "tensorflow/compiler/mlir/tensorflow/utils/convert_tensor.h"
-#include "tensorflow/dtensor/cc/constants.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
 #include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
@@ -41,7 +48,7 @@ StatusOr<mlir::Operation*> BroadcastToSPMDExpander::ExpandOp(
       const Layout shape_layout,
       ExtractRequiredLayoutFromOperand(broadcast_op.getShape()));
   if (!shape_layout.IsFullyReplicated()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Error during BroadcastOp SPMD Expansion. Shape input of broadcast op "
         "must be fully replicated.");
   }
@@ -146,7 +153,8 @@ BroadcastToSPMDExpander::ComputeLayoutForward(
   const int broadcasted_dimensions = output_shape_rank - input_shape_rank;
 
   if (broadcasted_dimensions < 0)
-    return errors::FailedPrecondition("Broadcasted dimension was less than 0.");
+    return absl::FailedPreconditionError(
+        "Broadcasted dimension was less than 0.");
 
   Layout input_layout = input_layouts.lookup(0);
 

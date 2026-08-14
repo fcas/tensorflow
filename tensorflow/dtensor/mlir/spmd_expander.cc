@@ -15,35 +15,41 @@ limitations under the License.
 
 #include "tensorflow/dtensor/mlir/spmd_expander.h"
 
-#include <climits>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "absl/types/optional.h"
+#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/OperationSupport.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/core/framework/registration/registration.h"
 #include "tensorflow/core/platform/errors.h"
-#include "tensorflow/dtensor/cc/constants.h"
+#include "tensorflow/core/platform/status.h"
 #include "tensorflow/dtensor/cc/dstatus.h"
 #include "tensorflow/dtensor/cc/dtensor_utils.h"
 #include "tensorflow/dtensor/cc/tensor_layout.h"
-#include "tensorflow/dtensor/mlir/collectives.h"
 #include "tensorflow/dtensor/mlir/expansions/replicated_spmd_expander.h"
 #include "tensorflow/dtensor/mlir/ir/tf_dtensor.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
 #include "tensorflow/dtensor/mlir/op_utils.h"
 #include "tensorflow/dtensor/mlir/shape_utils.h"
-#include "tensorflow/dtensor/mlir/spmd_expander_common.h"
 #include "tensorflow/dtensor/proto/layout.pb.h"
 
 namespace tensorflow {
@@ -57,8 +63,9 @@ namespace {
 // descendent nodes.
 // User should not explicitly set a output parted layout and expect it to affect
 // the layout of ancestor nodes.
-Status AdjustPartedLayout(const llvm::DenseMap<int, Layout>& input_layouts,
-                          llvm::DenseMap<int, Layout>* computed_layouts) {
+absl::Status AdjustPartedLayout(
+    const llvm::DenseMap<int, Layout>& input_layouts,
+    llvm::DenseMap<int, Layout>* computed_layouts) {
   // If any input has parted layout, propagate the parted layout to the layout
   // of all the computed values.
   bool input_has_parted_layout = false;
@@ -142,16 +149,15 @@ InitOnStartupMarker SPMDExpanderRegistry::RegisterPropagateFn(
   return {};
 }
 
-Status SPMDExpanderBase::ExpandOpAndSetLayout(mlir::Operation* op,
-                                              mlir::Operation** output) {
+absl::Status SPMDExpanderBase::ExpandOpAndSetLayout(mlir::Operation* op,
+                                                    mlir::Operation** output) {
   TF_ASSIGN_OR_RETURN(std::vector<std::optional<Layout>> computed_layout,
                       ExtractLayoutFromOp(op));
 
   if (computed_layout.empty() && op->getNumResults() != 0) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         absl::StrCat("No attached layout found for op : ", OpName(op),
-                     " This might be due to an error in layout propagation.")
-            .c_str());
+                     " This might be due to an error in layout propagation."));
   }
 
   // If op is on an XLA SPMD mesh, then set layout and skip expansion. There is
@@ -231,11 +237,11 @@ Status SPMDExpanderBase::ExpandOpAndSetLayout(mlir::Operation* op,
       if (expanded_shape <= 0 || expected_shape <= 0) continue;
 
       if (expanded_shape != expected_shape) {
-        return errors::Internal(
+        return absl::InternalError(absl::StrCat(
             "SPMD expansion resulted in op output inconsistent with the "
             "provided layout. Expected shape: <",
             absl::StrJoin(expected_global_shape, ","), "> got shape: <",
-            absl::StrJoin(global_output_shapes[index], ","), ">");
+            absl::StrJoin(global_output_shapes[index], ","), ">"));
       }
     }
   }
@@ -245,7 +251,7 @@ Status SPMDExpanderBase::ExpandOpAndSetLayout(mlir::Operation* op,
 
 StatusOr<llvm::DenseMap<int, Layout>> SPMDExpanderBase::ComputeLayoutForward(
     mlir::Operation* op, const llvm::DenseMap<int, Layout>& input_layouts) {
-  return errors::Unimplemented(
+  return absl::UnimplementedError(
       "ComputeLayoutForward API must be implemented via the subclass.");
 }
 
@@ -270,7 +276,7 @@ StatusOr<llvm::DenseMap<int, Layout>> SPMDExpanderBase::ComputeLayoutForward(
 
 StatusOr<llvm::DenseMap<int, Layout>> SPMDExpanderBase::ComputeLayoutBackward(
     mlir::Operation* op, const llvm::DenseMap<int, Layout>& output_layouts) {
-  return errors::Unimplemented(
+  return absl::UnimplementedError(
       "ComputeLayoutBackward API must be implemented via the subclass.");
 }
 
@@ -291,7 +297,7 @@ StatusOr<llvm::DenseMap<int, Layout>> SPMDExpanderBase::ComputeLayoutBackward(
   return ComputeLayoutBackward(op, output_layouts);
 }
 
-Status RunSPMDExpansion(mlir::Operation* op, mlir::Operation** output) {
+absl::Status RunSPMDExpansion(mlir::Operation* op, mlir::Operation** output) {
   SPMDExpanderBase* expander =
       SPMDExpanderRegistry::Global()->GetPropagateFnForOp(op);
   if (expander != nullptr) {

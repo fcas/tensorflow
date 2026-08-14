@@ -1,4 +1,19 @@
-// RUN: flatbuffer_translate -mlir-to-tflite-flatbuffer %s -o - | flatbuffer_to_string - | FileCheck %s
+// Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+// RUN: flatbuffer_translate -mlir-to-tflite-flatbuffer %s -o - | flatbuffer_to_string - | FileCheck %s --check-prefix=CHECK
+// RUN: flatbuffer_translate -mlir-to-tflite-flatbuffer -disable-buffer-deduping %s -o - | flatbuffer_to_string - | FileCheck %s --check-prefix=NO_DEDUPE
 
 module {
 func.func @add(%arg0: tensor<3x2xf32>) -> tensor<3x2xf32> attributes {tf.entry_function = {inputs = "serving_default_x", outputs = "outputs"}} {
@@ -91,3 +106,100 @@ func.func @sub(%arg0: tensor<3x2xf32>) -> tensor<3x2xf32> attributes {tf.entry_f
 // CHECK-NEXT:     data: [ 49, 46, 54, 46, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
 // CHECK-NEXT:   } ],
 // CHECK:      }
+
+// NO_DEDUPE: {
+// NO_DEDUPE:   version: 3,
+// NO_DEDUPE:   operator_codes: [ {
+// NO_DEDUPE:     version: 1
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:     deprecated_builtin_code: 41,
+// NO_DEDUPE:     version: 1,
+// NO_DEDUPE:     builtin_code: SUB
+// NO_DEDUPE:   } ],
+// NO_DEDUPE:   subgraphs: [ {
+// NO_DEDUPE:     tensors: [ {
+// NO_DEDUPE:       shape: [ 3, 2 ],
+// NO_DEDUPE:       buffer: 1,
+// NO_DEDUPE:       name: "serving_default_x",
+// NO_DEDUPE:       quantization: {
+// NO_DEDUPE:       },
+// NO_DEDUPE:       has_rank: true
+// NO_DEDUPE:     }, {
+// NO_DEDUPE:       shape: [ 3, 2 ],
+// NO_DEDUPE:       buffer: 2,
+// NO_DEDUPE:       name: "tfl.pseudo_const",
+// NO_DEDUPE:       quantization: {
+// NO_DEDUPE:       },
+// NO_DEDUPE:       has_rank: true
+// NO_DEDUPE:     }, {
+// NO_DEDUPE:       shape: [ 3, 2 ],
+// NO_DEDUPE:       buffer: 3,
+// NO_DEDUPE:       name: "outputs",
+// NO_DEDUPE:       quantization: {
+// NO_DEDUPE:       },
+// NO_DEDUPE:       has_rank: true
+// NO_DEDUPE:     } ],
+// NO_DEDUPE:     inputs: [ 0 ],
+// NO_DEDUPE:     outputs: [ 2 ],
+// NO_DEDUPE:     operators: [ {
+// NO_DEDUPE:       inputs: [ 1, 0 ],
+// NO_DEDUPE:       outputs: [ 2 ],
+// NO_DEDUPE:       builtin_options_type: AddOptions,
+// NO_DEDUPE:       builtin_options: {
+// NO_DEDUPE:       }
+// NO_DEDUPE:     } ],
+// NO_DEDUPE:     name: "add"
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:     tensors: [ {
+// NO_DEDUPE:       shape: [ 3, 2 ],
+// NO_DEDUPE:       buffer: 4,
+// NO_DEDUPE:       name: "serving_default_x",
+// NO_DEDUPE:       quantization: {
+// NO_DEDUPE:       },
+// NO_DEDUPE:       has_rank: true
+// NO_DEDUPE:     }, {
+// NO_DEDUPE:       shape: [ 3, 2 ],
+// NO_DEDUPE:       buffer: 5,
+// NO_DEDUPE:       name: "tfl.pseudo_const1",
+// NO_DEDUPE:       quantization: {
+// NO_DEDUPE:       },
+// NO_DEDUPE:       has_rank: true
+// NO_DEDUPE:     }, {
+// NO_DEDUPE:       shape: [ 3, 2 ],
+// NO_DEDUPE:       buffer: 6,
+// NO_DEDUPE:       name: "outputs",
+// NO_DEDUPE:       quantization: {
+// NO_DEDUPE:       },
+// NO_DEDUPE:       has_rank: true
+// NO_DEDUPE:     } ],
+// NO_DEDUPE:     inputs: [ 0 ],
+// NO_DEDUPE:     outputs: [ 2 ],
+// NO_DEDUPE:     operators: [ {
+// NO_DEDUPE:       opcode_index: 1,
+// NO_DEDUPE:       inputs: [ 1, 0 ],
+// NO_DEDUPE:       outputs: [ 2 ],
+// NO_DEDUPE:       builtin_options_type: SubOptions,
+// NO_DEDUPE:       builtin_options: {
+// NO_DEDUPE:       }
+// NO_DEDUPE:     } ],
+// NO_DEDUPE:     name: "sub"
+// NO_DEDUPE:   } ],
+// NO_DEDUPE:   description: "MLIR Converted.",
+// NO_DEDUPE:   buffers: [ {
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:     data: [ 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 128, 64, 0, 0, 160, 64, 0, 0, 192, 64 ]
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:     data: [ 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 128, 64, 0, 0, 160, 64, 0, 0, 192, 64 ]
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:   }, {
+// NO_DEDUPE:     data: [ 49, 46, 54, 46, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
+// NO_DEDUPE:   } ],
+// NO_DEDUPE:   metadata: [ {
+// NO_DEDUPE:     name: "min_runtime_version",
+// NO_DEDUPE:     buffer: 7
+// NO_DEDUPE:   } ],
+// NO_DEDUPE:   signature_defs: [  ]
+// NO_DEDUPE: }

@@ -16,19 +16,27 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/tfrt/transforms/passes.h"
 
+#include <cassert>
 #include <memory>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/PassOptions.h"
 #include "mlir/Transforms/Passes.h"
+#include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
+#include "absl/status/status.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/tf_saved_model_asset_sinking_pass.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/bridge_logger.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/set_shape_invariant_in_while_ops.h"
+#include "tensorflow/compiler/mlir/tfrt/transforms/tfrt_pipeline_options.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/util/device_name_utils.h"
+#include "tsl/platform/errors.h"
 
 namespace tensorflow {
 namespace {
@@ -81,12 +89,17 @@ void CreateTFExecutorToTFPreInvariantOptimizationPipelineHelper(
 
   AddTfDeviceAssignmentPasses(pm, options);
 
-  pm.addPass(tfrt_compiler::CreateTfrtXlaRewritePass());
+  if (options.allow_xla_cpu) {
+    pm.addPass(tfrt_compiler::CreateTfrtXlaRewritePass());
+  }
 
   // Here we perform TFRT specific optimization before standard TF optimization,
   // as TFRT-specific optimization may create more opportunities.
   pm.addNestedPass<mlir::func::FuncOp>(
       tfrt_compiler::CreateOptimizeTfForTfrtPass());
+
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::CreateExecutorDialectToFunctionalConversionPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
   // Guarantee all functions have one use, which enables more exact shape
   // inference.
@@ -100,14 +113,14 @@ void CreateTFExecutorToTFPreInvariantOptimizationPipelineHelper(
   AddTfDeviceAssignmentPasses(pm, options);
 
   // After the standard pass, we now have MLIR in TF dialect, and now we convert
-  // reference variable to resource variables, which is besteffort.
+  // reference variable to resource variables, which is best effort.
   pm.addPass(CreateConvertReferenceVariableToResourceVariablePass());
 
   // Move the tf.Assert op to the end of the function, so that it does not
   // impose unnecessary control dependencies on other ops.
   pm.addPass(tfrt_compiler::CreateReorderTfAssertPass());
 
-  // Optimze the side-effects of control flow ops by examining the ops in its
+  // Optimize the side-effects of control flow ops by examining the ops in its
   // callees.
   pm.addPass(tfrt_compiler::CreateOptimizeTfControlFlowSideEffectPass());
 
@@ -117,9 +130,34 @@ void CreateTFExecutorToTFPreInvariantOptimizationPipelineHelper(
   // Merge non-side-effecting tf.If ops if their operands are the same.
   pm.addPass(tfrt_compiler::CreateMergeTfIfOpsPass());
 
-  // Lower bound on the number of batch threads in `tf.BatchFunction`.
-  pm.addPass(tfrt_compiler::CreateLowerBoundBatchThreadsPass(
-      options.min_num_batch_threads));
+  pm.addPass(tfrt_compiler::CreateReconfigBatchOpPass({
+      .min_num_batch_threads = options.min_num_batch_threads,
+      .min_max_enqueued_batches = options.min_max_enqueued_batches,
+      .batch_padding_policy = options.batch_padding_policy,
+      .num_batch_threads = options.num_batch_threads,
+      .max_batch_size = options.max_batch_size,
+      .batch_timeout_micros = options.batch_timeout_micros,
+      .allowed_batch_sizes = options.allowed_batch_sizes,
+      .max_enqueued_batches = options.max_enqueued_batches,
+      .low_priority_max_batch_size = options.low_priority_max_batch_size,
+      .low_priority_batch_timeout_micros =
+          options.low_priority_batch_timeout_micros,
+      .low_priority_allowed_batch_sizes =
+          options.low_priority_allowed_batch_sizes,
+      .low_priority_max_enqueued_batches =
+          options.low_priority_max_enqueued_batches,
+      .num_warmup_batch_threads = options.num_warmup_batch_threads,
+      .enable_large_batch_splitting = options.enable_large_batch_splitting,
+      .mixed_priority_batching_policy = options.mixed_priority_batching_policy,
+      .batch_queue_global_prioritization_num_threads =
+          options.batch_queue_global_prioritization_num_threads,
+      .enable_priority_aware_batch_scheduler =
+          options.enable_priority_aware_batch_scheduler,
+      .enable_priority_aware_batch_scheduler_resplit =
+          options.enable_priority_aware_batch_scheduler_resplit,
+      .enable_batching_task_lazy_cancellation =
+          options.enable_batching_task_lazy_cancellation,
+  }));
 
   // Deduplicate functions invoked by tf.BatchFunction with the same
   // shared_name
@@ -133,7 +171,6 @@ void CreateTFExecutorToTFPreInvariantOptimizationPipelineHelper(
   pm.addPass(mlir::createInlinerPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::TF::CreateRemoveUnusedWhileResultsPass());
-  pm.addPass(mlir::TF::CreateTFRegionControlFlowToFunctional());
 
   // Apply standard optimization after optimizing control flow ops.
   pm.addPass(mlir::createInlinerPass());
@@ -144,6 +181,7 @@ void CreateTFExecutorToTFPreInvariantOptimizationPipelineHelper(
   // by performing shape inference again after reference variable to resource
   // variable conversion. We should remove this after b/187876545 is fixed.
   pm.addPass(mlir::TF::CreateTFShapeInferencePass());
+  pm.addPass(mlir::TF::CreateTFRegionControlFlowToFunctional());
 
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::TFDevice::CreateLaunchToDeviceAttributePass());
@@ -203,8 +241,8 @@ void CreateTFExecutorToTFPreInvariantOptimizationPipelineHelper(
   AddTfDeviceAssignmentPasses(pm, options);
 }
 
-void CreateTFExecutorToTFInvariantOptimizationPipelineHelper(
-    mlir::OpPassManager &pm, const TfrtPipelineOptions &options) {
+void CreateTFInvariantOptimizationPipelineHelper(
+    mlir::OpPassManager& pm, const TfrtPipelineOptions& options) {
   if (options.sink_in_invariant_ops) {
     pm.addPass(CreateSinkInInvariantOpsPass());
   }
@@ -218,16 +256,16 @@ void CreateTFExecutorToTFInvariantOptimizationPipelineHelper(
       options.hoist_invariant_ops, options.fuse_get_resource_ops_in_hoisting));
 }
 
-Status ValidateTfrtPipelineOptions(const TfrtPipelineOptions &options) {
+absl::Status ValidateTfrtPipelineOptions(const TfrtPipelineOptions &options) {
   if (options.target_tpurt && options.target_gpu) {
-    return tensorflow::errors::Internal(
+    return absl::InternalError(
         "Invalid pipeline options. Targeting both TPU and GPU is not "
         "supported.");
   }
   return absl::OkStatus();
 }
 
-Status CreateTFExecutorToTFPreInvariantOptimizationPipeline(
+absl::Status CreateTFExecutorToTFPreInvariantOptimizationPipeline(
     mlir::PassManager &pm, const TfrtPipelineOptions &options) {
   TF_RETURN_IF_ERROR(ValidateTfrtPipelineOptions(options));
   if (VLOG_IS_ON(1)) {

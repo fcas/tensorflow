@@ -44,6 +44,10 @@ limitations under the License.
 #include "tensorflow/lite/delegates/gpu/common/data_type.h"
 #include "tensorflow/lite/delegates/gpu/common/status.h"
 #include "tensorflow/lite/delegates/gpu/common/util.h"
+
+// The `absl::Status` conflicts with the macro definition in the X11/Xlib.h,
+// undefine the VK_USE_PLATFORM_XLIB_KHR to exclude the header file.
+#undef VK_USE_PLATFORM_XLIB_KHR
 #include "vulkan/vulkan.h"  // from @vulkan_headers
 
 #define GL_NO_PROTOTYPES
@@ -200,7 +204,7 @@ struct Dimensions {
 
   int32_t d() const { return DivideRoundUp(c, 4); }
 
-  int32_t product() const { return b * h * w * c; }
+  int64_t product() const { return static_cast<int64_t>(b) * h * w * c; }
 
   bool operator==(const Dimensions& other) const {
     return b == other.b && h == other.h && w == other.w && c == other.c;
@@ -227,11 +231,11 @@ struct TensorObjectDef {
 bool IsValid(const TensorObjectDef& def);
 
 // @return the number of elements in a tensor object.
-uint32_t NumElements(const TensorObjectDef& def);
+int64_t NumElements(const TensorObjectDef& def);
 
 using TensorObject =
-    absl::variant<std::monostate, OpenGlBuffer, OpenGlTexture, CpuMemory,
-                  OpenClBuffer, OpenClTexture, VulkanBuffer, VulkanTexture>;
+    std::variant<std::monostate, OpenGlBuffer, OpenGlTexture, CpuMemory,
+                 OpenClBuffer, OpenClTexture, VulkanBuffer, VulkanTexture>;
 
 // @return true if object is set and corresponding values are defined.
 bool IsValid(const TensorObjectDef& def, const TensorObject& object);

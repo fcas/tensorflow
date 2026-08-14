@@ -13,6 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
+#include <string>
+
+#include "absl/container/inlined_vector.h"
+#include "tensorflow/core/framework/types.pb.h"
 #define USE_EIGEN_TENSOR
 #define EIGEN_USE_THREADS
 
@@ -65,34 +70,34 @@ template <typename Device, typename T>
 class Conv3DOp : public BinaryOp<T> {
  public:
   explicit Conv3DOp(OpKernelConstruction* context) : BinaryOp<T>(context) {
-    string data_format;
+    std::string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
-                errors::InvalidArgument("Invalid data format"));
+                absl::InvalidArgumentError("Invalid data format"));
     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
     OP_REQUIRES(context, stride_.size() == 5,
-                errors::InvalidArgument("Sliding window strides field must "
-                                        "specify 5 dimensions"));
-    OP_REQUIRES(
-        context,
-        (GetTensorDim(stride_, data_format_, 'N') == 1 &&
-         GetTensorDim(stride_, data_format_, 'C') == 1),
-        errors::InvalidArgument("Current implementation does not yet support "
-                                "strides in the batch and depth dimensions."));
+                absl::InvalidArgumentError("Sliding window strides field must "
+                                           "specify 5 dimensions"));
+    OP_REQUIRES(context,
+                (GetTensorDim(stride_, data_format_, 'N') == 1 &&
+                 GetTensorDim(stride_, data_format_, 'C') == 1),
+                absl::InvalidArgumentError(
+                    "Current implementation does not yet support "
+                    "strides in the batch and depth dimensions."));
     OP_REQUIRES(
         context,
         (GetTensorDim(stride_, data_format_, '0') > 0 &&
          GetTensorDim(stride_, data_format_, '1') > 0 &&
          GetTensorDim(stride_, data_format_, '2') > 0),
-        errors::InvalidArgument("Spatial strides should be larger than 0."));
+        absl::InvalidArgumentError("Spatial strides should be larger than 0."));
     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilation_));
     OP_REQUIRES(context, dilation_.size() == 5,
-                errors::InvalidArgument("Dilation rates field must "
-                                        "specify 5 dimensions"));
+                absl::InvalidArgumentError("Dilation rates field must "
+                                           "specify 5 dimensions"));
     OP_REQUIRES(context,
                 (GetTensorDim(dilation_, data_format_, 'N') == 1 &&
                  GetTensorDim(dilation_, data_format_, 'C') == 1),
-                errors::InvalidArgument(
+                absl::InvalidArgumentError(
                     "Current implementation does not yet support "
                     "dilation rates in the batch and depth dimensions."));
     OP_REQUIRES(
@@ -100,7 +105,7 @@ class Conv3DOp : public BinaryOp<T> {
         (GetTensorDim(dilation_, data_format_, '0') > 0 &&
          GetTensorDim(dilation_, data_format_, '1') > 0 &&
          GetTensorDim(dilation_, data_format_, '2') > 0),
-        errors::InvalidArgument("Dilated rates should be larger than 0."));
+        absl::InvalidArgumentError("Dilated rates should be larger than 0."));
     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
     cudnn_use_autotune_ = CudnnUseAutotune();
   }
@@ -117,9 +122,9 @@ class Conv3DOp : public BinaryOp<T> {
     // NOTE: The ordering of the spatial dimensions is arbitrary, but has to be
     // kept consistent between input/filter/output.
     OP_REQUIRES(context, input.dims() == 5,
-                errors::InvalidArgument("input must be 5-dimensional"));
+                absl::InvalidArgumentError("input must be 5-dimensional"));
     OP_REQUIRES(context, filter.dims() == 5,
-                errors::InvalidArgument("filter must be 5-dimensional"));
+                absl::InvalidArgumentError("filter must be 5-dimensional"));
 
     const int64_t in_depth = GetTensorDim(input, data_format_, 'C');
     const int64_t in_batch = GetTensorDim(input, data_format_, 'N');
@@ -128,15 +133,15 @@ class Conv3DOp : public BinaryOp<T> {
     const int64_t out_depth = filter.dim_size(4);
 
     OP_REQUIRES(context, filter_depth != 0,
-                errors::InvalidArgument("filter_depth must be non-zero"));
+                absl::InvalidArgumentError("filter_depth must be non-zero"));
     OP_REQUIRES(context, in_depth % filter_depth == 0,
-                errors::InvalidArgument(
+                absl::InvalidArgumentError(absl::StrCat(
                     "Input depth must be evenly divisible by filter depth: ",
-                    in_depth, " vs ", filter_depth));
+                    in_depth, " vs ", filter_depth)));
     OP_REQUIRES(
         context, filter.NumElements() > 0,
-        errors::InvalidArgument("filter must not have zero elements "
-                                "(i.e. all dimensions must be non-zero)"));
+        absl::InvalidArgumentError("filter must not have zero elements "
+                                   "(i.e. all dimensions must be non-zero)"));
 
     // Dimension order for these arrays is: z, y, x.
     std::array<int64_t, 3> input_size = {
@@ -175,8 +180,8 @@ class Conv3DOp : public BinaryOp<T> {
   }
 
  private:
-  std::vector<int32> dilation_;
-  std::vector<int32> stride_;
+  std::vector<int32_t> dilation_;
+  std::vector<int32_t> stride_;
   Padding padding_;
   TensorFormat data_format_;
   bool cudnn_use_autotune_;
@@ -197,16 +202,17 @@ template <typename T>
 struct LaunchConv3DOp<GPUDevice, T> {
   static void launch(OpKernelContext* ctx, bool cudnn_use_autotune,
                      const Tensor& input_param, const Tensor& filter,
-                     const std::array<int64, 3>& dilations,
-                     const std::array<int64, 3>& strides, const Padding padding,
-                     TensorFormat data_format, Tensor* output) {
+                     const std::array<int64_t, 3>& dilations,
+                     const std::array<int64_t, 3>& strides,
+                     const Padding padding, TensorFormat data_format,
+                     Tensor* output) {
     // Empty explicit paddings.
     std::vector<int64_t> explicit_paddings;
     // Cast strides and dilations.
-    gtl::InlinedVector<int64_t, 3> casted_strides(strides.begin(),
-                                                  strides.end());
-    gtl::InlinedVector<int64_t, 3> casted_dilations(dilations.begin(),
-                                                    dilations.end());
+    absl::InlinedVector<int64_t, 3UL> casted_strides(strides.begin(),
+                                                     strides.end());
+    absl::InlinedVector<int64_t, 3UL> casted_dilations(dilations.begin(),
+                                                       dilations.end());
     LaunchConvOpImpl<T>(ctx, cudnn_use_autotune, input_param, filter,
                         casted_dilations, casted_strides, padding,
                         explicit_paddings, data_format, output);
@@ -217,16 +223,17 @@ template <>
 struct LaunchConv3DOp<GPUDevice, Eigen::bfloat16> {
   static void launch(OpKernelContext* ctx, bool cudnn_use_autotune,
                      const Tensor& input_param, const Tensor& filter,
-                     const std::array<int64, 3>& dilations,
-                     const std::array<int64, 3>& strides, const Padding padding,
-                     TensorFormat data_format, Tensor* output) {
+                     const std::array<int64_t, 3>& dilations,
+                     const std::array<int64_t, 3>& strides,
+                     const Padding padding, TensorFormat data_format,
+                     Tensor* output) {
     // Empty explicit paddings.
     std::vector<int64_t> explicit_paddings;
     // Cast strides and dilations.
-    gtl::InlinedVector<int64_t, 3> casted_strides(strides.begin(),
-                                                  strides.end());
-    gtl::InlinedVector<int64_t, 3> casted_dilations(dilations.begin(),
-                                                    dilations.end());
+    absl::InlinedVector<int64_t, 3UL> casted_strides(strides.begin(),
+                                                     strides.end());
+    absl::InlinedVector<int64_t, 3UL> casted_dilations(dilations.begin(),
+                                                       dilations.end());
 
     auto* stream = ctx->op_device_context()->stream();
     const bool cast_to_float = !IsBF16SupportedInOps(stream);

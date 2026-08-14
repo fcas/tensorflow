@@ -12,11 +12,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include "xla/tsl/platform/errors.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/kernels/uniform_quant_ops/math_utils.h"
 #include "tensorflow/core/kernels/uniform_quant_ops/tensor_utils.h"
-#include "tsl/platform/errors.h"
 
 namespace tensorflow {
 namespace {
@@ -65,7 +65,7 @@ void EvalQuantize(const Tensor& input, const Tensor& scales,
                                       quantization_max_val, output);
   } else {
     EvalPerTensorQuantize<Tin, Tout>(
-        input, scales.scalar<float>()(), zero_points.scalar<int32>()(),
+        input, scales.scalar<float>()(), zero_points.scalar<int32_t>()(),
         quantization_min_val, quantization_max_val, output);
   }
 }
@@ -78,11 +78,12 @@ class UniformQuantizeOp : public OpKernel {
       : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("Tin", &tin_));
     OP_REQUIRES(context, tin_ == DataType::DT_FLOAT,
-                InvalidArgument("Unsupported input type."));
+                absl::InvalidArgumentError("Unsupported input type."));
     OP_REQUIRES_OK(context, context->GetAttr("Tout", &tout_));
     OP_REQUIRES(context,
-                tout_ == DataType::DT_QINT8 || tout_ == DataType::DT_QINT32,
-                InvalidArgument("Unsupported output type."));
+                tout_ == DataType::DT_QINT8 || tout_ == DataType::DT_QUINT8 ||
+                    tout_ == DataType::DT_QINT32,
+                absl::InvalidArgumentError("Unsupported output type."));
 
     OP_REQUIRES_OK(context, context->GetAttr("quantization_min_val",
                                              &quantization_min_val_));
@@ -91,9 +92,10 @@ class UniformQuantizeOp : public OpKernel {
 
     OP_REQUIRES_OK(context,
                    context->GetAttr("quantization_axis", &quantization_axis_));
-    OP_REQUIRES(context, (quantization_axis_ >= -1),
-                InvalidArgument("quantization_axis must be >= -1, given: ",
-                                quantization_axis_));
+    OP_REQUIRES(
+        context, (quantization_axis_ >= -1),
+        absl::InvalidArgumentError(absl::StrCat(
+            "quantization_axis must be >= -1, given: ", quantization_axis_)));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -113,6 +115,10 @@ class UniformQuantizeOp : public OpKernel {
       EvalQuantize<float, qint8>(input, scales, zero_points, quantization_axis_,
                                  quantization_min_val_, quantization_max_val_,
                                  *output);
+    } else if (tout_ == DataType::DT_QUINT8) {
+      EvalQuantize<float, quint8>(input, scales, zero_points,
+                                  quantization_axis_, quantization_min_val_,
+                                  quantization_max_val_, *output);
     } else {
       EvalQuantize<float, qint32>(input, scales, zero_points,
                                   quantization_axis_, quantization_min_val_,
@@ -130,7 +136,8 @@ class UniformQuantizeOp : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("UniformQuantize")
                             .Device(DEVICE_CPU)
                             .TypeConstraint<float>("Tin")
-                            .TypeConstraint("Tout", {DT_QINT8, DT_QINT32}),
+                            .TypeConstraint("Tout",
+                                            {DT_QINT8, DT_QUINT8, DT_QINT32}),
                         UniformQuantizeOp);
 
 }  // namespace tensorflow

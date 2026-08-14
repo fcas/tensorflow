@@ -24,9 +24,10 @@ limitations under the License.
 // dense operations. Decomposition allows TFLite to be compiled to these
 // dialects, such as TOSA.
 
+#include <memory>
 #include <utility>
 
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
@@ -48,7 +49,7 @@ class DecomposeHybridQuantizationPass
     : public impl::DecomposeHybridQuantizationPassBase<
           DecomposeHybridQuantizationPass> {
  public:
-  explicit DecomposeHybridQuantizationPass() {}
+  explicit DecomposeHybridQuantizationPass() = default;
   void runOnOperation() override;
 };
 
@@ -92,7 +93,7 @@ class DequantizeConverter : public OpRewritePattern<SrcOp> {
       if (QuantizedType::getQuantizedElementType(operand.getType())) {
         auto newTy = QuantizedType::castToExpressedType(operand.getType());
         newOperands.push_back(
-            rewriter.create<TFL::DequantizeOp>(loc, newTy, operand));
+            TFL::DequantizeOp::create(rewriter, loc, newTy, operand));
         continue;
       }
 
@@ -108,9 +109,8 @@ class DequantizeConverter : public OpRewritePattern<SrcOp> {
       newResultTys.push_back(resultTy);
     }
 
-    auto newResults = rewriter
-                          .create<SrcOp>(loc, newResultTys, newOperands,
-                                         op->getAttrDictionary().getValue())
+    auto newResults = SrcOp::create(rewriter, loc, newResultTys, newOperands,
+                                    op->getAttrDictionary().getValue())
                           .getOperation()
                           ->getResults();
 
@@ -119,8 +119,8 @@ class DequantizeConverter : public OpRewritePattern<SrcOp> {
       Value result = newResults[i];
       Type resultTy = op->getOpResult(i).getType();
       if (QuantizedType::getQuantizedElementType(resultTy)) {
-        replaceResults.push_back(rewriter.create<TFL::QuantizeOp>(
-            loc, resultTy, result, TypeAttr::get(resultTy)));
+        replaceResults.push_back(TFL::QuantizeOp::create(
+            rewriter, loc, resultTy, result, TypeAttr::get(resultTy)));
         continue;
       }
 
@@ -142,7 +142,7 @@ void DecomposeHybridQuantizationPass::runOnOperation() {
                DequantizeConverter<TFL::DepthwiseConv2DOp>,
                DequantizeConverter<TFL::FullyConnectedOp>,
                DequantizeConverter<TFL::TransposeConvOp>>(ctx);
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 }
 
 }  // namespace

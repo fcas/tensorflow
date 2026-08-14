@@ -22,11 +22,11 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
-#include <memory>
-#include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "tensorflow/lite/core/macros.h"
 #include "tensorflow/lite/kernels/internal/common.h"
@@ -34,6 +34,8 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/reference/add.h"
 #include "tensorflow/lite/kernels/internal/reference/mul.h"
 #include "tensorflow/lite/kernels/internal/reference/resize_nearest_neighbor.h"
+#include "tensorflow/lite/kernels/internal/runtime_shape.h"
+#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 
 #if defined(TF_LITE_USE_CBLAS) && defined(__APPLE__)
 #include <Accelerate/Accelerate.h>
@@ -1999,8 +2001,9 @@ inline void MulElementwise(int32_t n, const ArithmeticParams& params,
 
   // This will handle leftovers when n is not aligned to 4 elements.
   for (; i < n; ++i) {
-    out[i] = ActivationFunctionWithMinMax(lhs[i] * rhs[i], activation_min_val,
-                                          activation_max_val);
+    out[i] =
+        ActivationFunctionWithMinMax(WrappingMul<int32_t>(lhs[i], rhs[i]),
+                                     activation_min_val, activation_max_val);
   }
 }
 
@@ -2341,10 +2344,6 @@ inline void BroadcastMulFivefold(const ArithmeticParams& params,
                        output_shape, output_data);
 }
 
-// TODO(jiawen): We can implement BroadcastDiv on buffers of arbitrary
-// dimensionality if the runtime code does a single loop over one dimension
-// that handles broadcasting as the base case. The code generator would then
-// generate max(D1, D2) nested for loops.
 // TODO(benoitjacob): BroadcastDiv is intentionally duplicated from
 // reference_ops.h. Once an optimized version is implemented and NdArrayDesc<T>
 // is no longer referenced in this file, move NdArrayDesc<T> from types.h to
@@ -2362,78 +2361,55 @@ void BroadcastDivSlow(const ArithmeticParams& params,
   T output_activation_max;
   GetActivationParams(params, &output_activation_min, &output_activation_max);
 
-  TFLITE_DCHECK_LE(unextended_input1_shape.DimensionsCount(), N);
-  TFLITE_DCHECK_LE(unextended_input2_shape.DimensionsCount(), N);
-  TFLITE_DCHECK_LE(unextended_output_shape.DimensionsCount(), N);
-
-  NdArrayDesc<N> desc1;
-  NdArrayDesc<N> desc2;
-  NdArrayDesc<N> output_desc;
-  NdArrayDescsForElementwiseBroadcast(unextended_input1_shape,
-                                      unextended_input2_shape, &desc1, &desc2);
-  CopyDimsToDesc(RuntimeShape::ExtendedShape(N, unextended_output_shape),
-                 &output_desc);
-
-  // In Tensorflow, the dimensions are canonically named (batch_number, row,
-  // col, channel), with extents (batches, height, width, depth), with the
-  // trailing dimension changing most rapidly (channels has the smallest stride,
-  // typically 1 element).
-  //
-  // In generated C code, we store arrays with the dimensions reversed. The
-  // first dimension has smallest stride.
-  //
-  // We name our variables by their Tensorflow convention, but generate C code
-  // nesting loops such that the innermost loop has the smallest stride for the
-  // best cache behavior.
-  auto div_func = [&](int indexes[N]) {
-    output_data[SubscriptToIndex(output_desc, indexes)] =
-        ActivationFunctionWithMinMax(
-            input1_data[SubscriptToIndex(desc1, indexes)] /
-                input2_data[SubscriptToIndex(desc2, indexes)],
-            output_activation_min, output_activation_max);
+  auto op = [output_activation_min, output_activation_max](T a, T b) {
+    return ActivationFunctionWithMinMax(a / b, output_activation_min,
+                                        output_activation_max);
   };
-  NDOpsHelper<N>(output_desc, div_func);
+  reference_ops::BroadcastBinaryOpSimple(
+      unextended_input1_shape, input1_data, unextended_input2_shape,
+      input2_data, unextended_output_shape, output_data, op);
 }
 
 // BroadcastDiv is intentionally duplicated from reference_ops.h.
 // For more details see the comment above the generic version of
 // BroadcastDivSlow.
-template <int N = 5>
-inline void BroadcastDivSlow(const ArithmeticParams& params,
-                             const RuntimeShape& unextended_input1_shape,
-                             const uint8_t* input1_data,
-                             const RuntimeShape& unextended_input2_shape,
-                             const uint8_t* input2_data,
-                             const RuntimeShape& unextended_output_shape,
-                             uint8_t* output_data) {
-  TFLITE_DCHECK_LE(unextended_input1_shape.DimensionsCount(), N);
-  TFLITE_DCHECK_LE(unextended_input2_shape.DimensionsCount(), N);
-  TFLITE_DCHECK_LE(unextended_output_shape.DimensionsCount(), N);
+template <typename T, int N = 5>
+inline void BroadcastDivSlowQuantized(
+    const ArithmeticParams& params, const RuntimeShape& unextended_input1_shape,
+    const T* input1_data, const RuntimeShape& unextended_input2_shape,
+    const T* input2_data, const RuntimeShape& unextended_output_shape,
+    T* output_data) {
+  if (std::is_same<T, uint8_t>::value) {
+    TFLITE_DCHECK_GT(params.input1_offset, -256);
+    TFLITE_DCHECK_LT(params.input1_offset, 256);
+    TFLITE_DCHECK_GT(params.input2_offset, -256);
+    TFLITE_DCHECK_LT(params.input2_offset, 256);
+    TFLITE_DCHECK_GT(params.output_offset, -256);
+    TFLITE_DCHECK_LT(params.output_offset, 256);
+  } else if (std::is_same<T, int8_t>::value) {
+    TFLITE_DCHECK_GT(params.input1_offset, -128);
+    TFLITE_DCHECK_LE(params.input1_offset, 128);
+    TFLITE_DCHECK_GT(params.input2_offset, -128);
+    TFLITE_DCHECK_LE(params.input2_offset, 128);
+    TFLITE_DCHECK_GE(params.output_offset, -128);
+    TFLITE_DCHECK_LT(params.output_offset, 128);
+  } else if (std::is_same<T, int16_t>::value) {
+    TFLITE_DCHECK_GT(params.input1_offset, -32768);
+    TFLITE_DCHECK_LE(params.input1_offset, 32768);
+    TFLITE_DCHECK_GT(params.input2_offset, -32768);
+    TFLITE_DCHECK_LE(params.input2_offset, 32768);
+    TFLITE_DCHECK_GE(params.output_offset, -32768);
+    TFLITE_DCHECK_LT(params.output_offset, 32768);
+  }
 
-  NdArrayDesc<N> desc1;
-  NdArrayDesc<N> desc2;
-  NdArrayDesc<N> output_desc;
-  NdArrayDescsForElementwiseBroadcast(unextended_input1_shape,
-                                      unextended_input2_shape, &desc1, &desc2);
-  CopyDimsToDesc(RuntimeShape::ExtendedShape(N, unextended_output_shape),
-                 &output_desc);
-
-  TFLITE_DCHECK_GT(params.input1_offset, -256);
-  TFLITE_DCHECK_LT(params.input1_offset, 256);
-  TFLITE_DCHECK_GT(params.input2_offset, -256);
-  TFLITE_DCHECK_LT(params.input2_offset, 256);
-  TFLITE_DCHECK_GT(params.output_offset, -256);
-  TFLITE_DCHECK_LT(params.output_offset, 256);
-
-  auto div_func = [&](int indexes[N]) {
-    int32_t input1_val =
-        params.input1_offset + input1_data[SubscriptToIndex(desc1, indexes)];
-    int32_t input2_val =
-        params.input2_offset + input2_data[SubscriptToIndex(desc2, indexes)];
+  auto op = [&params](T a, T b) {
+    int32_t input1_val = params.input1_offset + a;
+    int32_t input2_val = params.input2_offset + b;
     TFLITE_DCHECK_NE(input2_val, 0);
     if (input2_val < 0) {
-      // Invert signs to avoid a negative input2_val as input2_inv needs to be
-      // positive to be used as multiplier of MultiplyByQuantizedMultiplier.
+      // Invert signs to avoid a negative input2_val as input2_inv needs to
+      // be positive to be used as multiplier of
+      // MultiplyByQuantizedMultiplier.
       input1_val = -input1_val;
       input2_val = -input2_val;
     }
@@ -2451,10 +2427,51 @@ inline void BroadcastDivSlow(const ArithmeticParams& params,
     const int32_t clamped_output =
         std::min(params.quantized_activation_max,
                  std::max(params.quantized_activation_min, unclamped_result));
-    output_data[SubscriptToIndex(output_desc, indexes)] =
-        static_cast<uint8_t>(clamped_output);
+    return static_cast<T>(clamped_output);
   };
-  NDOpsHelper<N>(output_desc, div_func);
+
+  reference_ops::BroadcastBinaryOpSimple(
+      unextended_input1_shape, input1_data, unextended_input2_shape,
+      input2_data, unextended_output_shape, output_data, op);
+}
+
+template <int N = 5>
+inline void BroadcastDivSlow(const ArithmeticParams& params,
+                             const RuntimeShape& unextended_input1_shape,
+                             const uint8_t* input1_data,
+                             const RuntimeShape& unextended_input2_shape,
+                             const uint8_t* input2_data,
+                             const RuntimeShape& unextended_output_shape,
+                             uint8_t* output_data) {
+  BroadcastDivSlowQuantized<uint8_t, N>(
+      params, unextended_input1_shape, input1_data, unextended_input2_shape,
+      input2_data, unextended_output_shape, output_data);
+}
+
+template <int N = 5>
+inline void BroadcastDivSlow(const ArithmeticParams& params,
+                             const RuntimeShape& unextended_input1_shape,
+                             const int8_t* input1_data,
+                             const RuntimeShape& unextended_input2_shape,
+                             const int8_t* input2_data,
+                             const RuntimeShape& unextended_output_shape,
+                             int8_t* output_data) {
+  BroadcastDivSlowQuantized<int8_t, N>(
+      params, unextended_input1_shape, input1_data, unextended_input2_shape,
+      input2_data, unextended_output_shape, output_data);
+}
+
+template <int N = 5>
+inline void BroadcastDivSlow(const ArithmeticParams& params,
+                             const RuntimeShape& unextended_input1_shape,
+                             const int16_t* input1_data,
+                             const RuntimeShape& unextended_input2_shape,
+                             const int16_t* input2_data,
+                             const RuntimeShape& unextended_output_shape,
+                             int16_t* output_data) {
+  BroadcastDivSlowQuantized<int16_t, N>(
+      params, unextended_input1_shape, input1_data, unextended_input2_shape,
+      input2_data, unextended_output_shape, output_data);
 }
 
 template <typename T>
@@ -3915,13 +3932,14 @@ inline void LogSoftmax(const SoftmaxParams& params, float input_scale,
   }
 }
 
-inline void Logistic(const RuntimeShape& input_shape, const float* input_data,
-                     const RuntimeShape& output_shape, float* output_data) {
+template <typename T>
+inline void Logistic(const RuntimeShape& input_shape, const T* input_data,
+                     const RuntimeShape& output_shape, T* output_data) {
   ruy::profiler::ScopeLabel label("Logistic");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
   output_map.array() =
-      input_map.array().unaryExpr(Eigen::internal::scalar_logistic_op<float>());
+      input_map.array().unaryExpr(Eigen::internal::scalar_logistic_op<T>());
 }
 
 // Convenience version that allows, for example, generated-code calls to be
@@ -4029,8 +4047,9 @@ inline void Logistic(const LogisticParams& params,
   }
 }
 
-inline void Tanh(const RuntimeShape& input_shape, const float* input_data,
-                 const RuntimeShape& output_shape, float* output_data) {
+template <typename T>
+inline void Tanh(const RuntimeShape& input_shape, const T* input_data,
+                 const RuntimeShape& output_shape, T* output_data) {
   ruy::profiler::ScopeLabel label("Tanh");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -4222,8 +4241,9 @@ inline void Cast(const RuntimeShape& input_shape, const SrcT* input_data,
   output_map.array() = input_map.array().template cast<DstT>();
 }
 
-inline void Floor(const RuntimeShape& input_shape, const float* input_data,
-                  const RuntimeShape& output_shape, float* output_data) {
+template <typename T>
+inline void Floor(const RuntimeShape& input_shape, const T* input_data,
+                  const RuntimeShape& output_shape, T* output_data) {
   ruy::profiler::ScopeLabel label("Floor");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -4380,6 +4400,13 @@ inline void PadImpl(const tflite::PadParams& op_params,
       RuntimeShape::ExtendedShape(max_supported_dims, input_shape);
   const RuntimeShape ext_output_shape =
       RuntimeShape::ExtendedShape(max_supported_dims, output_shape);
+  // A zero-element tensor may legitimately have null data pointers. There is
+  // nothing to copy or fill in that case, and even a zero-byte memcpy must not
+  // receive those null pointers under UBSan. Scan dimensions instead of using
+  // FlatSize(), which intentionally does not check for integer overflow.
+  if (output_shape.HasZeroDimension()) {
+    return;
+  }
   TFLITE_DCHECK_LE(op_params.left_padding_count, max_supported_dims);
   TFLITE_DCHECK_LE(op_params.right_padding_count, max_supported_dims);
 
@@ -4454,13 +4481,16 @@ inline void PadImpl(const tflite::PadParams& op_params,
                            pad_value, left_c_padding);
           }
 
-          T* out = output_data + Offset(ext_output_shape, out_b, out_p, out_h,
-                                        out_w, left_c_padding);
-          const T* in = input_data +
-                        Offset(ext_input_shape, out_b - left_b_padding,
-                               out_p - left_s1_padding, out_h - left_s2_padding,
-                               out_w - left_s3_padding, 0);
-          memcpy(out, in, input_depth * sizeof(T));
+          if (input_depth != 0) {
+            T* out = output_data + Offset(ext_output_shape, out_b, out_p, out_h,
+                                          out_w, left_c_padding);
+            const T* in =
+                input_data + Offset(ext_input_shape, out_b - left_b_padding,
+                                    out_p - left_s1_padding,
+                                    out_h - left_s2_padding,
+                                    out_w - left_s3_padding, 0);
+            memcpy(out, in, input_depth * sizeof(T));
+          }
 
           if (right_c_padding != 0) {
             TypedMemset<T>(
@@ -4556,6 +4586,9 @@ inline void PadImageStyleMemset(const tflite::PadParams& op_params,
       RuntimeShape::ExtendedShape(4, input_shape);
   const RuntimeShape ext_output_shape =
       RuntimeShape::ExtendedShape(4, output_shape);
+  if (output_shape.HasZeroDimension()) {
+    return;
+  }
   TFLITE_DCHECK_LE(op_params.left_padding_count, 4);
   TFLITE_DCHECK_LE(op_params.right_padding_count, 4);
 
@@ -4607,9 +4640,10 @@ inline void PadImageStyleMemset(const tflite::PadParams& op_params,
   const int inner_line_size = input_width * depth;
   const size_t num_inner_line_bytes = inner_line_size * sizeof(T);
 
-  if (input_height == 0) {
-    memset(output_data, pad_value,
-           num_top_block_bytes + num_bottom_block_bytes);
+  // Empty tensors may have null data pointers. If an empty spatial dimension
+  // is padded into a non-empty output, every output element is padding.
+  if (input_height == 0 || input_width == 0) {
+    TypedMemset<T>(output_data, pad_value, ext_output_shape.FlatSize());
   } else {
     for (int i = 0; i < batch; ++i) {
       // For each image in the batch, apply the top padding, then iterate
@@ -4740,6 +4774,78 @@ inline void Slice(const tflite::SliceParams& op_params,
                   const RuntimeShape& output_shape, TfLiteTensor* output) {
   SequentialTensorWriter<T> writer(input, output);
   return Slice(op_params, input_shape, output_shape, &writer);
+}
+
+// Iterates through the desired slice region and copies nibbles directly from
+// the input to the output tensor.
+inline void SliceInt4(const tflite::SliceParams& op_params,
+                      const RuntimeShape& input_shape,
+                      const TfLiteTensor* input,
+                      const RuntimeShape& output_shape, TfLiteTensor* output) {
+  ruy::profiler::ScopeLabel label("SliceInt4");
+
+  const int8_t* input_data = GetTensorData<int8_t>(input);
+  int8_t* output_data = GetTensorData<int8_t>(output);
+
+  // Clear output buffer, as we will be writing nibbles.
+  const int output_byte_size = (output_shape.FlatSize() + 1) / 2;
+  memset(output_data, 0, output_byte_size);
+
+  // Calculate the start and stop indices for each dimension of the slice.
+  const RuntimeShape ext_input_shape =
+      RuntimeShape::ExtendedShape(5, input_shape);
+  TFLITE_DCHECK_LE(op_params.begin_count, 5);
+  TFLITE_DCHECK_LE(op_params.size_count, 5);
+  const int begin_count = op_params.begin_count;
+  const int size_count = op_params.size_count;
+  // We front-pad the begin and size vectors.
+  int start[5];
+  int stop[5];
+  for (int i = 0; i < 5; ++i) {
+    int padded_i = 5 - i;
+    start[i] =
+        begin_count < padded_i ? 0 : op_params.begin[begin_count - padded_i];
+    stop[i] =
+        (size_count < padded_i || op_params.size[size_count - padded_i] == -1)
+            ? ext_input_shape.Dims(i)
+            : start[i] + op_params.size[size_count - padded_i];
+  }
+
+  // Loop over the slice region and copy nibbles.
+  int output_nibble_idx = 0;
+  for (int i0 = start[0]; i0 < stop[0]; ++i0) {
+    for (int i1 = start[1]; i1 < stop[1]; ++i1) {
+      for (int i2 = start[2]; i2 < stop[2]; ++i2) {
+        for (int i3 = start[3]; i3 < stop[3]; ++i3) {
+          for (int i4 = start[4]; i4 < stop[4]; ++i4) {
+            const int input_nibble_idx =
+                Offset(ext_input_shape, i0, i1, i2, i3, i4);
+
+            // Get nibble from input. Since int4 data is packed, two nibbles
+            // share a byte.
+            const int8_t input_byte = input_data[input_nibble_idx / 2];
+            int8_t nibble;
+            if (input_nibble_idx % 2 == 0) {  // low nibble
+              // The `(val << 4) >> 4` trick is to sign-extend the 4-bit value.
+              nibble = static_cast<int8_t>(input_byte << 4) >> 4;
+            } else {  // high nibble
+              nibble = input_byte >> 4;
+            }
+
+            // Set nibble in output.
+            if (output_nibble_idx % 2 == 0) {
+              // First nibble of a byte. We simply set the lower 4 bits.
+              output_data[output_nibble_idx / 2] = (nibble & 0x0F);
+            } else {
+              // Second nibble. OR with existing low nibble.
+              output_data[output_nibble_idx / 2] |= (nibble << 4);
+            }
+            output_nibble_idx++;
+          }
+        }
+      }
+    }
+  }
 }
 
 template <typename T>
@@ -4881,7 +4987,7 @@ void Col2im(const T* col_data, const int depth, const int height,
           if (ih >= 0 && ih < height && iw >= 0 && iw < width) {
             // TODO(andydavis) Vectorize this loop (if compiler does not).
             for (int i = 0; i < depth; ++i) {
-              im_patch_data[i] += col_data[i];
+              im_patch_data[i] = WrappingAdd<T>(im_patch_data[i], col_data[i]);
             }
           }
           im_patch_data += depth;
@@ -4905,7 +5011,7 @@ void BiasAdd(T* im_data, const T* bias_data, const int batch_size,
       for (int h = 0; h < height; ++h) {
         for (int w = 0; w < width; ++w) {
           for (int d = 0; d < depth; ++d) {
-            im_data[d] += bias_data[d];
+            im_data[d] = WrappingAdd<T>(im_data[d], bias_data[d]);
           }
           im_data += depth;
         }
@@ -4973,6 +5079,7 @@ inline void TransposeConvV2(
     dst_params.rows = hwoi_ordered_filter_total_size;
     dst_params.cols = input_image_size;
     cpu_backend_gemm::GemmParams<float, float> gemm_params;
+    std::fill_n(col2im_data, dst_params.rows * dst_params.cols, 0);
     cpu_backend_gemm::Gemm(lhs_params, hwoi_ordered_filter_data, rhs_params,
                            input_data + input_offset * i, dst_params,
                            col2im_data, gemm_params, cpu_backend_context);
@@ -5486,6 +5593,7 @@ inline void TransposeConvV2(
     dst_params.cols = input_image_size;
 
     cpu_backend_gemm::GemmParams<int32_t, int32_t> gemm_params;
+    std::fill_n(col2im_data, dst_params.rows * dst_params.cols, 0);
     cpu_backend_gemm::Gemm(lhs_params, hwoi_ordered_filter_data, rhs_params,
                            input_data + input_offset * i, dst_params,
                            col2im_data, gemm_params, cpu_backend_context);
@@ -5532,47 +5640,46 @@ inline void ResizeNearestNeighbor(
   const RuntimeShape output_shape =
       RuntimeShape::ExtendedShape(4, unextended_output_shape);
 
-  int32_t batches = MatchingDim(input_shape, 0, output_shape, 0);
-  int32_t input_height = input_shape.Dims(1);
-  int32_t input_width = input_shape.Dims(2);
-  int32_t depth = MatchingDim(input_shape, 3, output_shape, 3);
+  const int32_t batches = MatchingDim(input_shape, 0, output_shape, 0);
+  const int64_t input_height = input_shape.Dims(1);
+  const int64_t input_width = input_shape.Dims(2);
+  const int64_t depth = MatchingDim(input_shape, 3, output_shape, 3);
 
   // The Tensorflow version of this op allows resize on the width and height
   // axis only.
   TFLITE_DCHECK_EQ(output_size_shape.FlatSize(), 2);
-  int32_t output_height = output_size_data[0];
-  int32_t output_width = output_size_data[1];
+  const int32_t output_height = output_size_data[0];
+  const int32_t output_width = output_size_data[1];
 
   // Convert scales to fixed-point with 16 fractional bits. We add 1 as an
   // error factor and to avoid zero scales. For example, with input_height = 1,
   // output_height = 3, the float scaling factor would be non-zero at 1/3.
   // With fixed-point, this is zero.
-  int32_t height_scale = (input_height << 16) / output_height + 1;
-  int32_t width_scale = (input_width << 16) / output_width + 1;
+  const int64_t height_scale = (input_height << 16) / output_height + 1;
+  const int64_t width_scale = (input_width << 16) / output_width + 1;
 
-  const int col_offset = input_shape.Dims(3);
-  const int row_offset = input_shape.Dims(2) * col_offset;
-  const int batch_offset = input_shape.Dims(1) * row_offset;
+  const int64_t col_offset = input_shape.Dims(3);
+  const int64_t row_offset = input_shape.Dims(2) * col_offset;
+  const int64_t batch_offset = input_shape.Dims(1) * row_offset;
 
   const uint8_t* input_ptr = input_data;
   uint8_t* output_ptr = output_data;
-  for (int b = 0; b < batches; ++b) {
-    for (int y = 0; y < output_height; ++y) {
-      int32_t in_y = std::min((y * height_scale) >> 16, input_height - 1);
+  for (int32_t b = 0; b < batches; ++b) {
+    for (int32_t y = 0; y < output_height; ++y) {
+      const int64_t in_y = std::min((y * height_scale) >> 16, input_height - 1);
       // Check offset calculation is the same as the reference version. See
       // function comment for details. We check using a non-float version of:
-      // TFLITE_DCHECK_EQ(in_y, std::floor(y * (static_cast<float>(input_height)
-      //                                            / output_height)));
+      // in_y == std::floor(y * (static_cast<float>(input_height) /
+      // output_height));
       TFLITE_DCHECK_LT(y * input_height, output_height + in_y * output_height);
       TFLITE_DCHECK_GE(y * input_height, in_y * output_height);
       const uint8_t* y_input_ptr = input_ptr + in_y * row_offset;
-      for (int x = 0; x < output_width; ++x) {
-        int32_t in_x = std::min((x * width_scale) >> 16, input_width - 1);
+      for (int32_t x = 0; x < output_width; ++x) {
+        const int64_t in_x = std::min((x * width_scale) >> 16, input_width - 1);
         // Check offset calculation is the same as the reference version. See
         // function comment for details. We check using a non-float version of:
-        // TFLITE_DCHECK_EQ(in_y,
-        //                  std::floor(y * (static_cast<float>(input_width)
-        //                                      / output_width)));
+        // in_x == std::floor(x * (static_cast<float>(input_width) /
+        // output_width));
         TFLITE_DCHECK_LT(x * input_width, output_width + in_x * output_width);
         TFLITE_DCHECK_GE(x * input_width, in_x * output_width);
         const uint8_t* x_input_ptr = y_input_ptr + in_x * col_offset;
@@ -7087,327 +7194,12 @@ inline void Logistic16bitPrecision(const LogisticParams& params,
   }
 }
 
-// Transpose2D only deals with typical 2D matrix transpose ops.
-// Perform transpose by transposing 4x4 blocks of the input, proceeding from
-// left to right (down the rows) of the input, and then from top to bottom.
-template <typename T>
-inline void Transpose2D(const RuntimeShape& input_shape, const T* input_data,
-                        const RuntimeShape& output_shape, T* output_data) {
-  TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 2);
-  TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 2);
-
-  const int d0 = input_shape.DimsData()[0];
-  const int d1 = input_shape.DimsData()[1];
-  const int kLines = 4;
-  const int kSkipSize = (kLines - 1) * d1;
-
-  const T* input = input_data;
-
-  int i = 0;
-  for (; i <= d0 - kLines; i += kLines) {
-    T* output = output_data + i;
-
-    const T* input_ptr = input;
-    optimized_ops_preload_l1_keep(input_ptr);
-    input_ptr += d1;
-    optimized_ops_preload_l1_keep(input_ptr);
-    input_ptr += d1;
-    optimized_ops_preload_l1_keep(input_ptr);
-    input_ptr += d1;
-    optimized_ops_preload_l1_keep(input_ptr);
-
-    int j = 0;
-    for (; j <= d1 - kLines; j += kLines) {
-      input_ptr = input;
-      const T a00 = input_ptr[0];
-      const T a01 = input_ptr[1];
-      const T a02 = input_ptr[2];
-      const T a03 = input_ptr[3];
-      input_ptr += d1;
-      const T a10 = input_ptr[0];
-      const T a11 = input_ptr[1];
-      const T a12 = input_ptr[2];
-      const T a13 = input_ptr[3];
-      input_ptr += d1;
-      const T a20 = input_ptr[0];
-      const T a21 = input_ptr[1];
-      const T a22 = input_ptr[2];
-      const T a23 = input_ptr[3];
-      input_ptr += d1;
-      const T a30 = input_ptr[0];
-      const T a31 = input_ptr[1];
-      const T a32 = input_ptr[2];
-      const T a33 = input_ptr[3];
-
-      output[0] = a00;
-      output[1] = a10;
-      output[2] = a20;
-      output[3] = a30;
-      output += d0;
-
-      output[0] = a01;
-      output[1] = a11;
-      output[2] = a21;
-      output[3] = a31;
-      output += d0;
-
-      output[0] = a02;
-      output[1] = a12;
-      output[2] = a22;
-      output[3] = a32;
-      output += d0;
-
-      output[0] = a03;
-      output[1] = a13;
-      output[2] = a23;
-      output[3] = a33;
-      output += d0;
-
-      input += kLines;
-    }
-    if (j == d1) {
-      input += kSkipSize;
-    } else {
-      for (int p = 0; p < kLines; ++p) {
-        for (int q = 0; q < d1 - j; ++q) {
-          *(output + q * d0 + p) = *(input + p * d1 + q);
-        }
-      }
-      input += (d1 - j) + kSkipSize;
-    }
-  }
-  for (; i < d0; ++i) {
-    T* output = output_data + i;
-    for (int j = 0; j < d1; ++j) {
-      *output = *input;
-      output += d0;
-      ++input;
-    }
-  }
-}
-
-template <>
-inline void Transpose2D(const RuntimeShape& input_shape,
-                        const int32_t* input_data,
-                        const RuntimeShape& output_shape,
-                        int32_t* output_data) {
-  TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 2);
-  TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 2);
-
-  const int d0 = input_shape.DimsData()[0];
-  const int d1 = input_shape.DimsData()[1];
-#ifdef USE_NEON
-  const int kLines = 4;
-  const int kSkipSize = (kLines - 1) * d1;
-#endif
-
-  const int32_t* input = input_data;
-
-  int i = 0;
-#ifdef USE_NEON
-  for (; i <= d0 - kLines; i += kLines) {
-    int32_t* output = output_data + i;
-
-    const int32_t* input_ptr = input;
-    optimized_ops_preload_l1_keep(input_ptr);
-    input_ptr += d1;
-    optimized_ops_preload_l1_keep(input_ptr);
-    input_ptr += d1;
-    optimized_ops_preload_l1_keep(input_ptr);
-    input_ptr += d1;
-    optimized_ops_preload_l1_keep(input_ptr);
-
-    int j = 0;
-    for (; j <= d1 - kLines; j += kLines) {
-      input_ptr = input;
-      int32x4_t a0 = vld1q_s32(input);
-      input_ptr += d1;
-      int32x4_t a1 = vld1q_s32(input_ptr);
-      input_ptr += d1;
-      int32x4_t a2 = vld1q_s32(input_ptr);
-      input_ptr += d1;
-      int32x4_t a3 = vld1q_s32(input_ptr);
-
-      int32x4x2_t tmp1 = vuzpq_s32(a0, a2);
-      int32x4x2_t tmp2 = vuzpq_s32(a1, a3);
-      int32x4x2_t tmp3 = vtrnq_s32(tmp1.val[0], tmp2.val[0]);
-      int32x4x2_t tmp4 = vtrnq_s32(tmp1.val[1], tmp2.val[1]);
-
-      vst1q_s32(output, tmp3.val[0]);
-      output += d0;
-      vst1q_s32(output, tmp4.val[0]);
-      output += d0;
-      vst1q_s32(output, tmp3.val[1]);
-      output += d0;
-      vst1q_s32(output, tmp4.val[1]);
-      output += d0;
-      input += kLines;
-    }
-    if (j == d1) {
-      input += kSkipSize;
-    } else {
-      for (int p = 0; p < kLines; ++p) {
-        for (int q = 0; q < d1 - j; ++q) {
-          *(output + q * d0 + p) = *(input + p * d1 + q);
-        }
-      }
-      input += (d1 - j) + kSkipSize;
-    }
-  }
-#endif
-  for (; i < d0; ++i) {
-    int32_t* output = output_data + i;
-    for (int j = 0; j < d1; ++j) {
-      *output = *input;
-      output += d0;
-      ++input;
-    }
-  }
-}
-
-// TODO(b/173718660): see if we can reduce the number
-// of lines of code in branching without affecting latency.
-template <typename T>
-inline void Transpose3D(const TransposeParams& params,
-                        const RuntimeShape& input_shape, const T* input_data,
-                        const RuntimeShape& output_shape, T* output_data) {
-  int s2, s3;
-  s2 = input_shape.Dims(1);
-  s3 = input_shape.Dims(2);
-
-  int p1, p2, p3;
-  if (params.perm[0] == 2) {
-    p1 = 1;
-  } else if (params.perm[1] == 2) {
-    p2 = 1;
-  } else {
-    p3 = 1;
-  }
-
-  if (params.perm[0] == 1) {
-    p1 = s3;
-  } else if (params.perm[1] == 1) {
-    p2 = s3;
-  } else {
-    p3 = s3;
-  }
-
-  if (params.perm[0] == 0) {
-    p1 = s2 * s3;
-  } else if (params.perm[1] == 0) {
-    p2 = s2 * s3;
-  } else {
-    p3 = s2 * s3;
-  }
-
-  int o_s[3];
-  o_s[0] = input_shape.Dims(params.perm[0]);
-  o_s[1] = input_shape.Dims(params.perm[1]);
-  o_s[2] = input_shape.Dims(params.perm[2]);
-
-  for (int i1 = 0; i1 < o_s[0]; ++i1) {
-    for (int i2 = 0; i2 < o_s[1]; ++i2) {
-      for (int i3 = 0; i3 < o_s[2]; ++i3) {
-        const int i = i1 * p1 + i2 * p2 + i3 * p3;
-        const int o = i1 * o_s[1] * o_s[2] + i2 * o_s[2] + i3;
-        output_data[o] = input_data[i];
-      }
-    }
-  }
-}
-
-template <typename T>
-void TransposeImpl(const TransposeParams& params,
-                   const RuntimeShape& input_shape, const T* input_data,
-                   const RuntimeShape& output_shape, T* output_data) {
-  const int dims_cnt = input_shape.DimensionsCount();
-
-  int dim0, dim1;
-  if (transpose_utils::IsTranspose2DApplicable(params, input_shape, &dim0,
-                                               &dim1)) {
-    Transpose2D(RuntimeShape({dim0, dim1}), input_data,
-                RuntimeShape({dim1, dim0}), output_data);
-    return;
-  }
-
-  // TODO(b/141217325): notably Eigen is better suited for
-  // larger inputs whereas Transpose3D is generally
-  // better for smaller ones.
-  //
-  // E.g. on Nexus 5, Eigen is better for size 96^3 and up
-  // and Transpose3D is better for 72^3 and down.
-  //
-  // 96^3 is not mobile-friendly for certain usecases
-  // (e.g. model used in beam search for seq2seq) but is in others.
-  // Consider tradeoffs.
-  if (dims_cnt == 3) {
-    Transpose3D(params, input_shape, input_data, output_shape, output_data);
-    return;
-  }
-
-  // Reroute to the reference version if an optimized method for the given data
-  // is not available.
-  reference_ops::Transpose<T>(params, input_shape, input_data, output_shape,
-                              output_data);
-}
-
 template <typename T, int N = 6>
-void Transpose(const TransposeParams& unshrinked_params,
-               const RuntimeShape& unshrinked_input_shape, const T* input_data,
-               const RuntimeShape& unshrinked_output_shape, T* output_data) {
-  ruy::profiler::ScopeLabel label("Transpose");
-
-  const int output_size = unshrinked_output_shape.DimensionsCount();
-  TFLITE_DCHECK_EQ(output_size, unshrinked_params.perm_count);
-
-  RuntimeShape shrinked_input_shape = RuntimeShape(unshrinked_input_shape);
-  RuntimeShape shrinked_output_shape = RuntimeShape(unshrinked_output_shape);
-  TransposeParams shrinked_params = unshrinked_params;
-
-  // Reduce any dimensions that have one size. Lower transpose op usually
-  // performs better since memory access patterns will be improved.
-  transpose_utils::RemoveOneSizeDimensions(
-      &shrinked_input_shape, &shrinked_output_shape, &shrinked_params);
-
-  // Handle identity cases.
-  // TODO(b/140779653): Add an optimization pass in the conversion process to
-  // remove transpose op nodes where they do nothing like the below one.
-  bool identical = true;
-  for (int i = 0; i < shrinked_params.perm_count; ++i) {
-    if (shrinked_params.perm[i] != i) {
-      identical = false;
-      break;
-    }
-  }
-  if (identical) {
-    memcpy(output_data, input_data,
-           unshrinked_input_shape.FlatSize() * sizeof(T));
-    return;
-  }
-
-  // Reduce dimensions by flattening.
-  if (shrinked_params.perm[0] == 0 && output_size >= 3) {
-    RuntimeShape non_flatten_input_shape;
-    RuntimeShape non_flatten_output_shape;
-    TransposeParams non_flatten_params;
-    const int total_size = shrinked_input_shape.FlatSize();
-    const int non_flatten_size = transpose_utils::Flatten(
-        shrinked_input_shape, shrinked_output_shape, shrinked_params,
-        &non_flatten_input_shape, &non_flatten_output_shape,
-        &non_flatten_params);
-    TFLITE_DCHECK_NE(non_flatten_params.perm[0], 0);
-
-    for (int i = 0; i < total_size; i += non_flatten_size) {
-      TransposeImpl<T>(non_flatten_params, non_flatten_input_shape,
-                       input_data + i, non_flatten_output_shape,
-                       output_data + i);
-    }
-    return;
-  }
-
-  // Call non-flattened case.
-  TransposeImpl<T>(shrinked_params, shrinked_input_shape, input_data,
-                   shrinked_output_shape, output_data);
+void Transpose(const TransposeParams& params, const RuntimeShape& input_shape,
+               const T* input_data, const RuntimeShape& output_shape,
+               T* output_data) {
+  return reference_ops::Transpose(params, input_shape, input_data, output_shape,
+                                  output_data);
 }
 
 // Assume input1 & input2 have the same scale & zero point.
@@ -7537,8 +7329,11 @@ inline void BroadcastMinimumDispatch(const ArithmeticParams& params,
 }
 
 template <typename T>
-void CumsumImpl(const T* input_data, const RuntimeShape& shape, int axis,
-                bool exclusive, bool reverse, T* output_data) {
+TFLITE_NO_SANITIZE_INTEGER_OVERFLOW void CumsumImpl(const T* input_data,
+                                                    const RuntimeShape& shape,
+                                                    int axis, bool exclusive,
+                                                    bool reverse,
+                                                    T* output_data) {
   Eigen::array<Eigen::DenseIndex, 3> dims = {1, 1, 1};
 
   for (int i = 0; i < axis; ++i) {
@@ -7569,8 +7364,10 @@ void CumsumImpl(const T* input_data, const RuntimeShape& shape, int axis,
 }
 
 template <typename T>
-void CumSum(const T* input_data, const RuntimeShape& shape, int axis,
-            bool exclusive, bool reverse, T* output_data) {
+TFLITE_NO_SANITIZE_INTEGER_OVERFLOW void CumSum(const T* input_data,
+                                                const RuntimeShape& shape,
+                                                int axis, bool exclusive,
+                                                bool reverse, T* output_data) {
   const int dim = shape.DimensionsCount();
   TFLITE_DCHECK_GE(dim, 1);
   CumsumImpl<T>(input_data, shape, axis, exclusive, reverse, output_data);
@@ -7744,11 +7541,20 @@ inline int ArgMinVector(const float* input_data, int size) {
       // Increase indices by 4.
       index_s32x4 = vaddq_s32(index_s32x4, inc);
       float32x4_t v = vld1q_f32(&input_data[i]);
-      uint32x4_t mask = vcltq_f32(v, min_value_f32x4);
-      min_value_f32x4 = vminq_f32(min_value_f32x4, v);
+      // NaN-aware comparison: update if candidate is finite AND
+      // (current is NaN OR candidate < current).
+      uint32x4_t v_not_nan = vceqq_f32(v, v);
+      uint32x4_t min_is_nan =
+          vmvnq_u32(vceqq_f32(min_value_f32x4, min_value_f32x4));
+      uint32x4_t v_lt_min = vcltq_f32(v, min_value_f32x4);
+      uint32x4_t mask = vandq_u32(v_not_nan, vorrq_u32(min_is_nan, v_lt_min));
+      min_value_f32x4 = vbslq_f32(mask, v, min_value_f32x4);
       min_index_s32x4 = vbslq_s32(mask, index_s32x4, min_index_s32x4);
     }
     // Find min element within float32x4_t.
+    // Note: on ARMv8, vminvq_f32 uses fminnm which correctly ignores NaN
+    // lanes. On ARMv7, vpmin_f32 may propagate NaN; this is a pre-existing
+    // limitation that does not affect non-NaN inputs.
 #ifdef __aarch64__
     min_value = vminvq_f32(min_value_f32x4);
 #else
@@ -7773,15 +7579,17 @@ inline int ArgMinVector(const float* input_data, int size) {
 #endif  // __aarch64__
   }
 #endif  // USE_NEON
-  // Leftover loop.
+  // Leftover loop (NaN-aware).
   for (; i < size; ++i) {
     const float curr_value = input_data[i];
-    if (curr_value < min_value) {
+    if (!std::isnan(curr_value) &&
+        (std::isnan(min_value) || curr_value < min_value)) {
       min_value = curr_value;
       min_index = i;
     }
   }
-  return min_index;
+  // All-NaN inputs: deterministically return first index.
+  return std::isnan(min_value) ? 0 : min_index;
 }
 
 template <>
@@ -7800,11 +7608,20 @@ inline int ArgMaxVector(const float* input_data, int size) {
       // Increase indices by 4.
       index_s32x4 = vaddq_s32(index_s32x4, inc);
       float32x4_t v = vld1q_f32(&input_data[i]);
-      uint32x4_t mask = vcgtq_f32(v, max_value_f32x4);
-      max_value_f32x4 = vmaxq_f32(max_value_f32x4, v);
+      // NaN-aware comparison: update if candidate is finite AND
+      // (current is NaN OR candidate > current).
+      uint32x4_t v_not_nan = vceqq_f32(v, v);
+      uint32x4_t max_is_nan =
+          vmvnq_u32(vceqq_f32(max_value_f32x4, max_value_f32x4));
+      uint32x4_t v_gt_max = vcgtq_f32(v, max_value_f32x4);
+      uint32x4_t mask = vandq_u32(v_not_nan, vorrq_u32(max_is_nan, v_gt_max));
+      max_value_f32x4 = vbslq_f32(mask, v, max_value_f32x4);
       max_index_s32x4 = vbslq_s32(mask, index_s32x4, max_index_s32x4);
     }
     // Find max element within float32x4_t.
+    // Note: on ARMv8, vmaxvq_f32 uses fmaxnm which correctly ignores NaN
+    // lanes. On ARMv7, vpmax_f32 may propagate NaN; this is a pre-existing
+    // limitation that does not affect non-NaN inputs.
 #ifdef __aarch64__
     max_value = vmaxvq_f32(max_value_f32x4);
 #else
@@ -7829,15 +7646,17 @@ inline int ArgMaxVector(const float* input_data, int size) {
 #endif  // __aarch64__
   }
 #endif  // USE_NEON
-  // Leftover loop.
+  // Leftover loop (NaN-aware).
   for (; i < size; ++i) {
     const float curr_value = input_data[i];
-    if (curr_value > max_value) {
+    if (!std::isnan(curr_value) &&
+        (std::isnan(max_value) || curr_value > max_value)) {
       max_value = curr_value;
       max_index = i;
     }
   }
-  return max_index;
+  // All-NaN inputs: deterministically return first index.
+  return std::isnan(max_value) ? 0 : max_index;
 }
 
 template <>
@@ -8140,7 +7959,8 @@ void Col2im(const T* col_data, const int channel, const int planes,
               if (ip >= 0 && ip < planes && ih >= 0 && ih < height && iw >= 0 &&
                   iw < width) {
                 for (int i = 0; i < channel; ++i) {
-                  im_patch_data[i] += col_data[i];
+                  im_patch_data[i] =
+                      WrappingAdd<T>(im_patch_data[i], col_data[i]);
                 }
               }
               im_patch_data += channel;
@@ -8217,7 +8037,7 @@ inline void Conv3DTranspose(
 
   const int spatial_dim_1_padding_before = params.padding_values.depth;
   const int spatial_dim_1_padding_after =
-      params.padding_values.height + params.padding_values.depth_offset;
+      params.padding_values.depth + params.padding_values.depth_offset;
   const int spatial_dim_2_padding_before = params.padding_values.height;
   const int spatial_dim_2_padding_after =
       params.padding_values.height + params.padding_values.height_offset;

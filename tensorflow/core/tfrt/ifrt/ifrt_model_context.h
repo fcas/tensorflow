@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_TFRT_IFRT_IFRT_MODEL_CONTEXT_H_
 #define TENSORFLOW_CORE_TFRT_IFRT_IFRT_MODEL_CONTEXT_H_
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -23,19 +24,24 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
+#include "tensorflow/compiler/mlir/tfrt/transforms/ifrt/tf2hlo.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
-#include "xla/tsl/concurrency/ref_count.h"
+#include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/topology.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
+#include "tensorflow/core/tfrt/ifrt/ifrt_config.pb.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_executable_registry.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_loaded_variable_registry.h"
+#include "tensorflow/core/tfrt/ifrt/ifrt_persistent_compilation_cache.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_restore_tensor_registry.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_serving_core_selector.h"
-#include "tsl/platform/threadpool.h"
+#include "tensorflow/core/tfrt/ifrt/sharding_utils.h"
+#include "tsl/platform/protobuf.h"
 #include "tfrt/host_context/concurrent_work_queue.h"  // from @tf_runtime
 
 namespace tensorflow {
@@ -55,23 +61,54 @@ struct DeviceConfig {
 // This class is thread compatible.
 class IfrtModelContext {
  public:
-  explicit IfrtModelContext(std::shared_ptr<xla::ifrt::Client> client,
-                            IfrtServingCoreSelector* ifrt_serving_core_selector,
-                            const tsl::thread::ThreadPool* thread_pool)
-      : client_(std::move(client)),
-        ifrt_serving_core_selector_(ifrt_serving_core_selector),
-        thread_pool_(*thread_pool) {}
-  IfrtModelContext(
+  explicit IfrtModelContext(
       std::shared_ptr<xla::ifrt::Client> client,
       IfrtServingCoreSelector* ifrt_serving_core_selector,
-      const tsl::thread::ThreadPool* thread_pool,
-      tensorflow::DeviceMgr* device_mgr,
-      tensorflow::XlaHelpers::ShapeRepresentationFn shape_representation_fn)
+      tsl::thread::ThreadPool* thread_pool,
+      std::variant<std::unique_ptr<tsl::protobuf::Message>,
+                   xla::CompileOptions::EnvironmentOptionOverrides>
+          compilation_env_or_overrides,
+      H2DTransferExecutorFactory* h2d_transfer_executor_factory,
+      bool enable_propagate_static_shapes_pass = true,
+      bool use_output_arena = false,
+      bool use_undonatable_buffer_converter = false)
       : client_(std::move(client)),
         ifrt_serving_core_selector_(ifrt_serving_core_selector),
         thread_pool_(*thread_pool),
+        compilation_env_or_overrides_(std::move(compilation_env_or_overrides)),
+        h2d_transfer_executor_factory_(h2d_transfer_executor_factory),
+        enable_propagate_static_shapes_pass_(
+            enable_propagate_static_shapes_pass),
+        use_output_arena_(use_output_arena),
+        use_undonatable_buffer_converter_(use_undonatable_buffer_converter) {}
+  IfrtModelContext(
+      std::shared_ptr<xla::ifrt::Client> client,
+      IfrtServingCoreSelector* ifrt_serving_core_selector,
+      tsl::thread::ThreadPool* thread_pool, tensorflow::DeviceMgr* device_mgr,
+      tensorflow::XlaHelpers::ShapeRepresentationFn shape_representation_fn,
+      std::variant<std::unique_ptr<tsl::protobuf::Message>,
+                   xla::CompileOptions::EnvironmentOptionOverrides>
+          compilation_env_or_overrides,
+      std::shared_ptr<const void> topology, TfToHloCompiler* tf_to_hlo_compiler,
+      H2DTransferExecutorFactory* h2d_transfer_executor_factory,
+      IfrtPersistentCompilationCache* persistent_compilation_cache = nullptr,
+      bool enable_propagate_static_shapes_pass = true,
+      bool use_output_arena = false,
+      bool use_undonatable_buffer_converter = false)
+      : client_(std::move(client)),
+        topology_(topology),
+        ifrt_serving_core_selector_(ifrt_serving_core_selector),
+        thread_pool_(*thread_pool),
         device_mgr_(device_mgr),
-        shape_representation_fn_(shape_representation_fn) {}
+        shape_representation_fn_(shape_representation_fn),
+        compilation_env_or_overrides_(std::move(compilation_env_or_overrides)),
+        tf_to_hlo_compiler_(tf_to_hlo_compiler),
+        h2d_transfer_executor_factory_(h2d_transfer_executor_factory),
+        persistent_compilation_cache_(persistent_compilation_cache),
+        enable_propagate_static_shapes_pass_(
+            enable_propagate_static_shapes_pass),
+        use_output_arena_(use_output_arena),
+        use_undonatable_buffer_converter_(use_undonatable_buffer_converter) {}
 
   void RegisterHandle(ServingExecutableRegistry::Handle handle) {
     handles_.push_back(std::move(handle));
@@ -84,7 +121,7 @@ class IfrtModelContext {
     return shape_representation_fn_;
   }
 
-  const tsl::thread::ThreadPool& GetThreadPool() const;
+  tsl::thread::ThreadPool& GetThreadPool() const;
 
   const IfrtLoadedVariableRegistry& GetLoadedVariableRegistry() const {
     return loaded_variable_registry_;
@@ -100,6 +137,14 @@ class IfrtModelContext {
     return restore_tensor_registry_;
   }
 
+  IfrtPersistentCompilationCache* GetPersistentCompilationCache() const {
+    return persistent_compilation_cache_;
+  }
+
+  H2DTransferExecutorFactory* GetH2DTransferExecutorFactory() const {
+    return h2d_transfer_executor_factory_;
+  }
+
   tensorflow::DeviceMgr* GetDeviceMgr() const { return device_mgr_; }
   IfrtServingCoreSelector* GetIfrtServingCoreSelector() const {
     return ifrt_serving_core_selector_;
@@ -112,6 +157,70 @@ class IfrtModelContext {
     checkpoint_loader_queue_ = work_queue;
   }
 
+  void set_default_signature_inputs(
+      const DefaultSignatureInputConfig& default_signature_inputs) {
+    default_signature_inputs_ = default_signature_inputs;
+  }
+
+  void set_h2d_transfer_executor_factory(
+      H2DTransferExecutorFactory* h2d_transfer_executor_factory) {
+    h2d_transfer_executor_factory_ = h2d_transfer_executor_factory;
+  }
+
+  const DefaultSignatureInputConfig& default_signature_inputs() const {
+    return default_signature_inputs_;
+  }
+
+  bool enable_propagate_static_shapes_pass() const {
+    return enable_propagate_static_shapes_pass_;
+  }
+
+  void set_enable_propagate_static_shapes_pass(
+      bool enable_propagate_static_shapes_pass) {
+    enable_propagate_static_shapes_pass_ = enable_propagate_static_shapes_pass;
+  }
+
+  bool use_output_arena() const { return use_output_arena_; }
+
+  void set_use_output_arena(bool use_output_arena) {
+    use_output_arena_ = use_output_arena;
+  }
+
+  bool use_undonatable_buffer_converter() const {
+    return use_undonatable_buffer_converter_;
+  }
+
+  void set_use_undonatable_buffer_converter(
+      bool use_undonatable_buffer_converter) {
+    use_undonatable_buffer_converter_ = use_undonatable_buffer_converter;
+  }
+
+  tsl::protobuf::Message* GetCompilationEnvironmentProto() const {
+    if (std::holds_alternative<std::unique_ptr<tsl::protobuf::Message>>(
+            compilation_env_or_overrides_)) {
+      return std::get<std::unique_ptr<tsl::protobuf::Message>>(
+                 compilation_env_or_overrides_)
+          .get();
+    }
+    return nullptr;
+  }
+
+  std::variant<tsl::protobuf::Message*,
+               xla::CompileOptions::EnvironmentOptionOverrides>
+  GetCompilationEnvOrOverrides() const {
+    if (std::holds_alternative<std::unique_ptr<tsl::protobuf::Message>>(
+            compilation_env_or_overrides_)) {
+      return std::get<std::unique_ptr<tsl::protobuf::Message>>(
+                 compilation_env_or_overrides_)
+          .get();
+    } else {
+      return std::get<xla::CompileOptions::EnvironmentOptionOverrides>(
+          compilation_env_or_overrides_);
+    }
+  }
+
+  TfToHloCompiler* GetTfToHloCompiler() const { return tf_to_hlo_compiler_; }
+
   // Freeze the model: release the resources such as host tensors that are used
   // by the device only. The caller guarantees all resources released in this
   // function is no longer in use in regular execution path.
@@ -120,22 +229,40 @@ class IfrtModelContext {
   // leads to an error.
   absl::Status Freeze();
 
+  bool IsFrozen() const { return frozen_; }
+
  private:
   std::shared_ptr<xla::ifrt::Client> client_;
+  // Keep hardware specific topology info alive. This is currently used for
+  // shape determination.
+  std::shared_ptr<const void> topology_;
+
   IfrtServingCoreSelector* ifrt_serving_core_selector_;  // May be nullptr
-  const tsl::thread::ThreadPool& thread_pool_;
+  tsl::thread::ThreadPool& thread_pool_;
 
   tensorflow::DeviceMgr* device_mgr_ = nullptr;  // Not owned.
   tensorflow::XlaHelpers::ShapeRepresentationFn shape_representation_fn_ =
       tensorflow::IdentityShapeRepresentationFn();
+  std::variant<std::unique_ptr<tsl::protobuf::Message>,
+               xla::CompileOptions::EnvironmentOptionOverrides>
+      compilation_env_or_overrides_;
 
   // Dedicated work queue for heavy task such as variable tensor restoration.
   tfrt::ConcurrentWorkQueue* checkpoint_loader_queue_ = nullptr;
 
   std::vector<ServingExecutableRegistry::Handle> handles_;
 
+  DefaultSignatureInputConfig default_signature_inputs_;
+
   IfrtLoadedVariableRegistry loaded_variable_registry_;
   IfrtRestoreTensorRegistry restore_tensor_registry_;
+  TfToHloCompiler* tf_to_hlo_compiler_ = nullptr;
+  H2DTransferExecutorFactory* h2d_transfer_executor_factory_ = nullptr;
+  IfrtPersistentCompilationCache* persistent_compilation_cache_ = nullptr;
+  bool frozen_ = false;
+  bool enable_propagate_static_shapes_pass_ = true;
+  bool use_output_arena_ = false;
+  bool use_undonatable_buffer_converter_ = false;
 };
 
 }  // namespace ifrt_serving

@@ -13,7 +13,10 @@
 # limitations under the License.
 # ==============================================================================
 
-load("//tensorflow:strict.default.bzl", "py_strict_binary")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load("//tensorflow:tensorflow.bzl", "clean_dep")
 
 # Mini benchmarking helps in validating HW acceleration across Android and iOS.
@@ -23,7 +26,7 @@ load("build_defs.bzl", "cc_library_with_forced_in_process_benchmark_variant", "e
 load("special_rules.bzl", "libjpeg_deps", "libjpeg_handle_deps", "libjpeg_hdrs_deps", "minibenchmark_visibility_allowlist")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = [
         "//tensorflow/lite/experimental/acceleration/mini_benchmark:__subpackages__",
         "//tensorflow/lite/tools/benchmark:__subpackages__",
@@ -67,11 +70,10 @@ cc_test(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "copy_associated_files",
     srcs = ["copy_associated_files.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    strict_deps = True,
 )
 
 cc_library(
@@ -296,8 +298,8 @@ cc_library(
     hdrs = ["decode_jpeg_register.h"],
     copts = tflite_copts(),
     deps = [
+        ":decode_jpeg_status",
         ":libjpeg_decoder",
-        "//tensorflow/lite:string",
         "//tensorflow/lite:string_util",
         "//tensorflow/lite/core/c:c_api_types",
         "//tensorflow/lite/core/c:common",
@@ -697,6 +699,7 @@ cc_library(
     visibility = ["@org_tensorflow_lite_support//tensorflow_lite_support/cc:__subpackages__"] + minibenchmark_visibility_allowlist(),
     deps = [
         "//tensorflow/lite/acceleration/configuration:configuration_fbs",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@flatbuffers",
@@ -858,9 +861,9 @@ cc_test(
     deps = [
         ":runner",
         ":status_codes",
+        "//tensorflow/compiler/mlir/lite/schema:schema_fbs_with_mutable",
         "//tensorflow/lite:allocation",
         "//tensorflow/lite:stderr_reporter",
-        "//tensorflow/lite/schema:schema_fbs_with_mutable",
         "@com_google_googletest//:gtest_main",
         "@flatbuffers//:runtime_cc",
     ] + select({
@@ -940,10 +943,49 @@ cc_library(
         "//tensorflow/lite/acceleration/configuration:configuration_fbs",
         "//tensorflow/lite/acceleration/configuration/c:delegate_plugin",
         "//tensorflow/lite/core/acceleration/configuration:delegate_registry",
+        "//tensorflow/lite/core/c:common",
         "@com_google_absl//absl/memory",
         "@flatbuffers",
     ],
     alwayslink = 1,
+)
+
+cc_binary(
+    name = "mock_gpu_delegate_plugin.so",
+    testonly = 1,
+    srcs = ["mock_gpu_delegate_plugin.cc"],
+    linkshared = True,
+    deps = [
+        "//tensorflow/lite/core/acceleration/configuration/c:delegate_plugin",
+        "//tensorflow/lite/core/c:common",
+    ],
+)
+
+embedded_binary(
+    name = "embedded_mock_gpu_delegate_plugin",
+    testonly = 1,
+    array_variable_name = "g_mock_gpu_delegate_plugin",
+    binary = ":mock_gpu_delegate_plugin.so",
+)
+
+cc_test(
+    name = "gpu_module_plugin_test",
+    srcs = ["gpu_module_plugin_test.cc"],
+    tags = [
+        "no_windows",
+    ],
+    deps = [
+        ":embedded_mock_gpu_delegate_plugin",
+        ":gpu_module_plugin",
+        ":mini_benchmark_test_helper",
+        "//tensorflow/lite/acceleration/configuration:configuration_cc_proto",
+        "//tensorflow/lite/acceleration/configuration:configuration_fbs",
+        "//tensorflow/lite/acceleration/configuration:proto_to_flatbuffer",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/core/acceleration/configuration:delegate_registry",
+        "@com_google_googletest//:gtest_main",
+        "@flatbuffers",
+    ],
 )
 
 embedded_binary(
@@ -985,18 +1027,21 @@ cc_test(
     deps = [
         ":embedded_mobilenet_model",
         ":embedded_mobilenet_validation_model",
+        ":gpu_module_plugin",
         ":mini_benchmark_test_helper",
         ":status_codes",
         ":validator",
+        "//tensorflow/compiler/mlir/lite/schema:schema_fbs_with_mutable",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite/acceleration/configuration:configuration_cc_proto",
         "//tensorflow/lite/acceleration/configuration:configuration_fbs",
         "//tensorflow/lite/acceleration/configuration:flatbuffer_to_proto",
         "//tensorflow/lite/acceleration/configuration:proto_to_flatbuffer",
         "//tensorflow/lite/core:model_builder",
+        "//tensorflow/lite/core/acceleration/configuration:delegate_registry",
         "//tensorflow/lite/core/acceleration/configuration:nnapi_plugin",
+        "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/experimental/acceleration/mini_benchmark/model_modifier:custom_validation_embedder",
-        "//tensorflow/lite/schema:schema_fbs_with_mutable",
         "//tensorflow/lite/tools:model_loader",
         "@com_google_googletest//:gtest_main",
         "@flatbuffers",
@@ -1103,6 +1148,13 @@ cc_test(
 cc_test(
     name = "validator_runner_test",
     srcs = ["validator_runner_test.cc"],
+    # Shared libraries that are built and loaded into internal Google applications are generally
+    # unsupported. One consequence of this lack of support is that AddressSanitizer's ODR checking
+    # will produce spurious failures with an upcoming Crosstool change. The workaround for this is
+    # to disable the ODR checking on affected tests.
+    env = {
+        "ASAN_OPTIONS": "detect_odr_violation=0",
+    },
     tags = [
         "no_mac",
         "no_windows",
@@ -1111,6 +1163,7 @@ cc_test(
     deps = [
         ":embedded_mobilenet_validation_model",
         ":embedded_nnapi_sl_fake_impl",
+        ":embedded_validator_runner_entrypoint",
         ":mini_benchmark_test_helper",
         ":nnapi_sl_fake_impl_client",
         ":status_codes",

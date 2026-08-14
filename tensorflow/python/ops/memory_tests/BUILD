@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # python/ops/memory_tests package
 
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test")
@@ -28,7 +43,7 @@ cuda_py_strict_test(
         "//tensorflow/python/platform:client_testlib",
         "//tensorflow/python/platform:test",
         "@absl_py//absl/testing:parameterized",
-        "@local_xla//xla/service:hlo_proto_py",
+        "@xla//xla/service:hlo_proto_py",
     ] + tf_additional_xla_deps_py(),
 )
 
@@ -36,11 +51,6 @@ tpu_py_strict_test(
     name = "custom_gradient_memory_test_tpu",
     size = "medium",
     srcs = ["custom_gradient_memory_test.py"],
-    args = ["--tpu_use_tfrt=false"],
-    # TODO(b/238830423): This test uses experimental_get_compiler_ir, which is
-    # not supported with TFRT (Failed getting HLO text: 'GetCompilerIr is not
-    # supported on this device.').
-    disable_tfrt = True,
     main = "custom_gradient_memory_test.py",
     deps = [
         "//tensorflow/python/distribute/cluster_resolver:tpu_cluster_resolver_py",
@@ -56,6 +66,6 @@ tpu_py_strict_test(
         "//tensorflow/python/platform:client_testlib",
         "//tensorflow/python/platform:test",
         "@absl_py//absl/testing:parameterized",
-        "@local_xla//xla/service:hlo_proto_py",
+        "@xla//xla/service:hlo_proto_py",
     ] + tf_additional_xla_deps_py(),
 )

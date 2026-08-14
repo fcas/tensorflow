@@ -1,4 +1,4 @@
-# Release 2.17.0
+# Release 2.22.0
 
 ## TensorFlow
 
@@ -6,8 +6,9 @@
 
 ### Breaking Changes
 
-* <DOCUMENT BREAKING CHANGES HERE>
-* <THIS SECTION SHOULD CONTAIN API, ABI AND BEHAVIORAL BREAKING CHANGES>
+The TensorBoard dependency is no longer included by default. If you use `tf.summary.*` APIs or `tf.keras.callbacks.TensorBoard`, please install the `tensorboard` package separately (`pip install tensorboard`). Otherwise, TensorFlow will raise an ImportError.
+
+In `tensorflow/c/experimental/filesystem/filesystem_interface.h`, removed `TF_TransactionToken` and associated APIs.
 
 ### Known Caveats
 
@@ -16,91 +17,49 @@
 * <KNOWN LACK OF SUPPORT ON SOME PLATFORM, SHOULD GO HERE>
 
 ### Major Features and Improvements
-
-*   <INSERT MAJOR FEATURE HERE, USING MARKDOWN SYNTAX>
-*   <IF RELEASE CONTAINS MULTIPLE FEATURES FROM SAME AREA, GROUP THEM TOGETHER>
-
-### Bug Fixes and Other Changes
-
-* <SIMILAR TO ABOVE SECTION, BUT FOR OTHER IMPORTANT CHANGES / BUG FIXES>
-* <IF A CHANGE CLOSES A GITHUB ISSUE, IT SHOULD BE DOCUMENTED HERE>
-* <NOTES SHOULD BE GROUPED PER AREA>
-
-* GPU
-    * Support for NVIDIA GPUs with compute capability 8.9 (e.g. L4 & L40) has
-      been added to TF binary distributions (Python wheels).
-* Replace `DebuggerOptions` of TensorFlow Quantizer, and migrate to
-  `DebuggerConfig` of StableHLO Quantizer.
-
-## Keras
-
-<INSERT SMALL BLURB ABOUT RELEASE FOCUS AREA AND POTENTIAL TOOLCHAIN CHANGES>
-
-### Breaking Changes
-
-* <DOCUMENT BREAKING CHANGES HERE>
-* <THIS SECTION SHOULD CONTAIN API, ABI AND BEHAVIORAL BREAKING CHANGES>
-* GPU
-    * Support for NVIDIA GPUs with compute capability 5.x (Maxwell generation)
-      has been removed from TF binary distributions (Python wheels).
-
-### Known Caveats
-
-* <CAVEATS REGARDING THE RELEASE (BUT NOT BREAKING CHANGES).>
-* <ADDING/BUMPING DEPENDENCIES SHOULD GO HERE>
-* <KNOWN LACK OF SUPPORT ON SOME PLATFORM, SHOULD GO HERE>
-
-### Major Features and Improvements
-
-*   <INSERT MAJOR FEATURE HERE, USING MARKDOWN SYNTAX>
-*   <IF RELEASE CONTAINS MULTIPLE FEATURES FROM SAME AREA, GROUP THEM TOGETHER>
-
-*   Add `is_cpu_target_available`, which indicates whether or not TensorFlow was
-    built with support for a given CPU target. This can be useful for skipping
-    target-specific tests if a target is not supported.
-
-*   `tf.data`
-    * Support `data.experimental.distribued_save`. `distribued_save` uses
-      tf.data service
-      (https://www.tensorflow.org/api_docs/python/tf/data/experimental/service)
-      to write distributed dataset snapshots. The call is non-blocking and
-      returns without waiting for the snapshot to finish. Setting `wait=True` to
-      `tf.data.Dataset.load` allows the snapshots to be read while they are
-      being written.
-
-### Bug Fixes and Other Changes
-
-* <SIMILAR TO ABOVE SECTION, BUT FOR OTHER IMPORTANT CHANGES / BUG FIXES>
-* <IF A CHANGE CLOSES A GITHUB ISSUE, IT SHOULD BE DOCUMENTED HERE>
-* <NOTES SHOULD BE GROUPED PER AREA>
 
 * `tf.lite`
-    * Quantization for `FullyConnected` layer is switched from per-tensor to
-      per-channel scales for dynamic range quantization use case (`float32`
-      inputs / outputs and `int8` weights). The change enables new quantization
-      schema globally in the converter and inference engine. The new behaviour
-      can be disabled via experimental
-      flag `converter._experimental_disable_per_channel_quantization_for_dense_layers = True`.
-    * C API:
-        * The experimental `TfLiteRegistrationExternal` type has been renamed as
-          `TfLiteOperator`, and likewise for the corresponding API functions.
-    * The Python TF Lite Interpreter bindings now have an option
-      `experimental_default_delegate_latest_features` to enable all default
-      delegate features.
+    * Adds support for QUI4 (Quantized Unsigned 4-bit) in Dequantize operator.
+    * Adds support for FP16 and BF16 in Unpack operator.
+    * Adds support for FP16 in Transpose and DynamicUpdateSlice operator.
+    * Transpose now supports up to 8D tensors.
+    * Adds support for FLOAT8_E4M3FN and FLOAT8_E5M2 data types.
 
+### Bug Fixes and Other Changes
+
+* `BatchFunction Operator`
+    * Adds the `num_warmup_batch_threads` op attribute to support a separate thread pool for processing warmup requests.
+* `TensorFlow API`
+    * Exports `__new__` in public API golden files for subclasses of `tuple` (like `tf.io.FixedLenFeature`) to fix false positives during static type checking.>
 * `tf.data`
-    * Add `wait` to `tf.data.Dataset.load`. If `True`, for snapshots written
-      with `distributed_save`, it reads the snapshot while it is being written.
-      For snapshots written with regular `save`, it waits for the snapshot until
-      it's finished. The default is `False` for backward compatibility. Users of
-      `distributed_save` are recommended to set it to `True`.
+    * Fixes a bug in `tf.data.Dataset.scan` where the shape of the state returned by `scan_func` was not strictly validated against the initial state.
+*   `tf.experimental.numpy`
 
-* `tf.tpu.experimental.embedding.TPUEmbeddingV2`
-    * Add `compute_sparse_core_stats` for sparse core users to profile the 
-      data with this API to get the `max_ids` and `max_unique_ids`. These
-      numbers will be needed to configure the sparse core embedding mid level 
-      api.
-    * Remove the `preprocess_features` method since that's no longer needed.
+    *   `tf.experimental.numpy.isclose` and `tf.experimental.numpy.allclose` now
+        apply `rtol` and `atol` to integer inputs, matching NumPy, instead of
+        comparing with pure equality. The comparison stays in integer
+        arithmetic; combining integer inputs with floating-point tolerances
+        (including the defaults) now raises an error unless automatic type
+        promotion is enabled, which keeps the cost of promotion opt-in.
+
+*   oneDNN (MKL) convolution and transpose kernels
+
+    *   Raises `InvalidArgumentError` instead of aborting the process for a
+        rank-mismatched `Conv3DBackpropFilterV2` input and for
+        `ConjugateTranspose` on a scalar. Fixes
+        [#118340](https://github.com/tensorflow/tensorflow/issues/118340) and
+        [#118345](https://github.com/tensorflow/tensorflow/issues/118345).
+
+*   `tf.image.non_max_suppression`
+
+    *   Fixes a segmentation fault under `jit_compile=True` when `boxes` and
+        `scores` are empty. The XLA lowering now returns an empty selection,
+        matching the non-XLA kernels. Fixes
+        [#117245](https://github.com/tensorflow/tensorflow/issues/117245).
+
+* <SIMILAR TO ABOVE SECTION, BUT FOR OTHER IMPORTANT CHANGES / BUG FIXES>
+* <IF A CHANGE CLOSES A GITHUB ISSUE, IT SHOULD BE DOCUMENTED HERE>
+* <NOTES SHOULD BE GROUPED PER AREA>
 
 ## Thanks to our Contributors
 
@@ -108,11 +67,228 @@ This release contains contributions from many people at Google, as well as:
 
 <INSERT>, <NAME>, <HERE>, <USING>, <GITHUB>, <HANDLE>
 
-# Release 2.16.0
+# Release 2.21.0
 
 ## TensorFlow
 
-<INSERT SMALL BLURB ABOUT RELEASE FOCUS AREA AND POTENTIAL TOOLCHAIN CHANGES>
+### Breaking Changes
+
+* Support for Python 3.9 has been removed starting with TF 2.21.
+* The TensorBoard (TB) dependency has been removed starting with TF 2.21.
+
+### Major Features and Improvements
+
+* `tf.lite`
+    * Adds int8 and int16x8 support for SQRT operator.
+    * Adds int16x8 support for EQUAL and NOT_EQUAL operators.
+    * Adds support for int2 type.
+    * Adds support for int2/int4 in tfl.cast .
+    * Adds support for SRQ int2 in tfl.fully_connected.
+    * Adds support for int4 in tfl.slice.
+    * Adds support for uint4 type.
+
+*  `tf.image`
+    * Adds JPEG XL support in decode_image.
+
+### Bug Fixes and Other Changes
+
+* `tf.data`
+    * Adds `NoneTensorSpec` to the public API so that `None`s in `element_spec`
+      can be identified via `isinstance(..., tf.NoneTensorSpec)`.
+
+## Thanks to our Contributors
+
+This release contains contributions from many people at Google, as well as:
+
+Aaraviitkgp, Abhijeet, Abhinav Gunjal, Abhishek, Adam Paszke, Aditya Gupta, Aditya Jha, Aditya Sharma, Adrian Kuegel, Aiden Grossman, Akarsh, Akhil Goel, Alan Kelly, Aleksa Arsic, Aleksei, Aleksei Nurmukhametov, Alex, Alexander Belyaev, Alexander Grund, Alexander Lyashuk, Alexander Shaposhnikov, Alex Pivovarov, Aliia Khasanova, Alina Sbirlea, Allan Renucci, Amelia Thurdekoos, Amit Sabne, Andrei Ivanov, Andrew Dame, Andrey Portnoy, Anish Nair, Anlun Xu, Antonio Sanchez, anuj chincholikar, Anuj Chincholikar, Aravindh Balaji, aravindhbalaji1985, Arian Arfaian, Armin Felder, Artem Belevich, Ashish Rao, Ashitesh Singh, A. Unique TensorFlower, Bart Chrzaszcz, benediktjohannes, Benjamin Chetioui, Benjamin Kramer, Berkin Ilbeyi, Bhatu, Bhavani Subramanian, Bhupendra Dubey, Bill Varcho, Bixia Zheng, Blake Hechtman, Bodhi Silberling, BruceXinXin, Bryan Massoth, Buddh Prakash, Byungchul Kim, Ce Zheng, Changhui Lin, Chao, Charles Alaras, Chase Riley Roberts, Chenhao Jiang, Chris Ashton, Chris Jones, Chris Kennelly, Christian Sigg, Chuan He, Chunlei Niu, Chun-nien Chan, Chunyu Jin, Clive Verghese, Cong Liu, Corentin Kerisit, Daniel Chen, Daniel Kuts, Daniel Ng, Daniel Sosa, Daniel Suo, Danila Malyutin, David Dunleavy, David Majnemer, David Pizzuto, Deepika Rajani, deeptanshusekhri, dependabot[bot], Deqiang Chen, Derek Murray, Dillon Sharlet, Dimitar (Mitko) Asenov, Dimitris Vardoulakis, Dirk Hornung, DottsGit, Dragan Mladjenovic, Eetu Sjöblom, Elen Kalda, Emilio Cota, Emily Fertig, Eugene Zhulenev, Eusebio Durán Montaña, Evan Brown, Ezekiel Calubaquib, Faijul Amin, Felix Wang, Fengwu Yao, Fergus Henderson, Frederic Rechtenstein, Frederik Gossen, Gabriel Gerlero, Gagan Nagaraj, gaikwadrahul8, garry00107, gaurides, George Pawelczak, Georg Stefan Schmid, gns, Goran Flegar, Graham, Grant Jensen, Greg Olechwierowicz, Gregory Pataky, Grzegorz Gawryał, Gunhyun Park, guozhong.zhuang, Haibo Huang, Hana Joo, Hariprasad Ravishankar, Harsha H S, Harshit Monish, Henning Becker, Hittanshu, Hoeseong (Hayden) Kim, Hugo Mano, Hyeontaek Lim, Ibrahim Umit Akgun, ILCSFNO, Ilia Sergachev, Ilya Tikhonovskiy, Iman Hosseini, Ionel Gog, Isha Arkatkar, isharif168, Ivo Ristovski List, Jacques Pienaar, Jae H. Yoo, Jaeyoon Jung, Jake Harmon, James Hilliard, jameslovespancakes, James Spooner, Jane Liu, Jaroslav Sevcik, Jeff Parker, Jeffrey A. Dean, Jeremy Meredith, Jialei Chen, Jian Cai, Jian Li, Jie Luo, Jim Lin, Jing Pu, Jinliang Wei, Jiya Zhang, Joel Wee, Johannes Buchner, Johannes Reifferscheid, Johnny, Jorge Gorbe Moya, Joshua Lang, Joshua Wang, Joss Briody, jparkerh, Juanli Shen, Juhyun Lee, Jun Jiang, Junwhan Ahn, Kadir Barut, Kanglan Tang, Kanish Anand, Kanvi Khanna, Karlo Basioli, Ken Franko, Kevin Chen, Kevin Gleason, Kingston Mandisodza, Koki Ibukuro, Kostiantyn Liepieshov, Krishna Haridasan, Krishna Somani, Krzysztof Kosiński, Kuy Mainwaring, lambert, Larry Lansing, Lin Chai, Lord ε Rebel, Luke Baumann, Luke Hutton, madhavmadupu, Majid Dadashi, Mani Ananth, Manjunath Gaonkar, Marcello Maggioni, Marcin Radomski, Maria Lyubimtseva, Marissa Ikonomidis, Mark Daoust, Mason Chang, Matej Aleksandrov, Mateusz Sokół, Matthias Guenther, Matthias Kramm, Matt Hurd, Matt Kreileder, Maxime France-Pillois, Maxim Ermilov, Mehrdad Khani, Melissa Weber Mendonça, MERT-CKR, Michael Goldfarb, Michael Green, Michael Kuperstein, Michael Voznesensky, Michael Whittaker, Mihai Maruseac, Mikhail Goncharov, Ming-Xu Huang, Mircea Trofin, Misha Gutman, misterBart, mmakevic-amd, Mohamed AbdElmoneim, Mohamed Amine Zghal, Mohammadreza Heydary, Mohammed Anany, mraunak, Mudit Gokhale, Nayana Thorat, Nevi, nhatle, Nhat Le, Nihar0071, Nikhil, Nikita Putikhin, Niklas Vangerow, Nitin Srinivasan, Oleg Shyshkov, Olli Lupton, Om Thakkar, Pankaj Kanwar, Parker Schuh, Paul Ganssle, Pauline Sho, Pavithra Eswaramoorthy, Pedro Gonnet, pemeliya, Penporn Koanantakool, Perry Gibson, Peter Buchlovsky, Peter Gavin, Peter Hawkins, Pham Binh, Phani Paladugula, Philipp Hack, Praneeth Mandala, Praveen Batra, psinfinity, Qingwei Zhang, Quentin Khan, Quoc Truong, QZero, Rachel Han, Raffi Khatchadourian, Ram Rachum, RasheedAli-Shaik, Raviteja Gorijala, Reed Wanderman-Milne, Reilly Grant, Renjie Wu, Richard Levasseur, Robert David, Ryan M. Lefever, Sachin M, Sagun Bajra, Sai Ganesh Muthuraman, Saksham Singh Rathore, Sannidhya Chauhan, Sayan Saha, Sean Talts, Seher Ellis, Sergei Lebedev, Sergey Kozub, Sevin Fide Varoglu, Shahriar Rouf, Shanbin Ke, Shaogang Wang, Sharad Vikram, Shawn Lu, Siddhartha Menon, Siqiao Wu, skill, Smit Hinsu, snadampal, Sohaib Iftikhar, Soowon Jeong, spiao, Srijan Upadhyay, stevemcgregory, Subham Soni, Subhankar Shah, Swachhand Lokhande, Tai Ly, TensorFlower Gardener, Terry Heo, Terry Sun, Terry Tao, Theotime Combes, Thomas Joerg, Thomas Köppe, Tiago Quelhas, TJ Xu, Toli Yevtushenko, Tomás Longeri, Tom Hennigan, Tommy Chiang, Tom Natan, Tongfei Guo, Tori Baker, Uwe L. Korn, Vadym Matsishevskyi, Vamsi Manchala, Venkat6871, Victor Stone, Ville Vesilehto, Vitalii Dziuba, Vladimir Belitskiy, Vlad Sytchenko, Volodymyr Kysenko, Wai Hon Law, wan3x, Weiyi Wang, Will Froom, William S. Moses, wondertx, Xuefei Jiang, Yang Chen, Yash Katariya, Yasir Ashfaq, yasiribmcon, Yeou Chiou, Yicheng Luo, Yi Kong, Yimei Sun, Yin Zhang, Yuchen Yao, Yue Sheng, Yulia Baturina, Yunjie Xu, Yunlong Liu, Yun Peng, Yurii Topin, Zac Cranko, Zac Mustin, Zenong Zhang, Zeyu Wang, Zhanyong Wan, Zixuan Jiang, Ziyin Huang, Zviki Nozadze
+
+# Release 2.20.0
+
+## TensorFlow
+
+### Breaking Changes
+
+* The `tensorflow-io-gcs-filesystem` package is now optional, due its uncertain, and limited support. To install it alongside `tensorflow`, run `pip install "tensorflow[gcs-filesystem]"`.
+
+### Major Features and Improvements
+
+* `tf.data`
+    * Adds `autotune.min_parallelism` to `tf.data.Options` to enable faster input pipeline warm up.
+* `tf.lite`
+    * LiteRT announced a [new release](https://developers.googleblog.com/en/litert-maximum-performance-simplified/) at Google IO ‘25 that improves upon TFLite, particularly in terms of NPU and GPU hardware acceleration and performance for on-device ML and AI applications. The APIs are available in Kotlin and C++.
+    * Additionally, LiteRT code base will decouple from TensorFlow repository, and `tf.lite` will be removed in future TensorFlow Python package. More details to follow in future release notes.
+    * Migrate to LiteRT for continued updates; the new repo can be found at https://github.com/google-ai-edge/LiteRT.  For more information and NPU EAP signup, reach out to the team at: [g.co/ai/LiteRT-NPU-EAP](https://g.co/ai/LiteRT-NPU-EAP).
+
+## Thanks to our Contributors
+
+This release contains contributions from many people at Google, as well as:
+
+1ndig0, 372046933, abhinav, afzpatel, Akhil Goel, Alain Carlucci, Aleksei, Alen Huang, Alex, Amrinfathima-Mcw, Aravindh Balaji, Armand Picard, Aseem Athale, Ashiq Imran, Assoap, Chao, Chase Riley Roberts, Chenhao Jiang, chunhsue, chuntl, Chunyu Jin, Corentin Kerisit, Crefeda Rodrigues, dependabot[bot], Dragan Mladjenovic, Elen Kalda, Felix Thomasmathibalan, gabeweisz, Gauri Deshpande, Georg Stefan Schmid, Guozhong Zhuang, Harsha H S, Harshith_N, Hugo Mano, Ian Tayler Lessa, Jack Wolfard, James Ward, Jane Liu, Jaroslav Sevcik, JD, Jerry-Ge, Jian Li, Jinzhe Zeng, jiunkaiy, Johannes Reifferscheid, johnnkp, junweifu, Kanvi Khanna, Kasper Nielsen, Linzb-Xyz, Luke Hutton, Mahmoud Abuzaina, Mathew Odden, Michael Platings, misterBart, Mitchell Ludwig, Mmakevic-Amd, mraunak, NamanAgarwal0905, Namrata-Ibm, Neuropilot-Captain, nhatle, Nicholas Wilson, Nikhil Shinde, Olli Lupton, Patrick J. Lopresti, Pavel Emeliyanenko, Pearu Peterson, pemeliya, Peng Sun, Philipp Hack, Pratham-Mcw, RahulSudarMCW, RakshithGB, Rakshithgb-Fujitsu, RuslanSemchenko, Ruturaj Vaidya, Sachin Muradi, sandeepgupta12, SaoirseARM, Sergey Kozub, Sevin Fide Varoglu, Shanbin Ke, Shaogang Wang, Shraiysh Vaishay, Siddhartha Menon, spiao, Swatheesh Muralidharan, Tai Ly, Terry Sun, Thibaut Goetghebuer-Planchon, Thomas Dickerson, Tilak, Tj Xu, Trevor Morris, tyb0807, vfdev, Wei Wang, wokron, wondertx, Xuefei Jiang, Yaowei Zhou, Zentrik, Ziyun Cheng, Zoranjovanovic-Ns
+
+# Release 2.19.1
+
+### Bug Fixes and Other Changes
+
+* Fix save_model.save for Serving embedding and add SparseCore Reshard.
+
+# Release 2.19.0
+
+## TensorFlow
+
+### Breaking Changes
+
+* `LiteRT`, a.k.a. `tf.lite`:
+    * C++ API:
+      * The public constants `tflite::Interpreter:kTensorsReservedCapacity`
+        and `tflite::Interpreter:kTensorsCapacityHeadroom` are now const
+        references, rather than `constexpr` compile-time constants.
+        (This is to enable better API compatibility for TFLite in Play services
+        while preserving the implementation flexibility to change the values of
+        these constants in the future.)
+    * Python API:
+      * `tf.lite.Interpreter` gives deprecation warning redirecting to its new
+        location at `ai_edge_litert.interpreter`, as the API
+        `tf.lite.Interpreter` will be deleted in TF 2.20. See the
+        [migration guide](https://ai.google.dev/edge/litert/migration) for
+        details.
+
+### Known Caveats
+
+### Major Features and Improvements
+
+*  `tf.lite`
+    * `tfl.Cast` op is now supporting `bfloat16` in runtime kernel.
+
+### Bug Fixes and Other Changes
+
+* We have stopped publishing `libtensorflow` packages but it can still be unpacked from the PyPI package.
+
+## Thanks to our Contributors
+
+This release contains contributions from many people at Google, as well as:
+
+Akhil Goel, akhilgoe, Alain Flaischer, Alex, Alexander Pivovarov, Alexander Shadchin, Alexis Praga, Amrinfathima-Mcw, Andrey Pikas, Andrey Portnoy, Ankur Singh, Ashiq Imran, Assoap, c8ef, charleshofer, Chase Riley Roberts, Chenhao Jiang, Chongyun Lee, Claudio Desouza, Corentin Godeau, Crefeda Rodrigues, Danny Burrow, dependabot[bot], Dimitris Vardoulakis, Dragan Mladjenovic, Elfie Guo, Emmanuel Ferdman, fiberflow, flyingcat, Gary Yi-Hung Chen, Georg Stefan Schmid, Gerwout Van Der Veen, Harsha H S, Harshit Monish, Hugo Mano, i.Pear, Ilia Sergachev, Jane Liu, Jaroslav Sevcik, Jc (Jonathan Chen), Jerry Ge, Jian Li, johndoknjas, Johnny, Jonathan Albrecht, Kaixi Hou, Kanvi Khanna, keerthanakadiri, Kevin Ji, Kiran Sai Ramineni, kwoncy2020, LakshmiKalaKadali, Lee, Jun Seok, Mahmoud Abuzaina, Matt Bahr, mayuyuace, Melissa Weber Mendonça, misterBart, Mkarpushin-Enhancelab, Mmakevic-Amd, mraunak, nallave, Nayana Thorat, Nayana-Ibm, nick.camarena, Nicolas Castet, Om Thakkar, oyzh, Parsa Homayouni, Patrick Toulme, Pavel Emeliyanenko, Pavithra Eswaramoorthy, Pearu Peterson, pemeliya, Philipp Hack, Ravi Kumar Soni, redwrasse, Ruturaj Vaidya, Sallenkey-Wei, Sandeep Gupta, Sergey Kozub, Sevin Fide Varoglu, Shanbin Ke, Shaogang Wang, Shixin Zhang, Shraiysh, Shu Wang, Silvio Traversaro, snadampal, Sunita Nadampalli, Tai Ly, Tatwai Chong, tchatow, tdanyluk, Terry Sun, Tilak, Tj Xu, Trevor Morris, Twice, vfdev, Vladimir Silyaev, Weisser, Pascal, wokron, Won Jeon, Xuefei Jiang, Zentrik, Zoranjovanovic-Ns
+
+# Release 2.18.0
+
+## TensorFlow
+
+### Breaking Changes
+
+* `tf.lite`
+    * C API:
+      * An optional, fourth parameter was added `TfLiteOperatorCreate` as a step forward towards a cleaner API for `TfLiteOperator`. Function `TfLiteOperatorCreate` was added recently, in TensorFlow Lite version 2.17.0, released on 7/11/2024, and we do not expect there will be much code using this function yet. Any code breakages can be easily resolved by passing nullptr as the new, 4th parameter.
+
+* TensorRT support is disabled in CUDA builds for code health improvement.
+
+* TensorFlow now supports and is compiled with NumPy 2.0 by default. Please see the [NumPy 2 release notes](https://numpy.org/doc/stable/release/2.0.0-notes.html) and the [NumPy 2 migration guide](https://numpy.org/devdocs/numpy_2_0_migration_guide.html#numpy-2-migration-guide).
+  * Note that NumPy's type promotion rules have been changed(See [NEP 50](https://numpy.org/neps/nep-0050-scalar-promotion.html#nep50)for details). This may change the precision at which computations happen, leading either to type errors or to numerical changes to results.
+  * Tensorflow will continue to support NumPy 1.26 until 2025, aligning with community standard deprecation timeline [here](https://scientific-python.org/specs/spec-0000/).
+
+* Hermetic CUDA support is added.
+
+  Hermetic CUDA uses a specific downloadable version of CUDA instead of the user’s locally installed CUDA. Bazel will download CUDA, CUDNN and NCCL distributions, and then use CUDA libraries and tools as dependencies in various Bazel targets. This enables more reproducible builds for Google ML projects and supported CUDA versions.
+
+* Remove the `EnumNamesXNNPackFlags` function in `tensorflow/lite/acceleration/configuration/configuration_generated.h`.
+
+  This change is a bug fix in the automatically generated code. This change is automatically generated by the new flatbuffer generator. The flatbuffers library is updated to 24.3.25 in https://github.com/tensorflow/tensorflow/commit/c17d64df85a83c1bd0fd7dcc0b1230812b0d3d48. The new flatbuffers library includes the following change https://github.com/google/flatbuffers/pull/7813 which fixed a underlying flatbuffer code generator bug.
+
+
+### Known Caveats
+
+### Major Features and Improvements
+
+*   `tf.lite`:
+    *   The LiteRT [repo](https://github.com/google-ai-edge/LiteRT) is live (see [announcement](https://developers.googleblog.com/en/tensorflow-lite-is-now-litert/)), which means that in the coming months there will be changes to the development experience for TFLite. The TF Lite Runtime source will be moved later this year, and sometime after that we will start accepting contributions through that repo.
+    *   SignatureRunner is now supported for models with no signatures.
+
+### Bug Fixes and Other Changes
+
+* `tf.data`
+    * Add optional `synchronous` argument to `map`, to specify that the `map` should run synchronously, as opposed to be parallelizable when `options.experimental_optimization.map_parallelization=True`. This saves memory compared to setting `num_parallel_calls=1`.
+    * Add optional `use_unbounded_threadpool` argument to `map`, to specify that the `map` should use an unbounded threadpool instead of the default pool that is based on the number of cores on the machine. This can improve throughput for map functions which perform IO or otherwise release the CPU.
+    * Add [`tf.data.experimental.get_model_proto`](https://www.tensorflow.org/api_docs/python/tf/data/experimental/get_model_proto) to allow users to peek into the analytical model inside of a dataset iterator.
+
+* `tf.lite`
+    * `Dequantize` op supports `TensorType_INT4`.
+        * This change includes per-channel dequantization.
+    * Add support for `stablehlo.composite`.
+    * `EmbeddingLookup` op supports per-channel quantization and `TensorType_INT4` values.
+    * `FullyConnected` op supports `TensorType_INT16` activation and `TensorType_Int4` weight per-channel quantization.
+    * Enable per-tensor quantization support in dynamic range quantization of `TRANSPOSE_CONV` layer. Fixes TFLite converter [bug](https://github.com/tensorflow/tensorflow/issues/76624).
+
+* `tf.tensor_scatter_update`, `tf.tensor_scatter_add` and of other reduce types.
+    * Support `bad_indices_policy`.
+
+## Thanks to our Contributors
+
+This release contains contributions from many people at Google, as well as:
+
+Akhil Goel, akhilgoe, Alexander Pivovarov, Amir Samani, Andrew Goodbody, Andrey Portnoy, Anthony Platanios, bernardoArcari, Brett Taylor, buptzyb, Chao, Christian Clauss, Cocoa, Daniil Kutz, Darya Parygina, dependabot[bot], Dimitris Vardoulakis, Dragan Mladjenovic, Elfie Guo, eukub, Faijul Amin, flyingcat, Frédéric Bastien, ganyu.08, Georg Stefan Schmid, Grigory Reznikov, Harsha H S, Harshit Monish, Heiner, Ilia Sergachev, Jan, Jane Liu, Jaroslav Sevcik, Kaixi Hou, Kanvi Khanna, Kristof Maar, Kristóf Maár, LakshmiKalaKadali, Lbertho-Gpsw, lingzhi98, MarcoFalke, Masahiro Hiramori, Mmakevic-Amd, mraunak, Nobuo Tsukamoto, Notheisz57, Olli Lupton, Pearu Peterson, pemeliya, Peyara Nando, Philipp Hack, Phuong Nguyen, Pol Dellaiera, Rahul Batra, Ruturaj Vaidya, sachinmuradi, Sergey Kozub, Shanbin Ke, Sheng Yang, shengyu, Shraiysh, Shu Wang, Surya, sushreebarsa, Swatheesh-Mcw, syzygial, Tai Ly, terryysun, tilakrayal, Tj Xu, Trevor Morris, Tzung-Han Juang, wenchenvincent, wondertx, Xuefei Jiang, Ye Huang, Yimei Sun, Yunlong Liu, Zahid Iqbal, Zhan Lu, Zoranjovanovic-Ns, Zuri Obozuwa
+
+# Release 2.17.1
+
+### Bug Fixes and Other Changes
+
+* Add necessary header files in the aar library. These are needed if developers build apps with header files unpacked from tflite aar files from maven.
+* Implement Name() for GCSWritableFile to fix the profiler trace viewer cache file generation.
+* Fix `cstring.h` missing file issue with the Libtensorflow archive.
+
+# Release 2.17.0
+
+## TensorFlow
+
+### Breaking Changes
+
+* GPU
+    * Support for NVIDIA GPUs with compute capability 5.x (Maxwell generation) has been removed from TF binary distributions (Python wheels).
+
+### Major Features and Improvements
+
+*   Add `is_cpu_target_available`, which indicates whether or not TensorFlow was built with support for a given CPU target. This can be useful for skipping target-specific tests if a target is not supported.
+
+*   `tf.data`
+    * Support `data.experimental.distribued_save`. `distribued_save` uses tf.data service (https://www.tensorflow.org/api_docs/python/tf/data/experimental/service) to write distributed dataset snapshots. The call is non-blocking and returns without waiting for the snapshot to finish. Setting `wait=True` to `tf.data.Dataset.load` allows the snapshots to be read while they are being written.
+
+### Bug Fixes and Other Changes
+
+* GPU
+    * Support for NVIDIA GPUs with compute capability 8.9 (e.g. L4 & L40) has been added to TF binary distributions (Python wheels).
+* Replace `DebuggerOptions` of TensorFlow Quantizer, and migrate to `DebuggerConfig` of StableHLO Quantizer.
+* Add TensorFlow to StableHLO converter to TensorFlow pip package.
+* TensorRT support: this is the last release supporting TensorRT. It will be removed in the next release.
+* NumPy 2.0 support: TensorFlow is going to support NumPy 2.0 in the next release. It may break some edge cases of TensorFlow API usage.
+
+* `tf.lite`
+    * Quantization for `FullyConnected` layer is switched from per-tensor to per-channel scales for dynamic range quantization use case (`float32` inputs / outputs and `int8` weights). The change enables new quantization schema globally in the converter and inference engine. The new behaviour can be disabled via experimental flag `converter._experimental_disable_per_channel_quantization_for_dense_layers = True`.
+    * C API:
+        * The experimental `TfLiteRegistrationExternal` type has been renamed as `TfLiteOperator`, and likewise for the corresponding API functions.
+    * The Python TF Lite Interpreter bindings now have an option `experimental_default_delegate_latest_features` to enable all default delegate features.
+    * Flatbuffer version update:
+        * `GetTemporaryPointer()` bug fixed.
+
+* `tf.data`
+    * Add `wait` to `tf.data.Dataset.load`. If `True`, for snapshots written with `distributed_save`, it reads the snapshot while it is being written. For snapshots written with regular `save`, it waits for the snapshot until it's finished. The default is `False` for backward compatibility. Users of `distributed_save` are recommended to set it to `True`.
+
+* `tf.tpu.experimental.embedding.TPUEmbeddingV2`
+    * Add `compute_sparse_core_stats` for sparse core users to profile the  data with this API to get the `max_ids` and `max_unique_ids`. These numbers will be needed to configure the sparse core embedding mid level api.
+    * Remove the `preprocess_features` method since that's no longer needed.
+
+## Thanks to our Contributors
+
+This release contains contributions from many people at Google, as well as:
+
+Abdulaziz Aloqeely, Ahmad-M-Al-Khateeb, Akhil Goel, akhilgoe, Alexander Pivovarov, Amir Samani, Andrew Goodbody, Andrey Portnoy, Ashiq Imran, Ben Olson, Chao, Chase Riley Roberts, Clemens Giuliani, dependabot[bot], Dimitris Vardoulakis, Dragan Mladjenovic, ekuznetsov139, Elfie Guo, Faijul Amin, Gauri1 Deshpande, Georg Stefan Schmid, guozhong.zhuang, Hao Wu, Haoyu (Daniel), Harsha H S, Harsha Hs, Harshit Monish, Ilia Sergachev, Jane Liu, Jaroslav Sevcik, Jinzhe Zeng, Justin Dhillon, Kaixi Hou, Kanvi Khanna, LakshmiKalaKadali, Learning-To-Play, lingzhi98, Lu Teng, Matt Bahr, Max Ren, Meekail Zain, Mmakevic-Amd, mraunak, neverlva, nhatle, Nicola Ferralis, Olli Lupton, Om Thakkar, orangekame3, ourfor, pateldeev, Pearu Peterson, pemeliya, Peng Sun, Philipp Hack, Pratik Joshi, prrathi, rahulbatra85, Raunak, redwrasse, Robert Kalmar, Robin Zhang, RoboSchmied, Ruturaj Vaidya, sachinmuradi, Shawn Wang, Sheng Yang, Surya, Thibaut Goetghebuer-Planchon, Thomas Preud'Homme, tilakrayal, Tj Xu, Trevor Morris, wenchenvincent, Yimei Sun, zahiqbal, Zhu Jianjiang, Zoranjovanovic-Ns
+
+# Release 2.16.2
+
+### Bug Fixes and Other Changes
+
+*  Fixed: Incorrect dependency metadata in TensorFlow Python packages causing installation failures with certain package managers such as Poetry.
+
+# Release 2.16.1
+
+## TensorFlow
 
 *   TensorFlow Windows Build:
 
@@ -125,9 +301,6 @@ This release contains contributions from many people at Google, as well as:
         before
 
 ### Breaking Changes
-
-*   <DOCUMENT BREAKING CHANGES HERE>
-*   <THIS SECTION SHOULD CONTAIN API, ABI AND BEHAVIORAL BREAKING CHANGES>
 
 *   `tf.summary.trace_on` now takes a `profiler_outdir` argument. This must be
     set if `profiler` arg is set to `True`.
@@ -166,29 +339,19 @@ This release contains contributions from many people at Google, as well as:
 
 ### Known Caveats
 
-* <CAVEATS REGARDING THE RELEASE (BUT NOT BREAKING CHANGES).>
-* <ADDING/BUMPING DEPENDENCIES SHOULD GO HERE>
-* <KNOWN LACK OF SUPPORT ON SOME PLATFORM, SHOULD GO HERE>
-
 *  Full aarch64 Linux and Arm64 macOS wheels are now published to the
   `tensorflow` pypi repository and no longer redirect to a separate package.
 
 ### Major Features and Improvements
 
-*   <INSERT MAJOR FEATURE HERE, USING MARKDOWN SYNTAX>
-*   <IF RELEASE CONTAINS MULTIPLE FEATURES FROM SAME AREA, GROUP THEM TOGETHER>
-
 *  Support for Python 3.12 has been added.
 *  [tensorflow-tpu](https://pypi.org/project/tensorflow-tpu/) package is now
    available for easier TPU based installs.
 *  TensorFlow pip packages are now built with CUDA 12.3 and cuDNN 8.9.7
+*  Added experimental support for float16 auto-mixed precision using the new AMX-FP16 instruction set on X86 CPUs.
 
 
 ### Bug Fixes and Other Changes
-
-* <SIMILAR TO ABOVE SECTION, BUT FOR OTHER IMPORTANT CHANGES / BUG FIXES>
-* <IF A CHANGE CLOSES A GITHUB ISSUE, IT SHOULD BE DOCUMENTED HERE>
-* <NOTES SHOULD BE GROUPED PER AREA>
 
 * `tf.lite`
     * Added support for `stablehlo.gather`.
@@ -265,33 +428,17 @@ This release contains contributions from many people at Google, as well as:
     * Added the option to set adaptive epsilon to match implementations with Jax
       and PyTorch equivalents.
 
-### Breaking Changes
-
-* <DOCUMENT BREAKING CHANGES HERE>
-* <THIS SECTION SHOULD CONTAIN API, ABI AND BEHAVIORAL BREAKING CHANGES>
-
-### Known Caveats
-
-* <CAVEATS REGARDING THE RELEASE (BUT NOT BREAKING CHANGES).>
-* <ADDING/BUMPING DEPENDENCIES SHOULD GO HERE>
-* <KNOWN LACK OF SUPPORT ON SOME PLATFORM, SHOULD GO HERE>
-
-### Major Features and Improvements
-
-*   <INSERT MAJOR FEATURE HERE, USING MARKDOWN SYNTAX>
-*   <IF RELEASE CONTAINS MULTIPLE FEATURES FROM SAME AREA, GROUP THEM TOGETHER>
-
-### Bug Fixes and Other Changes
-
-* <SIMILAR TO ABOVE SECTION, BUT FOR OTHER IMPORTANT CHANGES / BUG FIXES>
-* <IF A CHANGE CLOSES A GITHUB ISSUE, IT SHOULD BE DOCUMENTED HERE>
-* <NOTES SHOULD BE GROUPED PER AREA>
-
 ## Thanks to our Contributors
 
 This release contains contributions from many people at Google, as well as:
 
-RoboTux, <INSERT>, <NAME>, <HERE>, <USING>, <GITHUB>, <HANDLE>
+Aakar Dwivedi, Akhil Goel, Alexander Grund, Alexander Pivovarov, Andrew Goodbody, Andrey Portnoy, Aneta Kaczyńska, AnetaKaczynska, ArkadebMisra, Ashiq Imran, Ayan Moitra, Ben Barsdell, Ben Creech, Benedikt Lorch, Bhavani Subramanian, Bianca Van Schaik, Chao, Chase Riley Roberts, Connor Flanagan, David Hall, David Svantesson, David Svantesson-Yeung, dependabot[bot], Dr. Christoph Mittendorf, Dragan Mladjenovic, ekuznetsov139, Eli Kobrin, Eugene Kuznetsov, Faijul Amin, Frédéric Bastien, fsx950223, gaoyiyeah, Gauri1 Deshpande, Gautam, Giulio C.N, guozhong.zhuang, Harshit Monish, James Hilliard, Jane Liu, Jaroslav Sevcik, jeffhataws, Jerome Massot, Jerry Ge, jglaser, jmaksymc, Kaixi Hou, kamaljeeti, Kamil Magierski, Koan-Sin Tan, lingzhi98, looi, Mahmoud Abuzaina, Malik Shahzad Muzaffar, Meekail Zain, mraunak, Neil Girdhar, Olli Lupton, Om Thakkar, Paul Strawder, Pavel Emeliyanenko, Pearu Peterson, pemeliya, Philipp Hack, Pierluigi Urru, Pratik Joshi, radekzc, Rafik Saliev, Ragu, Rahul Batra, rahulbatra85, Raunak, redwrasse, Rodrigo Gomes, ronaghy, Sachin Muradi, Shanbin Ke, shawnwang18, Sheng Yang, Shivam Mishra, Shu Wang, Strawder, Paul, Surya, sushreebarsa, Tai Ly, talyz, Thibaut Goetghebuer-Planchon, Tj Xu, Tom Allsop, Trevor Morris, Varghese, Jojimon, weihanmines, wenchenvincent, Wenjie Zheng, Who Who Who, Yasir Ashfaq, yasiribmcon, Yoshio Soma, Yuanqiang Liu, Yuriy Chernyshov
+
+# Release 2.15.1
+
+### Bug Fixes and Other Changes
+
+*  `ml_dtypes` runtime dependency is updated to `0.3.1` to fix package conflict issues
 
 # Release 2.15.0.post1
 
@@ -473,6 +620,7 @@ Aiden Grossman, Akash Patel, Akhil Goel, Alexander Pivovarov, Andrew Goodbody, A
 ### Bug Fixes and Other Changes
 
 * `tf.py_function` and `tf.numpy_function` can now be used as function decorators for clearer code:
+  
    ```
    @tf.py_function(Tout=tf.float32)
    def my_fun(x):
@@ -783,6 +931,7 @@ This release contains contributions from many people at Google, as well as:
 # Release 2.11.1
 
 **Note**: TensorFlow 2.10 was the last TensorFlow release that supported GPU on native-Windows. Starting with TensorFlow 2.11, you will need to install TensorFlow in WSL2, or install tensorflow-cpu and, optionally, try the TensorFlow-DirectML-Plugin.
+
 *   Security vulnerability fixes will no longer be patched to this Tensorflow version. The latest Tensorflow version includes the security vulnerability fixes. You can update to the latest version (recommended) or patch security vulnerabilities yourself [steps](https://github.com/tensorflow/tensorflow#patching-guidelines). You can refer to the [release notes](https://github.com/tensorflow/tensorflow/releases) of the latest Tensorflow version for a list of newly fixed vulnerabilities. If you have any questions, please create a GitHub issue to let us know.
 
 This release also introduces several vulnerability fixes:
@@ -811,6 +960,7 @@ This release also introduces several vulnerability fixes:
 # Release 2.11.0
 
 ## Breaking Changes
+
 *   `tf.keras.optimizers.Optimizer` now points to the new Keras optimizer, and
     old optimizers have moved to the `tf.keras.optimizers.legacy` namespace.
     If you find your workflow failing due to this change,
@@ -1457,6 +1607,7 @@ This releases introduces several vulnerability fixes:
 # Release 2.8.3
 
 This releases introduces several vulnerability fixes:
+
 *   Fixes a `CHECK` failure in tf.reshape caused by overflows ([CVE-2022-35934](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-35934))
 *   Fixes a `CHECK` failure in `SobolSample` caused by missing validation ([CVE-2022-35935](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-35935))
 *   Fixes an OOB read in `Gather_nd` op in TF Lite ([CVE-2022-35937](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-35937))
@@ -3157,7 +3308,7 @@ This release introduces several vulnerability fixes:
 
     *   Keras been split into a separate PIP package (`keras`), and its code has
         been moved to the GitHub
-        repository[keras-team/keras](http://github.com/keras-team/keras). The
+        repository[keras-team/keras](https://github.com/keras-team/keras). The
         API endpoints for `tf.keras` stay unchanged, but are now backed by the
         `keras` PIP package. The existing code in tensorflow/python/keras is a
         staled copy and will be removed in future release (2.7). Please remove
@@ -10183,7 +10334,7 @@ answered questions, and were part of inspiring discussions.
 ## Major Features And Improvements
 
 *   `tf.keras` is now part of the core TensorFlow API.
-*   [`tf.data`](http://tensorflow.org/guide/data) is now part of the core
+*   [`tf.data`](https://tensorflow.org/guide/data) is now part of the core
     TensorFlow API.
     *   The API is now subject to backwards compatibility guarantees.
     *   For a guide to migrating from the `tf.contrib.data` API, see the
@@ -10870,6 +11021,7 @@ answered questions, and were part of inspiring discussions.
 To help you upgrade your existing TensorFlow Python code to match the API
 changes below, we have prepared a
 [conversion script](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/tools/compatibility).
+
 * TensorFlow/models have been moved to a separate github repository. * Division
 and modulus operators (/, //, %) now match Python (flooring) semantics. This
 applies to `tf.div` and `tf.mod` as well. To obtain forced integer truncation
@@ -10886,6 +11038,7 @@ deprecated in favor of `TensorArray.stack` and `TensorArray.unstack`. * The
 following Python functions have had their arguments changed to use `axis` when
 referring to specific dimensions. We have kept the old keyword arguments for
 compatibility currently, but we will be removing them well before the final 1.0.
+
 * `tf.argmax`: `dimension` becomes `axis` * `tf.argmin`: `dimension` becomes
 `axis` * `tf.count_nonzero`: `reduction_indices` becomes `axis` *
 `tf.expand_dims`: `dim` becomes `axis` * `tf.reduce_all`: `reduction_indices`

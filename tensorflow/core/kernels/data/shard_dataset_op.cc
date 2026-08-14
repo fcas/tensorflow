@@ -14,20 +14,25 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/kernels/data/shard_dataset_op.h"
 
+#include <cstdint>
 #include <cstdlib>
-#include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/data/dataset_utils.h"
 #include "tensorflow/core/data/global_shuffle_utils.h"
 #include "tensorflow/core/data/name_utils.h"
+#include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/partial_tensor_shape.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -35,7 +40,6 @@ limitations under the License.
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/stringprintf.h"
 #include "tensorflow/core/util/batch_util.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/platform/thread_annotations.h"
 
 namespace tensorflow {
@@ -71,9 +75,9 @@ class ShardDatasetOp::Dataset : public DatasetBase {
         input_(input),
         require_non_empty_(require_non_empty),
         traceme_metadata_(
-            {{"index", strings::Printf("%lld", static_cast<long long>(index))},
+            {{"index", absl::StrFormat("%lld", static_cast<long long>(index))},
              {"num_shards",
-              strings::Printf("%lld", static_cast<long long>(num_shards))}}) {
+              absl::StrFormat("%lld", static_cast<long long>(num_shards))}}) {
     input_->Ref();
     random_indexing_compatible_ = absl::OkStatus();
     if (input_ != nullptr) {
@@ -84,7 +88,7 @@ class ShardDatasetOp::Dataset : public DatasetBase {
   ~Dataset() override { input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
@@ -97,7 +101,7 @@ class ShardDatasetOp::Dataset : public DatasetBase {
     return input_->output_shapes();
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     name_utils::DatasetDebugStringParams params;
     params.set_args(num_shards_, index_);
     return name_utils::DatasetDebugString(kDatasetType, params);
@@ -111,17 +115,18 @@ class ShardDatasetOp::Dataset : public DatasetBase {
     return n / num_shards_ + (index_ < n % num_shards_ ? 1 : 0);
   }
 
-  Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+  absl::Status InputDatasets(
+      std::vector<const DatasetBase*>* inputs) const override {
     inputs->push_back(input_);
     return absl::OkStatus();
   }
 
-  Status CheckExternalState() const override {
+  absl::Status CheckExternalState() const override {
     return input_->CheckExternalState();
   }
 
-  Status Get(OpKernelContext* ctx, int64 index,
-             std::vector<Tensor>* out_tensors) const override {
+  absl::Status Get(OpKernelContext* ctx, int64_t index,
+                   std::vector<Tensor>* out_tensors) const override {
     TF_RETURN_IF_ERROR(CheckRandomAccessCompatible(index));
     return input_->Get(ctx, index_ + (num_shards_ * index), out_tensors);
   }
@@ -131,9 +136,9 @@ class ShardDatasetOp::Dataset : public DatasetBase {
   }
 
  protected:
-  Status AsGraphDefInternal(SerializationContext* ctx,
-                            DatasetGraphDefBuilder* b,
-                            Node** output) const override {
+  absl::Status AsGraphDefInternal(SerializationContext* ctx,
+                                  DatasetGraphDefBuilder* b,
+                                  Node** output) const override {
     Node* input_graph_node = nullptr;
     TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
     Node* num_shards = nullptr;
@@ -158,9 +163,9 @@ class ShardDatasetOp::Dataset : public DatasetBase {
 
     bool SymbolicCheckpointCompatible() const override { return true; }
 
-    Status Initialize(IteratorContext* ctx) override {
+    absl::Status Initialize(IteratorContext* ctx) override {
       if (dataset()->num_shards_ == kShardHint) {
-        return errors::FailedPrecondition(
+        return absl::FailedPreconditionError(
             "`tf.data.Dataset.shard(SHARD_HINT, ...)` can only be used in "
             "`tf.distribute.Strategy.experimental_distribute_dataset()` with "
             "`tf.data.experimental.AutoShardPolicy.HINT` policy, or tf.data "
@@ -171,9 +176,9 @@ class ShardDatasetOp::Dataset : public DatasetBase {
       return dataset()->input_->MakeIterator(ctx, this, prefix(), &input_impl_);
     }
 
-    Status GetNextInternal(IteratorContext* ctx,
-                           std::vector<Tensor>* out_tensors,
-                           bool* end_of_sequence) override {
+    absl::Status GetNextInternal(IteratorContext* ctx,
+                                 std::vector<Tensor>* out_tensors,
+                                 bool* end_of_sequence) override {
       mutex_lock l(mu_);
       *end_of_sequence = false;
       if (!input_impl_) {
@@ -210,9 +215,10 @@ class ShardDatasetOp::Dataset : public DatasetBase {
       if (dataset()->require_non_empty_ &&
           next_index_ < dataset()->num_shards_) {
         int num_skipped;
-        Status s = input_impl_->Skip(ctx, dataset()->num_shards_ - next_index_,
-                                     end_of_sequence, &num_skipped);
-        if (*end_of_sequence || errors::IsOutOfRange(s)) {
+        absl::Status s =
+            input_impl_->Skip(ctx, dataset()->num_shards_ - next_index_,
+                              end_of_sequence, &num_skipped);
+        if (*end_of_sequence || absl::IsOutOfRange(s)) {
           // `dataset()->require_non_empty_` implies that this transformation
           // was introduced by auto_sharding rewrite, so it's acceptable
           // produce an error message that assumes auto-sharding context.
@@ -232,8 +238,8 @@ class ShardDatasetOp::Dataset : public DatasetBase {
       return absl::OkStatus();
     }
 
-    Status Get(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
-               bool* end_of_sequence) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    absl::Status Get(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
+                     bool* end_of_sequence) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
       IteratorContextWithIndexMapper ctx_with_index_mapper(ctx, this);
       auto merge_checkpoint = gtl::MakeCleanup([&ctx_with_index_mapper] {
         ctx_with_index_mapper.MergeCheckpoint();
@@ -274,8 +280,8 @@ class ShardDatasetOp::Dataset : public DatasetBase {
           std::move(args), 1.0 / static_cast<double>(dataset()->num_shards_));
     }
 
-    Status SaveInternal(SerializationContext* ctx,
-                        IteratorStateWriter* writer) override {
+    absl::Status SaveInternal(SerializationContext* ctx,
+                              IteratorStateWriter* writer) override {
       mutex_lock l(mu_);
       TF_RETURN_IF_ERROR(writer->WriteScalar(
           prefix(), kInputImplEmpty, static_cast<int64_t>(!input_impl_)));
@@ -287,8 +293,8 @@ class ShardDatasetOp::Dataset : public DatasetBase {
       return absl::OkStatus();
     }
 
-    Status RestoreInternal(IteratorContext* ctx,
-                           IteratorStateReader* reader) override {
+    absl::Status RestoreInternal(IteratorContext* ctx,
+                                 IteratorStateReader* reader) override {
       mutex_lock l(mu_);
       if (ctx->restored_element_count().has_value()) {
         element_count_ = *ctx->restored_element_count();
@@ -339,17 +345,18 @@ void ShardDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
 
   OP_REQUIRES_OK(ctx,
                  ParseScalarArgument<int64_t>(ctx, kNumShards, &num_shards));
-  OP_REQUIRES(
-      ctx, num_shards > 0 || num_shards == kShardHint,
-      errors::InvalidArgument("Number of shards must be greater than zero "
-                              "(currently num_shards = ",
-                              num_shards, ")."));
+  OP_REQUIRES(ctx, num_shards > 0 || num_shards == kShardHint,
+              absl::InvalidArgumentError(
+                  absl::StrCat("Number of shards must be greater than zero "
+                               "(currently num_shards = ",
+                               num_shards, ").")));
 
   OP_REQUIRES_OK(ctx, ParseScalarArgument<int64_t>(ctx, kIndex, &index));
-  OP_REQUIRES(
-      ctx, (index >= 0 && index < num_shards) || num_shards == kShardHint,
-      errors::InvalidArgument("Index must be between 0 and ", num_shards - 1,
-                              " (currently index = ", index, ")."));
+  OP_REQUIRES(ctx,
+              (index >= 0 && index < num_shards) || num_shards == kShardHint,
+              absl::InvalidArgumentError(
+                  absl::StrCat("Index must be between 0 and ", num_shards - 1,
+                               " (currently index = ", index, ").")));
 
   *output = new Dataset(ctx, num_shards, index, require_non_empty_, input);
 }

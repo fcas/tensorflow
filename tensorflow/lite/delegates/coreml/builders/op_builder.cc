@@ -14,18 +14,26 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/delegates/coreml/builders/op_builder.h"
 
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <string>
 
+#include "mlmodel/format/Model.pb.h"
+#include "mlmodel/format/NeuralNetwork.pb.h"
 #include "tensorflow/lite/builtin_ops.h"
-#include "tensorflow/lite/core/c/builtin_op_data.h"
+#include "tensorflow/lite/c/c_api_types.h"
+#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/delegates/coreml/builders/op_factory.h"
-#include "tensorflow/lite/kernels/kernel_util.h"
 
 namespace tflite {
 namespace delegates {
 namespace coreml {
+
+GraphBuilder::GraphBuilder(int coreml_version)
+    : coreml_version_(coreml_version) {}
+
+GraphBuilder::~GraphBuilder() = default;
 
 std::string TensorID::ToString() const {
   return std::to_string(node_) + "_" + std::to_string(output_id_);

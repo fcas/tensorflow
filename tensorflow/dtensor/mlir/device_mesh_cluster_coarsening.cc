@@ -18,9 +18,11 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
+#include "absl/status/status.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Block.h"  // from @llvm-project
@@ -34,7 +36,6 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/dtensor/cc/constants.h"
 #include "tensorflow/dtensor/mlir/layout_parsing.h"
-#include "tsl/platform/status.h"
 
 namespace tensorflow {
 namespace dtensor {
@@ -193,8 +194,8 @@ mlir::LogicalResult CreateMergedMeshCluster(
     output_values_to_replace.emplace_back(std::get<1>(cluster_return_value));
   }
 
-  *merged_cluster = builder->create<mlir::tf_device::ClusterOp>(
-      current_cluster.getLoc(), merged_cluster_output_types);
+  *merged_cluster = mlir::tf_device::ClusterOp::create(
+      *builder, current_cluster.getLoc(), merged_cluster_output_types);
   auto mesh_attr = current_cluster->getAttrOfType<mlir::StringAttr>(kMeshAttr);
   if (!mesh_attr)
     return current_cluster.emitOpError(kMissingMeshAttributeErrorMessage);
@@ -205,8 +206,8 @@ mlir::LogicalResult CreateMergedMeshCluster(
   // `current_cluster` and `merging_cluster`.
   merged_cluster->getBody().push_back(new mlir::Block);
   builder->setInsertionPointToEnd(&merged_cluster->GetBody());
-  builder->create<mlir::tf_device::ReturnOp>(merged_cluster->getLoc(),
-                                             merged_cluster_output_values);
+  mlir::tf_device::ReturnOp::create(*builder, merged_cluster->getLoc(),
+                                    merged_cluster_output_values);
 
   // Make sure to replace usages of tf_device.cluster ops to be merged-away with
   // newly created tf_device.cluster op.

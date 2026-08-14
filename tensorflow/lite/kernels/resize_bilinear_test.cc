@@ -289,7 +289,7 @@ TEST_P(ResizeBilinearOpTest, TwoDimensionalResizeWithTwoBatchesUInt8) {
                                             9, 12, 14,   //
                                             12, 14, 16,  //
                                         },
-                                        /*max_abs_error=*/1)));
+                                        /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest,
@@ -312,7 +312,7 @@ TEST_P(ResizeBilinearOpTest,
                                             8, 10, 13,   //
                                             12, 14, 16,  //
                                         },
-                                        /*max_abs_error=*/1)));
+                                        /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest, TwoDimensionalResizeWithTwoBatchesInt8) {
@@ -333,7 +333,7 @@ TEST_P(ResizeBilinearOpTest, TwoDimensionalResizeWithTwoBatchesInt8) {
                                              9, 12, 13,   //
                                              12, 14, 16,  //
                                          },
-                                         /*max_abs_error=*/1)));
+                                         /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest, TwoDimensionalResizeWithTwoBatchesInt16) {
@@ -357,7 +357,7 @@ TEST_P(ResizeBilinearOpTest, TwoDimensionalResizeWithTwoBatchesInt16) {
                                               9, 12, 13,   //
                                               12, 14, 16,  //
                                           },
-                                          /*max_abs_error=*/1)));
+                                          /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest, ThreeDimensionalResizeUInt8) {
@@ -373,7 +373,7 @@ TEST_P(ResizeBilinearOpTest, ThreeDimensionalResizeUInt8) {
                                             7, 9, 10, 12, 11, 14,    //
                                             10, 12, 12, 14, 14, 16,  //
                                         },
-                                        /*max_abs_error=*/1)));
+                                        /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest, ThreeDimensionalResizeInt8) {
@@ -389,7 +389,7 @@ TEST_P(ResizeBilinearOpTest, ThreeDimensionalResizeInt8) {
                                              7, 9, 10, 12, 11, 13,    //
                                              10, 12, 12, 14, 14, 16,  //
                                          },
-                                         /*max_abs_error=*/1)));
+                                         /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest, ThreeDimensionalResizeInt16) {
@@ -408,7 +408,7 @@ TEST_P(ResizeBilinearOpTest, ThreeDimensionalResizeInt16) {
                                               7, 9, 10, 12, 11, 13,    //
                                               10, 12, 12, 14, 14, 16,  //
                                           },
-                                          /*max_abs_error=*/1)));
+                                          /*max_abs_err=*/1)));
 }
 
 TEST_P(ResizeBilinearOpTest, HorizontalResizeExtremeValuesUInt8) {
@@ -464,6 +464,29 @@ TEST_P(ResizeBilinearOpTest, HorizontalResizeExtremeNegativeValuesInt16) {
 
 INSTANTIATE_TEST_SUITE_P(ResizeBilinearOpTest, ResizeBilinearOpTest,
                          testing::Values(TestType::kConst, TestType::kDynamic));
+
+TEST(ResizeBilinearOpTest, ModelWithIncorrectSizeTensorShapeIsRejected) {
+#if GTEST_HAS_DEATH_TEST
+  class ResizeBilinearOpModelInvalidSize : public SingleOpModel {
+   public:
+    ResizeBilinearOpModelInvalidSize() {
+      input_ = AddInput({TensorType_FLOAT32, {1, 1, 2, 1}});
+      size_ = AddConstInput(TensorType_INT32, {3}, {1});
+      output_ = AddOutput(TensorType_FLOAT32);
+      SetBuiltinOp(BuiltinOperator_RESIZE_BILINEAR,
+                   BuiltinOptions_ResizeBilinearOptions,
+                   CreateResizeBilinearOptions(builder_, false, false).Union());
+      BuildInterpreter({GetShape(input_)});
+    }
+
+   private:
+    int input_;
+    int size_;
+    int output_;
+  };
+  EXPECT_DEATH(ResizeBilinearOpModelInvalidSize(), "Cannot allocate tensors");
+#endif
+}
 
 }  // namespace
 }  // namespace tflite

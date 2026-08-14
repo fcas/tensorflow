@@ -50,11 +50,12 @@ bool XlaKernelCreator::CanCreateKernel(
          !XlaOpRegistry::IsCompilationDevice(flr.device()->device_type());
 }
 
-static Status CreateXlaKernel(FunctionLibraryRuntime* flr,
-                              const NodeDef& node_def,
-                              std::unique_ptr<OpKernel>* kernel) {
+static absl::Status CreateXlaKernel(FunctionLibraryRuntime* flr,
+                                    const NodeDef& node_def,
+                                    std::unique_ptr<OpKernel>* kernel) {
   if (!CanCreateXlaKernel(node_def)) {
-    return errors::Internal("Invalid node: ", node_def.ShortDebugString());
+    return absl::InternalError(
+        absl::StrCat("Invalid node: ", node_def.ShortDebugString()));
   }
 
   VLOG(3) << "Attempting to create XlaLaunchOp for " << node_def.DebugString();
@@ -77,7 +78,7 @@ static Status CreateXlaKernel(FunctionLibraryRuntime* flr,
 
   // Create the kernel.
   Device* dev = flr->device();
-  Status s;
+  absl::Status s;
   auto props = std::make_shared<NodeProperties>(
       &fbody->record->fdef().signature(), node_def, fbody->arg_types,
       fbody->ret_types);
@@ -93,7 +94,7 @@ static Status CreateXlaKernel(FunctionLibraryRuntime* flr,
   return s;
 }
 
-Status XlaKernelCreator::CreateKernel(
+absl::Status XlaKernelCreator::CreateKernel(
     FunctionLibraryRuntime* flr,
     const std::shared_ptr<const NodeProperties>& props,
     std::unique_ptr<OpKernel>* kernel) const {

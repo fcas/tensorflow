@@ -47,23 +47,22 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/saved_model_export.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/saved_model_import.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/types.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/cc/weight_only_ptq.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_config.pb.h"
-#include "tensorflow/compiler/mlir/quantization/tensorflow/cc/convert_asset_args.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/cc/run_passes.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/exported_model.pb.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/python/py_function_lib.h"
-#include "tensorflow/compiler/mlir/quantization/tensorflow/python/unfreeze_constants.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/quantization_options.pb.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/quantize_passes.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/quantize_preprocess.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_import_options.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/tf_mlir_translate.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/protobuf/meta_graph.pb.h"
 #include "tensorflow/core/protobuf/saver.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace quantization {
@@ -80,6 +79,7 @@ using ::mlir::quant::stablehlo::PostCalibrationComponent;
 using ::mlir::quant::stablehlo::PreCalibrationComponent;
 using ::mlir::quant::stablehlo::RunCalibrationPasses;
 using ::mlir::quant::stablehlo::UpdateFunctionAliases;
+using ::mlir::quant::stablehlo::WeightOnlyPtqComponent;
 using ::stablehlo::quantization::AddCalibrationStatistics;
 using ::stablehlo::quantization::ChangeToQuantizedFilename;
 using ::stablehlo::quantization::DebuggerConfig;
@@ -89,6 +89,10 @@ using ::stablehlo::quantization::PopulateDefaults;
 using ::stablehlo::quantization::QuantizationConfig;
 using ::stablehlo::quantization::io::CreateTmpDir;
 using ::stablehlo::quantization::io::GetLocalTmpFileName;
+using ::tensorflow::quantization::AddQuantizePtqPostCalibrationPasses;
+using ::tensorflow::quantization::AddQuantizePtqPreCalibrationPasses;
+using ::tensorflow::quantization::kDefaultTfQuantMlirDumpFilePrefix;
+using ::tensorflow::quantization::PreprocessAndFreezeGraph;
 using ::tensorflow::quantization::PyFunctionLibrary;
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ImportAndPreprocessSavedModel(
@@ -219,6 +223,20 @@ QuantizationConfig GetQuantizationConfigForStaticRangePtq(
   quantization_config.mutable_static_range_ptq_preset();
   *quantization_config.mutable_calibration_options() =
       quantization_options.calibration_options();
+
+  return ExpandPresets(PopulateDefaults(quantization_config));
+}
+
+QuantizationConfig GetQuantizationConfigForWeightOnlyPtq(
+    const QuantizationOptions &quantization_options) {
+  QuantizationConfig quantization_config{};
+  quantization_config.mutable_weight_only_ptq_preset();
+  // When targeting server TPUs quantized types should be unpacked into
+  // integer ops.
+  quantization_config.mutable_pipeline_config()->set_unpack_quantized_types(
+      true);
+  *quantization_config.mutable_debugger_config() =
+      quantization_options.debugger_config();
 
   return ExpandPresets(PopulateDefaults(quantization_config));
 }
@@ -385,6 +403,7 @@ absl::StatusOr<ExportedModel> QuantizeWeightOnly(
         "Failed to get function alias: ", function_aliases.status().message()));
   }
 
+  const bool is_stablehlo = quantization_options.op_set() == OpSet::STABLEHLO;
   absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> module =
       ImportAndPreprocessSavedModel(
           saved_model_path,
@@ -392,7 +411,8 @@ absl::StatusOr<ExportedModel> QuantizeWeightOnly(
            quantization_options.signature_keys().end()},
           {quantization_options.tags().begin(),
            quantization_options.tags().end()},
-          context.get(), /*is_inliner_run=*/true, /*run_tf_to_stablehlo=*/false,
+          context.get(), /*is_inliner_run=*/true,
+          /*run_tf_to_stablehlo=*/is_stablehlo,
           /*deserialize_xla_call_module=*/false, *function_aliases);
   if (!module.status().ok()) {
     return absl::InternalError(
@@ -401,14 +421,24 @@ absl::StatusOr<ExportedModel> QuantizeWeightOnly(
   }
   mlir::OwningOpRef<mlir::ModuleOp> module_ref = std::move(module).value();
 
-  TF_RETURN_IF_ERROR(RunPasses(
-      kTfQuantWeightOnlyStepName,
-      /*add_passes_func=*/
-      [&quantization_options](mlir::PassManager &pm) {
-        AddQuantizeWeightOnlyPasses(pm, quantization_options,
-                                    kTfQuantWeightOnlyStepName);
-      },
-      *context, *module_ref));
+  // Use StableHLO Quantizer option if opset is specified.
+  if (is_stablehlo) {
+    const QuantizationConfig quantization_config =
+        GetQuantizationConfigForWeightOnlyPtq(quantization_options);
+
+    WeightOnlyPtqComponent weight_only_ptq_component(context.get());
+    TF_ASSIGN_OR_RETURN(*module_ref, weight_only_ptq_component.Run(
+                                         *module_ref, quantization_config));
+  } else {
+    TF_RETURN_IF_ERROR(RunPasses(
+        kTfQuantWeightOnlyStepName,
+        /*add_passes_func=*/
+        [&quantization_options](mlir::PassManager &pm) {
+          AddQuantizeWeightOnlyPasses(pm, quantization_options,
+                                      kTfQuantWeightOnlyStepName);
+        },
+        *context, *module_ref));
+  }
 
   return ModuleOpToExportedModel(
       *module_ref, context.get(), kTfQuantWeightOnlyStepName,

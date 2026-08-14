@@ -95,6 +95,7 @@ class NativeInterpreterWrapper implements AutoCloseable {
             errorHandle,
             options.getNumThreads(),
             options.getUseXNNPACK(),
+            options.getCompressQuantizationZeroPoints(),
             delegateHandles);
     this.originalGraphHasUnresolvedFlexOp = hasUnresolvedFlexOp(interpreterHandle);
     addDelegates(options);
@@ -112,6 +113,7 @@ class NativeInterpreterWrapper implements AutoCloseable {
               errorHandle,
               options.getNumThreads(),
               options.getUseXNNPACK(),
+              options.getCompressQuantizationZeroPoints(),
               delegateHandles);
     }
     if (options.allowFp16PrecisionForFp32 != null) {
@@ -151,6 +153,12 @@ class NativeInterpreterWrapper implements AutoCloseable {
         outputTensors[i] = null;
       }
     }
+    // Close the delegates first as they may reference the model.
+    delegates.clear();
+    for (Delegate ownedDelegate : ownedDelegates) {
+      ownedDelegate.close();
+    }
+    ownedDelegates.clear();
     delete(errorHandle, modelHandle, interpreterHandle);
     deleteCancellationFlag(cancellationFlagHandle);
     errorHandle = 0;
@@ -161,11 +169,6 @@ class NativeInterpreterWrapper implements AutoCloseable {
     inputsIndexes = null;
     outputsIndexes = null;
     isMemoryAllocated = false;
-    delegates.clear();
-    for (Delegate ownedDelegate : ownedDelegates) {
-      ownedDelegate.close();
-    }
-    ownedDelegates.clear();
   }
 
   /** Runs model inference based on SignatureDef provided through {@code signatureKey}. */
@@ -658,6 +661,7 @@ class NativeInterpreterWrapper implements AutoCloseable {
       long errorHandle,
       int numThreads,
       boolean useXnnpack,
+      boolean compressQuantizationZeroPoints,
       List<Long> delegateHandles);
 
   private static native long createCancellationFlag(long interpreterHandle);

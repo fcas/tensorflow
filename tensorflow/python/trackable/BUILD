@@ -1,7 +1,22 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 #   Trackable class and subclass definitions.
 
-load("//tensorflow:strict.default.bzl", "py_strict_library")
+load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:tensorflow.default.bzl", "tf_py_strict_test")
 
 package(
@@ -12,8 +27,9 @@ package(
     licenses = ["notice"],
 )
 
-py_strict_library(
+py_library(
     name = "trackable",
+    strict_deps = True,
     visibility = [
         "//tensorflow:internal",
         "//third_party/py/tf_agents:__subpackages__",
@@ -34,16 +50,16 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "trackable_init",
     srcs = ["__init__.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
 )
 
-py_strict_library(
+py_library(
     name = "base",
     srcs = ["base.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":constants",
         "//tensorflow/python/eager:context",
@@ -69,16 +85,16 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "constants",
     srcs = ["constants.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
 )
 
-py_strict_library(
+py_library(
     name = "converter",
     srcs = ["converter.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":base",
         ":data_structures",
@@ -89,10 +105,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "trackable_utils",
     srcs = ["trackable_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
 )
 
 tf_py_strict_test(
@@ -104,10 +120,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "base_delegate",
     srcs = ["base_delegate.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         "//tensorflow/python/util:tf_export",
     ],
@@ -131,10 +147,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "asset",
     srcs = ["asset.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":base",
         "//tensorflow/python/eager:context",
@@ -149,10 +165,11 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "autotrackable",
     srcs = ["autotrackable.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
+    visibility = ["//visibility:public"],
     deps = [
         ":base",
         ":data_structures",
@@ -178,11 +195,14 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "resource",
     srcs = ["resource.py"],
-    srcs_version = "PY3",
-    visibility = ["//tensorflow:internal"],
+    strict_deps = True,
+    visibility = [
+        "//intelligence/climate_foundations/vlm/export:__subpackages__",
+        "//tensorflow:internal",
+    ],
     deps = [
         ":base",
         "//tensorflow/python/eager:context",
@@ -207,17 +227,17 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "layer_utils",
     srcs = ["layer_utils.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = ["//tensorflow/python/util:object_identity"],
 )
 
-py_strict_library(
+py_library(
     name = "data_structures",
     srcs = ["data_structures.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":base",
         ":layer_utils",
@@ -226,7 +246,7 @@ py_strict_library(
         "//tensorflow/python/ops:variables",
         "//tensorflow/python/util:compat",
         "//tensorflow/python/util:tf_export",
-        "@pypi_wrapt//:pkg",
+        "@pypi//wrapt",
     ],
 )
 
@@ -258,10 +278,10 @@ tf_py_strict_test(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "python_state",
     srcs = ["python_state.py"],
-    srcs_version = "PY3",
+    strict_deps = True,
     deps = [
         ":base",
         "//tensorflow/python/framework:constant_op",

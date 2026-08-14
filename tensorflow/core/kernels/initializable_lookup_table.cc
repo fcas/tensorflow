@@ -21,11 +21,11 @@ limitations under the License.
 namespace tensorflow {
 namespace lookup {
 
-Status InitializableLookupTable::Find(OpKernelContext* ctx, const Tensor& keys,
-                                      Tensor* values,
-                                      const Tensor& default_value) {
+absl::Status InitializableLookupTable::Find(OpKernelContext* ctx,
+                                            const Tensor& keys, Tensor* values,
+                                            const Tensor& default_value) {
   if (!is_initialized()) {
-    return errors::FailedPrecondition("Table not initialized.");
+    return absl::FailedPreconditionError("Table not initialized.");
   }
   // Do not let the use migrate before the check;  table is used without
   // a lock by the readers.
@@ -33,9 +33,9 @@ Status InitializableLookupTable::Find(OpKernelContext* ctx, const Tensor& keys,
   return DoFind(keys, values, default_value);
 }
 
-Status InitializableLookupTable::ImportValues(OpKernelContext* ctx,
-                                              const Tensor& keys,
-                                              const Tensor& values) {
+absl::Status InitializableLookupTable::ImportValues(OpKernelContext* ctx,
+                                                    const Tensor& keys,
+                                                    const Tensor& values) {
   lookup::KeyValueTensorIterator iter(&keys, &values);
   auto serializer = std::make_unique<InitializerSerializer>(
       [keys, values](GraphDefBuilder* builder, Node* table, Node** out) {
@@ -60,11 +60,11 @@ Status InitializableLookupTable::ImportValues(OpKernelContext* ctx,
   return Initialize(iter, std::move(serializer));
 }
 
-Status InitializableLookupTable::Initialize(InitTableIterator& iter) {
+absl::Status InitializableLookupTable::Initialize(InitTableIterator& iter) {
   return Initialize(iter, /*serializer=*/nullptr);
 }
 
-Status InitializableLookupTable::Initialize(
+absl::Status InitializableLookupTable::Initialize(
     InitTableIterator& iter,
     std::unique_ptr<InitializerSerializer> serializer) {
   if (!iter.Valid()) {
@@ -80,7 +80,7 @@ Status InitializableLookupTable::Initialize(
     // If the table is already initialized, we make sure that the entries in the
     // table are the same that we want to initialize the table with.
     if (!result) {
-      return errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Table was already initialized with "
           "different data.");
     } else {
@@ -92,7 +92,7 @@ Status InitializableLookupTable::Initialize(
     TF_RETURN_IF_ERROR(DoInsert(iter.keys(), iter.values()));
     iter.Next();
   }
-  if (!errors::IsOutOfRange(iter.status())) {
+  if (!absl::IsOutOfRange(iter.status())) {
     return iter.status();
   }
 
@@ -101,8 +101,8 @@ Status InitializableLookupTable::Initialize(
   return absl::OkStatus();
 }
 
-Status InitializableLookupTable::AreEntriesSame(const InitTableIterator& iter,
-                                                bool* result) {
+absl::Status InitializableLookupTable::AreEntriesSame(
+    const InitTableIterator& iter, bool* result) {
   *result = static_cast<size_t>(iter.total_size()) == size();
   return absl::OkStatus();
 }

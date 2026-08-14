@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "riegeli/bytes/fd_reader.h"  // from @riegeli
+#include "riegeli/bytes/string_reader.h"  // from @riegeli
 #include "riegeli/records/record_reader.h"  // from @riegeli
 #include "tensorflow/tools/proto_splitter/chunk.pb.h"
 #include "tsl/platform/protobuf.h"
@@ -64,15 +65,14 @@ absl::StatusOr<const std::vector<Field>> GetFieldTypes(
 absl::Status SetRepeatedFieldElement(
     tsl::protobuf::Message* message,
     const tsl::protobuf::FieldDescriptor* field_desc, uint64_t field_index,
-    const std::string& chunk,
-    std::function<absl::Status(void)> message_callback);
+    std::string chunk, std::function<absl::Status(void)> message_callback);
 
 // Sets message.field_desc to the data contained in chunk, according to the
 // (cpp) type described by field_desc. Uses message_callback (instead of simply
 // assigning) when field_desc describes a message.
 absl::Status SetFieldElement(
     tsl::protobuf::Message* message,
-    const tsl::protobuf::FieldDescriptor* field_desc, const std::string& chunk,
+    const tsl::protobuf::FieldDescriptor* field_desc, std::string chunk,
     std::function<absl::Status(void)> message_callback);
 
 // Adds a new map entry (repeated message element with key/value fields) to
@@ -145,6 +145,10 @@ std::string HumanReadableDuration(int64_t microseconds);
 // Construct a reader object to read in records from the .cpb file.
 absl::StatusOr<riegeli::RecordReader<riegeli::FdReader<>>> GetRiegeliReader(
     absl::string_view cpb_file);
+
+// Construct a reader object to read in records from a string.
+absl::StatusOr<riegeli::RecordReader<riegeli::StringReader<>>>
+GetRiegeliStringReader(absl::string_view cpb_data);
 
 // Read the last chunk, which contains metadata necessary for reading the
 // remaining chunks.

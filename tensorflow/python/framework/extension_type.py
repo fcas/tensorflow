@@ -17,7 +17,6 @@
 import abc
 import typing
 import warnings
-
 import typing_extensions
 
 from tensorflow.core.protobuf import struct_pb2
@@ -196,7 +195,19 @@ class ExtensionType(
       # missing import), then the constructor will raise an exception.
       type_hints = {}
       for base in reversed(cls.__mro__):
-        type_hints.update(base.__dict__.get('__annotations__', {}))
+        if hasattr(typing_extensions, 'get_annotations'):
+          get_annotations_kwargs = {'eval_str': False}
+          if hasattr(typing_extensions, 'Format'):
+            get_annotations_kwargs['format'] = (
+                typing_extensions.Format.FORWARDREF
+            )
+          type_hints.update(
+              typing_extensions.get_annotations(
+                  base, **get_annotations_kwargs
+              )
+          )
+        else:
+          type_hints.update(getattr(base, '__annotations__', {}))
       ok_to_cache = False
 
     fields = []
@@ -436,7 +447,7 @@ class ExtensionTypeSpec(type_spec.TypeSpec):
 
   def __reduce__(self):
     # Use value_type instead of spec_type, as spec_type is a nested class.
-    # Pickle support of nested class requries Pickle protocol version 4, which
+    # Pickle support of nested class requires Pickle protocol version 4, which
     # is not enabled by default until py 3.8.
     #
     # https://www.python.org/dev/peps/pep-3154/#serializing-more-lookupable-objects
@@ -448,7 +459,7 @@ class ExtensionTypeSpec(type_spec.TypeSpec):
       return value._tf_extension_type_packed_variant  # pylint: disable=protected-access
 
     tensor_or_composite = (tensor.Tensor, composite_tensor.CompositeTensor)
-    # Retireve fields by the order of spec dict to preserve field ordering. This
+    # Retrieve fields by the order of spec dict to preserve field ordering. This
     # is needed as nest.flatten would sort dictionary entries by key.
     value_tuple = tuple(value.__dict__[key] for key in self.__dict__)
     return tuple(

@@ -1,6 +1,21 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Build rules for Tensorflow/XLA testing."""
 
-load("//tensorflow:strict.default.bzl", "py_strict_test")
+load("@xla//third_party/rules_python/python:defs.bzl", "py_library")
 load("//tensorflow:tensorflow.bzl", "py_test")
 load("//tensorflow/compiler/tests:plugin.bzl", "plugins")
 load(
@@ -73,6 +88,12 @@ def tf_xla_py_test(
         cpu_xla_device = "CPU"
         gpu_xla_device = "GPU"
 
+    py_library(
+        name = name + "_lib",
+        srcs = srcs,
+        deps = deps,
+        testonly = 1,
+    )
     for backend in backends:
         test_name = "{}_{}".format(name, backend)
         backend_tags = ["tf_xla_{}".format(backend)]
@@ -132,6 +153,10 @@ def tf_xla_py_test(
                 # version.
                 continue
 
+            # Rules may set exec_properties, but Google has internal
+            # exec_properties values so they don't merge easily. Just strip them
+            # all for now.
+            kwargs.pop("exec_properties", {})
             test_rule(
                 name = updated_name,
                 srcs = srcs,
@@ -139,7 +164,7 @@ def tf_xla_py_test(
                 args = backend_args,
                 main = "{}.py".format(name) if main == None else main,
                 data = data + backend_data,
-                deps = deps + backend_deps + extra_dep,
+                deps = deps + backend_deps + extra_dep + [name + "_lib"],
                 tags = test_tags + extra_tag,
                 exec_properties = tf_exec_properties({"tags": test_tags}),
                 **kwargs
@@ -148,7 +173,7 @@ def tf_xla_py_test(
     native.test_suite(name = name, tests = test_names)
 
 def tf_xla_py_strict_test(**kwargs):
-    tf_xla_py_test(test_rule = py_strict_test, **kwargs)
+    tf_xla_py_test(**kwargs)
 
 def generate_backend_suites(backends = []):
     """Generates per-backend test_suites that run all tests for a backend."""

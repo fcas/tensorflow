@@ -16,16 +16,18 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdarg>
+#include <cstddef>
+#include <cstdio>
 #include <initializer_list>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
-#include "tensorflow/core/platform/logging.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/graph_info.h"
-#include "tensorflow/lite/testing/util.h"
 
 namespace tflite {
 namespace {
@@ -178,17 +180,12 @@ void ReportError(TfLiteContext* context, const char* format, ...) {
 
 class SimplePlannerTest : public ::testing::Test {
  protected:
-  void SetGraph(TestGraph* graph, bool preserve_all_tensors = false) {
+  void SetGraph(TestGraph* graph) {
     graph_ = graph;
     context_.ReportError = ReportError;
     planner_ = std::make_unique<SimplePlanner>(
         &context_, std::unique_ptr<GraphInfo>(new TestGraphInfo(graph)));
     CHECK(planner_->ResetAllocations() == kTfLiteOk);
-    CHECK(planner_->PlanAllocations() == kTfLiteOk);
-  }
-
-  void SwapGraph(TestGraph* graph) {
-    graph_->Swap(graph);
     CHECK(planner_->PlanAllocations() == kTfLiteOk);
   }
 
@@ -206,10 +203,6 @@ class SimplePlannerTest : public ::testing::Test {
 
   void ResetAllocationsAfter(int node) {
     CHECK(planner_->ResetAllocationsAfter(node) == kTfLiteOk);
-  }
-
-  bool HasNonPersistentMemory() {
-    return planner_ && planner_->HasNonPersistentMemory();
   }
 
   // Returns if the given tensor is allocated or not.
@@ -382,6 +375,42 @@ TEST_F(SimplePlannerTest, SimpleGraphOptionalOutput) {
   EXPECT_TRUE(IsAllocated(3));
   EXPECT_TRUE(IsAllocated(4));
   EXPECT_TRUE(IsAllocated(5));
+}
+
+TEST_F(SimplePlannerTest, UAFWhenResizedToZero) {
+  TestGraph graph({0}, {{{0}, {1}, {}}}, {1});
+  SetGraph(&graph);
+  Execute(0, 10);
+  EXPECT_TRUE(IsAllocated(1));
+
+  // Resize tensor 1 to 0 bytes and re-execute.
+  (*graph.tensors())[1].bytes = 0;
+  Execute(0, 10);
+  EXPECT_FALSE(IsAllocated(1));
+}
+
+TEST_F(SimplePlannerTest, OptionalTensorsInOutputsAndTemporaries) {
+  TestGraph graph({0}, {{{0}, {1, -1}, {-1, 2}}}, {1});
+  SetGraph(&graph);
+  Execute(0, 10);
+  EXPECT_TRUE(IsAllocated(1));
+  EXPECT_TRUE(IsAllocated(2));
+}
+
+TEST_F(SimplePlannerTest, NonPersistentMemoryLifecycle) {
+  TestGraph graph({0, 1}, {{{0, 1}, {2}, {}}}, {2});
+  SetGraph(&graph);
+  Execute(0, 10);
+  EXPECT_TRUE(IsAllocated(1));
+  EXPECT_TRUE(IsAllocated(2));
+
+  ReleaseNonPersistentMemory();
+  EXPECT_FALSE(IsAllocated(1));
+  EXPECT_FALSE(IsAllocated(2));
+
+  AcquireNonPersistentMemory();
+  EXPECT_TRUE(IsAllocated(1));
+  EXPECT_TRUE(IsAllocated(2));
 }
 
 }  // namespace

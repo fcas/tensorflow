@@ -17,10 +17,11 @@
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "fuzztest/fuzztest.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/c/eager/immediate_execution_context.h"
+#include "xla/tsl/platform/status.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/framework/device_factory.h"
@@ -30,15 +31,15 @@
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/function/runtime_client/runtime_client.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session_options.h"
-#include "tsl/platform/status.h"
 
 namespace tensorflow {
 namespace fuzzing {
 
 FunctionDef EmptyFunctionDefGenerator(int number_of_input_arguments,
                                       int number_of_output_arguments) {
-  std::vector<string> in_def_vec;
+  std::vector<std::string> in_def_vec;
   in_def_vec.reserve(number_of_input_arguments);
   for (int c = 0; c < number_of_input_arguments; ++c) {
     in_def_vec.push_back(absl::StrCat("in", c, ":float"));
@@ -50,12 +51,12 @@ FunctionDef EmptyFunctionDefGenerator(int number_of_input_arguments,
     body_nodes.push_back(
         {{"zero"}, "Const", {}, {{"value", const_value}, {"dtype", DT_FLOAT}}});
   }
-  std::vector<string> out_def_vec;
+  std::vector<std::string> out_def_vec;
   out_def_vec.reserve(number_of_output_arguments);
-  std::vector<std::pair<string, string>> ret_def;
+  std::vector<std::pair<std::string, std::string>> ret_def;
   ret_def.reserve(number_of_output_arguments);
   for (int c = 0; c < number_of_output_arguments; ++c) {
-    string output_id = "out" + std::to_string(c);
+    std::string output_id = "out" + std::to_string(c);
     out_def_vec.push_back(output_id + ":float");
     if (c < number_of_input_arguments) {
       ret_def.emplace_back(output_id, "in" + std::to_string(c));
@@ -67,23 +68,31 @@ FunctionDef EmptyFunctionDefGenerator(int number_of_input_arguments,
                                    body_nodes, ret_def);
 }
 
-class FuzzRuntimeClient {
+class FuzzRuntimeClient : public fuzztest::IterationRunnerFixture {
  public:
-  FuzzRuntimeClient()
-      : ctx_(InitLocalEagerContextPtr()), rt_(core::function::Runtime(*ctx_)) {}
+  void FuzzTestIterationRunner(
+      absl::AnyInvocable<void() &&> run_iteration) override {
+    ctx_ = InitLocalEagerContextPtr();
+    rt_ = std::make_unique<core::function::Runtime>(*ctx_);
+    std::move(run_iteration)();
+  }
 
   void CreateFunctionInnerFuzz(int in_args, int out_args) {
     TF_CHECK_OK(
-        rt_.CreateFunction(EmptyFunctionDefGenerator(in_args, out_args)));
+        rt_->CreateFunction(EmptyFunctionDefGenerator(in_args, out_args)));
   }
 
   void CreateFunctionOuterFuzz(FunctionDef def) {
-    TF_CHECK_OK(rt_.CreateFunction(def));
+    // Ignore errors because the fuzzer may generate invalid FunctionDef protos.
+    // Returning a non-OK status for invalid input is expected and acceptable;
+    // we are only looking for unexpected crashes, hangs, or memory safety
+    // issues.
+    rt_->CreateFunction(def).IgnoreError();
   }
 
  private:
   EagerContextPtr ctx_;
-  core::function::Runtime rt_;
+  std::unique_ptr<core::function::Runtime> rt_;
 
   EagerContextPtr InitLocalEagerContextPtr() {
     SessionOptions opts;

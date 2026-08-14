@@ -16,9 +16,17 @@ limitations under the License.
 
 #include <memory>
 #include <string>
-#include <utility>
 
-#include "tsl/platform/statusor.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/tsl/framework/device_type.h"
+#include "tensorflow/core/framework/registration/registration.h"
+#include "tensorflow/core/platform/mutex.h"
+#include "tensorflow/core/tfrt/common/pjrt_client_factory_options.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 PjrtClientFactoryRegistry& PjrtClientFactoryRegistry::Get() {
@@ -57,7 +65,7 @@ PjrtClientFactoryRegistry::GetPjrtClient(
     absl::StrAppend(&error_msg,
                     "]. Did you forget to link with the appropriate "
                     "`pjrt_*_client_registration` library?");
-    return tsl::errors::NotFound(error_msg);
+    return absl::NotFoundError(error_msg);
   }
   return client_factory_it->second(options);
 }

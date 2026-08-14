@@ -33,25 +33,25 @@ namespace batch_util {
 
 namespace {
 
-Status ValidateInput(const Tensor& parent, const Tensor& element,
-                     int64_t index) {
+absl::Status ValidateInput(const Tensor& parent, const Tensor& element,
+                           int64_t index) {
   DCHECK_NE(parent.dim_size(0), 0);
   DCHECK_GE(index, 0);
   if (element.NumElements() != (parent.NumElements() / parent.dim_size(0))) {
     TensorShape chip_shape = parent.shape();
     chip_shape.RemoveDim(0);
-    return errors::Internal(
+    return absl::InternalError(absl::StrCat(
         "ValidateInput Cannot perform copy: number of elements does not match. "
         " Shapes are: [element]: ",
         element.shape().DebugString(),
-        ", [parent slice]: ", chip_shape.DebugString());
+        ", [parent slice]: ", chip_shape.DebugString()));
   }
   return absl::OkStatus();
 }
 
 template <typename T>
-Status HandleElementToSlice(const Tensor& /* element */, T* src, T* dest,
-                            int64_t num_values) {
+absl::Status HandleElementToSlice(const Tensor& /* element */, T* src, T* dest,
+                                  int64_t num_values) {
   static_assert(tsl::is_simple_type<T>::value,
                 "Memcpy requires a simple type.");
   memcpy(dest, src, num_values * sizeof(T));
@@ -59,8 +59,8 @@ Status HandleElementToSlice(const Tensor& /* element */, T* src, T* dest,
 }
 
 template <>
-Status HandleElementToSlice<tstring>(const Tensor& element, tstring* src,
-                                     tstring* dest, int64_t num_values) {
+absl::Status HandleElementToSlice<tstring>(const Tensor& element, tstring* src,
+                                           tstring* dest, int64_t num_values) {
   if (element.RefCountIsOne()) {
     for (int64_t i = 0; i < num_values; ++i) {
       *dest++ = std::move(*src++);
@@ -72,8 +72,8 @@ Status HandleElementToSlice<tstring>(const Tensor& element, tstring* src,
 }
 
 template <>
-Status HandleElementToSlice<Variant>(const Tensor& element, Variant* src,
-                                     Variant* dest, int64_t num_values) {
+absl::Status HandleElementToSlice<Variant>(const Tensor& element, Variant* src,
+                                           Variant* dest, int64_t num_values) {
   if (element.RefCountIsOne()) {
     for (int64_t i = 0; i < num_values; ++i) {
       *dest++ = std::move(*src++);
@@ -85,18 +85,19 @@ Status HandleElementToSlice<Variant>(const Tensor& element, Variant* src,
 }
 
 template <>
-Status HandleElementToSlice<ResourceHandle>(const Tensor& /* element */,
-                                            ResourceHandle* src,
-                                            ResourceHandle* dest,
-                                            int64_t num_values) {
+absl::Status HandleElementToSlice<ResourceHandle>(const Tensor& /* element */,
+                                                  ResourceHandle* src,
+                                                  ResourceHandle* dest,
+                                                  int64_t num_values) {
   std::copy_n(src, num_values, dest);
   return absl::OkStatus();
 }
 
 template <>
-Status HandleElementToSlice<Eigen::half>(const Tensor& /* element */,
-                                         Eigen::half* src, Eigen::half* dest,
-                                         int64_t num_values) {
+absl::Status HandleElementToSlice<Eigen::half>(const Tensor& /* element */,
+                                               Eigen::half* src,
+                                               Eigen::half* dest,
+                                               int64_t num_values) {
   std::copy_n(src, num_values, dest);
   return absl::OkStatus();
 }
@@ -180,7 +181,8 @@ void HandleSliceToElement<Eigen::half>(Tensor* parent, Eigen::half* src,
 }  // namespace
 
 // Copies element into the index^th slice of parent (in the 0th dimension).
-Status CopyElementToSlice(Tensor element, Tensor* parent, int64_t index) {
+absl::Status CopyElementToSlice(const Tensor& element, Tensor* parent,
+                                int64_t index) {
   TF_RETURN_IF_ERROR(ValidateInput(*parent, element, index));
   const int64_t num_values = element.NumElements();
 #define HANDLE_TYPE(T)                                              \
@@ -195,14 +197,14 @@ Status CopyElementToSlice(Tensor element, Tensor* parent, int64_t index) {
     TF_CALL_QUANTIZED_TYPES(HANDLE_TYPE);
 #undef HANDLE_TYPE
     default:
-      return errors::Unimplemented("CopyElementToSlice Unhandled data type: ",
-                                   element.dtype());
+      return absl::UnimplementedError(absl::StrCat(
+          "CopyElementToSlice Unhandled data type: ", element.dtype()));
   }
 }
 
 // Copies the index^th slice of parent (in the 0th dimension) into element.
-Status CopySliceToElement(const Tensor& parent, Tensor* element,
-                          int64_t index) {
+absl::Status CopySliceToElement(const Tensor& parent, Tensor* element,
+                                int64_t index) {
   TF_RETURN_IF_ERROR(ValidateInput(parent, *element, index));
   const int64_t num_values = element->NumElements();
 
@@ -219,16 +221,16 @@ Status CopySliceToElement(const Tensor& parent, Tensor* element,
     TF_CALL_QUANTIZED_TYPES(HANDLE_TYPE);
 #undef HANDLE_TYPE
     default:
-      return errors::Unimplemented("CopySliceToElement Unhandled data type: ",
-                                   element->dtype());
+      return absl::UnimplementedError(absl::StrCat(
+          "CopySliceToElement Unhandled data type: ", element->dtype()));
   }
 }
 
 // Does the same thing as `CopyContiguousSlices` except it might move
 // the underlying data from `src` to `dst` when possible.
-Status MaybeMoveContiguousSlices(Tensor& src, int64_t src_offset,
-                                 int64_t dst_offset, int64_t num_slices,
-                                 Tensor* dst) {
+absl::Status MaybeMoveContiguousSlices(Tensor& src, int64_t src_offset,
+                                       int64_t dst_offset, int64_t num_slices,
+                                       Tensor* dst) {
   if (src.dtype() != dst->dtype()) {
     return absl::FailedPreconditionError(absl::StrCat(
         "MaybeMoveContiguousSlices cannot perform copy: src and dst have "
@@ -299,27 +301,27 @@ Status MaybeMoveContiguousSlices(Tensor& src, int64_t src_offset,
   }
 }
 
-Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
-                            int64_t dst_offset, int64_t num_slices,
-                            Tensor* dst) {
+absl::Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
+                                  int64_t dst_offset, int64_t num_slices,
+                                  Tensor* dst) {
   if (src.dtype() != dst->dtype()) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "CopyContiguousSlices cannot perform copy: src and dst have different "
         "dtypes. Source dtype: ",
-        src.dtype(), " dstination dtype: ", dst->dtype(), ".");
+        src.dtype(), " dstination dtype: ", dst->dtype(), "."));
   }
   if (src.dims() < 1) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "CopyContiguousSlices cannot perform copy: src has to be a tensor with "
         "rank >= 1. Source shape: ",
-        src.shape().DebugString());
+        src.shape().DebugString()));
   }
 
   if (dst->dims() < 1) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "CopyContiguousSlices cannot perform copy: dst has to be a tensor "
         "with rank >= 1. Dest shape: ",
-        dst->shape().DebugString());
+        dst->shape().DebugString()));
   }
 
   const int64_t src_dim0 = src.dim_size(0);
@@ -334,10 +336,11 @@ Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
   }
 
   if (src_chip_size != dst_chip_size) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "CopyContiguousSlices cannot perform copy: source and dst shapes are"
         "not compatible. Source shape: ",
-        src.shape().DebugString(), ", dst shape: ", dst->shape().DebugString());
+        src.shape().DebugString(),
+        ", dst shape: ", dst->shape().DebugString()));
   }
 
   if (src_chip_size == 0 && dst_chip_size == 0) {
@@ -346,11 +349,11 @@ Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
 
   if (src_offset < 0 || src_offset + num_slices > src_dim0 || dst_offset < 0 ||
       dst_offset + num_slices > dst_dim0) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "CopyContiguousSlices cannot perform copy: index out of range. "
         "src_offset: ",
         src_offset, ", num_slices: ", num_slices, ", src_dim0: ", src_dim0,
-        ", dst_offset: ", dst_offset, ", dst_dim0: ", dst_dim0, ".");
+        ", dst_offset: ", dst_offset, ", dst_dim0: ", dst_dim0, "."));
   }
 
 #define HANDLE_TYPE(T)                                                 \
@@ -366,8 +369,8 @@ Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
     TF_CALL_QUANTIZED_TYPES(HANDLE_TYPE);
 #undef HANDLE_TYPE
     default:
-      return errors::Unimplemented("CopyContiguousSlices unhandled data type: ",
-                                   src.dtype());
+      return absl::UnimplementedError(absl::StrCat(
+          "CopyContiguousSlices unhandled data type: ", src.dtype()));
   }
 }
 
@@ -375,7 +378,8 @@ Status CopyContiguousSlices(const Tensor& src, int64_t src_offset,
 //
 // NOTE(mrry): The implementation may be able to optimize the copy to a move.
 // This is particularly important for DT_STRING tensors.
-Status MaybeMoveSliceToElement(Tensor* parent, Tensor* element, int64_t index) {
+absl::Status MaybeMoveSliceToElement(Tensor* parent, Tensor* element,
+                                     int64_t index) {
   TF_RETURN_IF_ERROR(ValidateInput(*parent, *element, index));
   const int64_t num_values = element->NumElements();
 
@@ -392,31 +396,32 @@ Status MaybeMoveSliceToElement(Tensor* parent, Tensor* element, int64_t index) {
     TF_CALL_QUANTIZED_TYPES(HANDLE_TYPE);
 #undef HANDLE_TYPE
     default:
-      return errors::Unimplemented(
-          "MaybeMoveSliceToElement Unhandled data type: ", element->dtype());
+      return absl::UnimplementedError(absl::StrCat(
+          "MaybeMoveSliceToElement Unhandled data type: ", element->dtype()));
   }
 }
 
 // The following five functions are copied from padding_fifo_queue.cc.
 // TODO(mrry): Reconcile these functions with the similar methods in the
 // queue implementation.
-Status ValidateElementToLargerSlice(const Tensor& element, Tensor* parent) {
+absl::Status ValidateElementToLargerSlice(const Tensor& element,
+                                          Tensor* parent) {
   DCHECK_NE(parent->dim_size(0), 0);
   if (element.NumElements() > (parent->NumElements() / parent->dim_size(0))) {
     TensorShape chip_shape = parent->shape();
     chip_shape.RemoveDim(0);
-    return errors::Internal(
+    return absl::InternalError(absl::StrCat(
         "HandleElementToLargerSlice Cannot copy slice: number of entries in "
         "element is greater than number of elements in parent slice.  ",
         "Shapes are: [element]: ", element.shape().DebugString(),
-        ", [parent slice]: ", chip_shape.DebugString());
+        ", [parent slice]: ", chip_shape.DebugString()));
   }
   return absl::OkStatus();
 }
 
 template <typename T, int NDIMS>
-Status HandleElementToLargerSlice(const Tensor& element, Tensor* parent,
-                                  int index) {
+absl::Status HandleElementToLargerSlice(const Tensor& element, Tensor* parent,
+                                        int index) {
   TF_RETURN_IF_ERROR(ValidateElementToLargerSlice(element, parent));
   if (element.NumElements() == 0) {
     return absl::OkStatus();
@@ -435,8 +440,8 @@ Status HandleElementToLargerSlice(const Tensor& element, Tensor* parent,
 }
 
 template <int NDIMS>
-Status HandleElementToLargerSliceWithRank(const Tensor& element, Tensor* parent,
-                                          int index) {
+absl::Status HandleElementToLargerSliceWithRank(const Tensor& element,
+                                                Tensor* parent, int index) {
 #define HANDLE_TYPE(T)                                                   \
   case DataTypeToEnum<T>::value: {                                       \
     return HandleElementToLargerSlice<T, NDIMS>(element, parent, index); \
@@ -446,19 +451,19 @@ Status HandleElementToLargerSliceWithRank(const Tensor& element, Tensor* parent,
     TF_CALL_DATASET_TYPES(HANDLE_TYPE);
 #undef HANDLE_TYPE
     default:
-      return errors::Unimplemented(
+      return absl::UnimplementedError(absl::StrCat(
           "HandleElementToLargerSliceWithRank Unhandled data type: ",
-          element.dtype());
+          element.dtype()));
   }
 }
 
-Status CopyElementToLargerSlice(const Tensor& element, Tensor* parent,
-                                int index) {
+absl::Status CopyElementToLargerSlice(const Tensor& element, Tensor* parent,
+                                      int index) {
   if (parent->dims() != element.dims() + 1) {
-    return errors::Internal(
+    return absl::InternalError(absl::StrCat(
         "Mismatched ranks.  Element's rank is: ", element.dims(),
         " but element is meant to be a slice in output Tensor having rank: ",
-        parent->dims(), " (should be: ", element.dims() + 1, ")");
+        parent->dims(), " (should be: ", element.dims() + 1, ")"));
   }
 
 #define HANDLE_DIMS(NDIMS)                                                  \
@@ -477,12 +482,12 @@ Status CopyElementToLargerSlice(const Tensor& element, Tensor* parent,
     HANDLE_DIMS(5);
 #undef HANDLE_DIMS
     default:
-      return errors::Unimplemented("CopyElementToLargerSlice Unhandled rank: ",
-                                   element.dims());
+      return absl::UnimplementedError(absl::StrCat(
+          "CopyElementToLargerSlice Unhandled rank: ", element.dims()));
   }
 }
 
-Status SetElementZero(Tensor* element, const Tensor& padding) {
+absl::Status SetElementZero(Tensor* element, const Tensor& padding) {
 #define HANDLE_TYPE(T)                                     \
   if (element->dtype() == DataTypeToEnum<T>::value) {      \
     element->flat<T>().setConstant(padding.scalar<T>()()); \
@@ -490,8 +495,8 @@ Status SetElementZero(Tensor* element, const Tensor& padding) {
   }
   TF_CALL_DATASET_TYPES(HANDLE_TYPE);
 #undef HANDLE_TYPE
-  return errors::Unimplemented("SetElementZero Unhandled data type: ",
-                               element->dtype());
+  return absl::UnimplementedError(
+      absl::StrCat("SetElementZero Unhandled data type: ", element->dtype()));
 }
 
 }  // namespace batch_util

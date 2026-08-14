@@ -1,4 +1,4 @@
-/* Copyright 2016 The TensorFlow Authors All Rights Reserved.
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,14 +16,8 @@ limitations under the License.
 #define TENSORFLOW_CORE_PROFILER_LIB_PROFILER_INTERFACE_H_
 
 #include "absl/base/macros.h"
-#include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/profiler/protobuf/xplane.pb.h"
 #include "tsl/profiler/lib/profiler_interface.h"
-
-// TODO: b/323943471 - This macro should eventually be provided by Abseil.
-#ifndef ABSL_DEPRECATE_AND_INLINE
-#define ABSL_DEPRECATE_AND_INLINE()
-#endif
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tensorflow {
 namespace profiler {

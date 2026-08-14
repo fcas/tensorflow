@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Tests of TensorFlow variables kernels written using the Python API.
 
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
@@ -64,8 +79,6 @@ cuda_py_strict_test(
     name = "resource_variable_ops_test",
     size = "medium",
     srcs = ["resource_variable_ops_test.py"],
-    # TODO(kkb): CppMemoryChecker is flaky without this flag, investigate.
-    #
     # TODO(b/128347673): Re-enable.
     tags = [
         "no_windows",
@@ -85,7 +98,6 @@ cuda_py_strict_test(
         "//tensorflow/python/framework:errors",
         "//tensorflow/python/framework:extension_type",
         "//tensorflow/python/framework:indexed_slices",
-        "//tensorflow/python/framework:memory_checker",
         "//tensorflow/python/framework:ops",
         "//tensorflow/python/framework:tensor",
         "//tensorflow/python/framework:tensor_shape",

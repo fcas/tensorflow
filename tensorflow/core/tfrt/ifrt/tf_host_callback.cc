@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/fixed_array.h"
 #include "absl/log/check.h"
@@ -35,16 +36,17 @@ limitations under the License.
 #include "tensorflow/c/eager/immediate_execution_context.h"
 #include "tensorflow/c/eager/immediate_execution_operation.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/ifrt/ifrt_types.h"
+#include "xla/tsl/platform/errors.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/common_runtime/eager/tensor_handle.h"
 #include "tensorflow/core/framework/device.h"
 #include "tensorflow/core/framework/device_factory.h"
+#include "tensorflow/core/framework/function.pb.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/refcount.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -88,7 +90,7 @@ absl::Status TfHostCallback::Call(void** inputs, void** outputs) {
   // Prepare inputs.
   for (int i = 0; i < operand_type_and_shapes_.size(); ++i) {
     tensorflow::Tensor t = GetTensor(operand_type_and_shapes_[i], inputs[i]);
-    RefCountHandle handle(tensorflow::down_cast<tensorflow::TensorHandle*>(
+    RefCountHandle handle(absl::down_cast<TensorHandle*>(
         ctx_->CreateLocalHandleFromTFTensor(t, /*d_name=*/nullptr)));
     TF_RETURN_IF_ERROR(op->AddInput(handle.get()));
   }
@@ -104,7 +106,7 @@ absl::Status TfHostCallback::Call(void** inputs, void** outputs) {
   output_handles.reserve(num_outputs);
   for (auto* output_raw_handle : output_raw_handles) {
     output_handles.emplace_back(
-        tensorflow::down_cast<tensorflow::TensorHandle*>(output_raw_handle));
+        absl::down_cast<TensorHandle*>(output_raw_handle));
   }
 
   // Copy the output tensors.
@@ -158,8 +160,8 @@ absl::StatusOr<std::unique_ptr<TfHostCallback>> TfHostCallback::Create(
                          result_type_and_shapes, std::move(ctx)));
 }
 
-absl::StatusOr<std::unique_ptr<tensorflow::StaticDeviceMgr>>
-CreateTfStaticDeviceMgr() {
+absl::StatusOr<std::unique_ptr<tensorflow::DynamicDeviceMgr>>
+CreateTfDynamicDeviceMgr() {
   // Share the same TF devices across all host callbacks in a single
   // computation. This makes it possible to share states (e.g., TF resources)
   // across host callbacks in a single computation.
@@ -167,7 +169,7 @@ CreateTfStaticDeviceMgr() {
   TF_RETURN_IF_ERROR(tensorflow::DeviceFactory::AddCpuDevices(
       tensorflow::SessionOptions(), "/job:localhost/replica:0/task:0",
       &devices));
-  return std::make_unique<tensorflow::StaticDeviceMgr>(std::move(devices));
+  return std::make_unique<tensorflow::DynamicDeviceMgr>(std::move(devices));
 }
 
 }  // namespace ifrt_serving

@@ -1,3 +1,19 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
 load(
     "//tensorflow:tensorflow.bzl",
     "if_oss",
@@ -10,12 +26,13 @@ load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
+    default_visibility = internal_visibility([
         "//learning/brain/tfrt/aot:__subpackages__",
         "//learning/brain/tfrt/tf_tpu:__subpackages__",
         "//tensorflow/cc/saved_model/image_format:__subpackages__",
         "//tensorflow/tools/proto_splitter:__subpackages__",
-    ],
+        "//waymo/ml/deploy:__subpackages__",
+    ]),
     licenses = ["notice"],
 )
 
@@ -28,7 +45,7 @@ cc_library(
         "//tensorflow/tools/proto_splitter:versions_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@local_tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:protobuf",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -50,13 +67,13 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
         "@riegeli//riegeli/base:initializer",
         "@riegeli//riegeli/bytes:cord_writer",
         "@riegeli//riegeli/bytes:fd_writer",
         "@riegeli//riegeli/bytes:string_writer",
         "@riegeli//riegeli/records:record_writer",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -69,7 +86,7 @@ cc_library(
         ":composable_splitter_base",
         ":util",
         "//tensorflow/tools/proto_splitter:chunk_proto_cc",
-        "@local_tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:protobuf",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -97,14 +114,14 @@ tf_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:status_matchers",
         "@riegeli//riegeli/base:initializer",
         "@riegeli//riegeli/bytes:cord_reader",
         "@riegeli//riegeli/bytes:fd_reader",
         "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/records:record_reader",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status_matchers",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -131,13 +148,14 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:statusor",
         "@riegeli//riegeli/base:initializer",
         "@riegeli//riegeli/base:types",
         "@riegeli//riegeli/bytes:fd_reader",
+        "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/records:record_reader",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -163,11 +181,11 @@ tf_cc_test(
         "//tensorflow/tools/proto_splitter/testdata:test_message_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -179,11 +197,11 @@ cc_library(
     hdrs = ["graph_def_splitter.h"],
     deps = [
         ":composable_splitter",
+        ":composable_splitter_base",
         ":large_node_splitter",
         ":max_size",
         ":repeated_field_splitter",
         ":size_splitter",
-        ":split",
         ":util",
         "//tensorflow/core:framework",
         "//tensorflow/core:protos_all_cc",
@@ -191,9 +209,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -210,20 +228,18 @@ cc_library(
 
 cc_library(
     name = "repeated_field_splitter",
-    srcs = ["repeated_field_splitter.cc"],
     hdrs = ["repeated_field_splitter.h"],
     deps = [
         ":composable_splitter",
         ":max_size",
         ":size_splitter",
-        ":split",
         ":util",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:protobuf",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -254,7 +270,7 @@ tf_cc_test(
         "//tensorflow/tools/proto_splitter/testdata:test_message_proto_cc",
         "@com_google_absl//absl/strings:cord",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:protobuf",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -279,8 +295,8 @@ cc_library(
         ":util",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -301,7 +317,7 @@ tf_cc_test(
         "//tensorflow/core/platform:path",
         "//tensorflow/tools/proto_splitter/testdata:test_message_proto_cc",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:protobuf",
     ] + if_oss([
         "//tensorflow/tools/proto_splitter:protos_impl",
     ]),
@@ -309,18 +325,15 @@ tf_cc_test(
 
 cc_library(
     name = "large_node_splitter",
-    srcs = ["large_node_splitter.cc"],
     hdrs = ["large_node_splitter.h"],
     deps = [
         ":composable_splitter",
+        ":composable_splitter_base",
         ":max_size",
         ":size_splitter",
         ":util",
-        "//tensorflow/core:protos_all_cc",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:statusor",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -332,8 +345,8 @@ cc_library(
         "//tensorflow/core:test",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
     ],
 )

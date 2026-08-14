@@ -1,3 +1,20 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load(
     "//tensorflow/lite:build_def.bzl",
@@ -13,7 +30,7 @@ load("//tensorflow/lite:special_rules.bzl", "c_api_opaque_internal_visibility_al
 load("//tensorflow/lite/core/shims:cc_library_with_tflite.bzl", "cc_library_with_tflite_with_c_headers_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )
@@ -292,11 +309,14 @@ cc_test(
     size = "small",
     srcs = ["c_api_signature_runner_test.cc"],
     copts = tflite_copts(),
-    data = ["//tensorflow/lite:testdata/multi_signatures.bin"],
+    data = [
+        "//tensorflow/lite:testdata/multi_signatures.bin",
+        "//tensorflow/lite:testdata/no_signatures.bin",
+    ],
     deps = [
         ":c_api",
         "//tensorflow/lite/core/c:c_api",
-        "//tensorflow/lite/core/c:c_api_experimental",
+        "//tensorflow/lite/core/c:common",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -400,6 +420,7 @@ cc_library(
 # For use with library targets that can't use relative paths.
 # LINT.IfChange(exported_headers)
 exports_files([
+    "builtin_op_data.h",
     "c_api.h",
     "c_api_experimental.h",
     "c_api_opaque.h",
@@ -410,6 +431,7 @@ exports_files([
 filegroup(
     name = "tensorflowlite_c_api_hdrs_filegroup",
     srcs = [
+        "builtin_op_data.h",
         "c_api.h",
         "c_api_types.h",
         "common.h",

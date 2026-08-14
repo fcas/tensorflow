@@ -48,7 +48,7 @@ class FunctionalizeCondTest : public ::testing::Test {
     return fc_->state_map_.GetCondId(state);
   }
 
-  string GetString(const StateMap::StateMap::CondId id) {
+  std::string GetString(const StateMap::StateMap::CondId id) {
     return fc_->state_map_.CondStateToString(id);
   }
 
@@ -94,8 +94,9 @@ TEST_F(FunctionalizeCondTest, JoinCondStates) {
   }
 
   // An non-merge op with inputs from then and else branch.
-  Status status = JoinCondStatesNonMerge(then_branch, else_branch).status();
-  EXPECT_TRUE(errors::IsInvalidArgument(status));
+  absl::Status status =
+      JoinCondStatesNonMerge(then_branch, else_branch).status();
+  EXPECT_TRUE(absl::IsInvalidArgument(status));
 
   // Merge between then and else branch.
   auto joined_or = JoinCondStatesMerge(m, then_branch, else_branch);

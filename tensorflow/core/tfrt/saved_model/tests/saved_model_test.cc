@@ -25,19 +25,28 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "tensorflow/cc/saved_model/constants.h"
 #include "tensorflow/compiler/mlir/tfrt/backend_compiler.h"
+#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/monitoring/cell_reader.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/status.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/platform/resource_loader.h"
+#include "tensorflow/core/protobuf/fingerprint.pb.h"
 #include "tensorflow/core/tfrt/graph_executor/config.h"
 #include "tensorflow/core/tfrt/graph_executor/test_config.pb.h"
 #include "tensorflow/core/tfrt/run_handler_thread_pool/run_handler_concurrent_work_queue.h"
@@ -45,14 +54,17 @@ limitations under the License.
 #include "tensorflow/core/tfrt/runtime/work_queue_interface.h"
 #include "tensorflow/core/tfrt/saved_model/saved_model_testutil.h"
 #include "tensorflow/core/tfrt/saved_model/saved_model_util.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/path.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/strcat.h"
 #include "tfrt/host_context/concurrent_work_queue.h"  // from @tf_runtime
 
 namespace tensorflow {
 namespace tfrt_stub {
 namespace {
+
+using ::tsl::monitoring::testing::CellReader;
 
 struct TestParams {
   bool enable_grappler = false;
@@ -61,6 +73,95 @@ struct TestParams {
 };
 
 class SavedModelTest : public ::testing::TestWithParam<TestParams> {};
+
+TEST(SavedModelTest, LoadSavedModel_PathTraversal) {
+  std::string saved_model_dir = "some/path/../to/model";
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  auto options = DefaultSavedModelOptions(runtime.get());
+
+  auto saved_model = SavedModelImpl::LoadSavedModel(options, saved_model_dir,
+                                                    /*tags=*/{"serve"});
+  EXPECT_FALSE(saved_model.ok());
+  EXPECT_TRUE(absl::IsInvalidArgument(saved_model.status()));
+  EXPECT_THAT(saved_model.status().message(),
+              ::testing::HasSubstr("cannot contain '..'"));
+}
+
+TEST(SavedModelTest, LoadSavedModel_MetaGraph_PathTraversal) {
+  std::string saved_model_dir = "some/path/../to/model";
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  auto options = DefaultSavedModelOptions(runtime.get());
+  tensorflow::MetaGraphDef meta_graph_def;
+
+  auto saved_model =
+      SavedModelImpl::LoadSavedModel(options, meta_graph_def, saved_model_dir);
+  EXPECT_FALSE(saved_model.ok());
+  EXPECT_TRUE(absl::IsInvalidArgument(saved_model.status()));
+  EXPECT_THAT(saved_model.status().message(),
+              ::testing::HasSubstr("cannot contain '..'"));
+}
+
+TEST(SavedModelTest, ReadSavedModel_PathTraversal) {
+  std::string saved_model_dir = "some/path/../to/model";
+  auto meta_graph_def = ReadSavedModel(saved_model_dir, {"serve"});
+  EXPECT_FALSE(meta_graph_def.ok());
+  EXPECT_TRUE(absl::IsInvalidArgument(meta_graph_def.status()));
+  EXPECT_THAT(meta_graph_def.status().message(),
+              ::testing::HasSubstr("cannot contain '..'"));
+}
+
+TEST(SavedModelTest, DeserializeAoTMlirModule_PathTraversal) {
+  std::string saved_model_dir = "some/path/../to/model";
+  mlir::DialectRegistry registry;
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> mlir_module;
+  auto status =
+      DeserializeAoTMlirModule(saved_model_dir, &context, &mlir_module);
+  EXPECT_FALSE(status.ok());
+  EXPECT_TRUE(absl::IsInvalidArgument(status));
+  EXPECT_THAT(status.message(), ::testing::HasSubstr("cannot contain '..'"));
+}
+
+TEST(SavedModelTest, GetInitializersAndSignatures_PathTraversal) {
+  std::string saved_model_dir = tensorflow::GetDataDependencyFilepath(
+      "tensorflow/core/tfrt/saved_model/tests/hash_table_asset_v1");
+
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  auto options = DefaultSavedModelOptions(runtime.get());
+  options.graph_execution_options.compile_options.enable_grappler = true;
+  options.graph_execution_options.compile_options.hoist_invariant_ops = true;
+
+  auto session_options =
+      CreateDefaultSessionOptions(options.graph_execution_options);
+
+  auto meta_graph_def_or = ReadSavedModel(saved_model_dir, {"serve"});
+  TF_ASSERT_OK(meta_graph_def_or.status());
+  auto meta_graph_def = std::move(meta_graph_def_or.value());
+
+  const auto& fdef_lib = meta_graph_def.graph_def().library();
+  auto fallback_state_or = FallbackState::Create(session_options, fdef_lib);
+  TF_ASSERT_OK(fallback_state_or.status());
+  auto fallback_state = std::move(fallback_state_or.value());
+
+  mlir::DialectRegistry registry;
+  RegisterMlirDialect(
+      registry,
+      options.graph_execution_options.compile_options.backend_compiler);
+  mlir::MLIRContext context(registry);
+
+  auto mlir_module_or =
+      ImportSavedModel(&context, meta_graph_def, *fallback_state,
+                       saved_model_dir, true, false, {}, nullptr);
+  TF_ASSERT_OK(mlir_module_or.status());
+  auto mlir_module = std::move(mlir_module_or.value());
+
+  auto result =
+      GetInitializersAndSignatures(mlir_module.get(), "some/path/../to/model");
+  EXPECT_FALSE(result.ok());
+  EXPECT_TRUE(absl::IsInvalidArgument(result.status()));
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("cannot contain '..'"));
+}
 
 TEST_P(SavedModelTest, BasicV1) {
   // SavedModel toy contains a graph of a single 'tf.AddV2' op. It is generated
@@ -1179,6 +1280,172 @@ TEST(SavedModelTest, CustomCompiler) {
   TF_ASSERT_OK(saved_model->Run(run_options, "toy", inputs, &outputs));
 
   EXPECT_EQ(test_context.signature_name, "toy");
+}
+
+// Creates a sub directory under the temp directory.
+// Return the path of the created directory.
+std::string CreateTempDir(::tsl::Env* env, absl::string_view subdir) {
+  std::string dst_dir = ::tsl::io::JoinPath(testing::TempDir(), subdir);
+  TF_CHECK_OK(env->RecursivelyCreateDir(dst_dir));
+  return dst_dir;
+}
+
+// Copy the source directory recursively to the destination directory.
+void CopyRecursively(::tsl::Env* env, std::string src_dir,
+                     std::string dst_dir) {
+  std::vector<std::string> children;
+  TF_CHECK_OK(env->GetChildren(src_dir, &children));
+  for (const auto& child : children) {
+    std::string src_path = ::tsl::io::JoinPath(src_dir, child);
+    std::string dst_path = ::tsl::io::JoinPath(dst_dir, child);
+    if (env->IsDirectory(src_path).ok()) {
+      TF_CHECK_OK(env->RecursivelyCreateDir(dst_path));
+      CopyRecursively(env, src_path, dst_path);
+    } else {
+      TF_CHECK_OK(env->CopyFile(src_path, dst_path));
+    }
+  }
+}
+
+TEST(SavedModelTest, EmitUnifiedModelIdFromFingerprintUUID) {
+  tsl::Env* env = ::tsl::Env::Default();
+  std::string saved_model_dir = tensorflow::GetDataDependencyFilepath(
+      "tensorflow/core/tfrt/saved_model/tests/toy_v1/1");
+
+  auto unified_model_id =
+      CellReader<std::string>("/tensorflow/tfrt/saved_model/unified_model_id");
+
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  std::string model_name = "test_model";
+  int model_version = 1;
+  UserSavedModelOptions user_options;
+  user_options.session_metadata.set_name(model_name);
+  user_options.session_metadata.set_version(model_version);
+  auto options = DefaultSavedModelOptions(runtime.get(), user_options);
+  auto saved_model = SavedModelImpl::LoadSavedModel(options, saved_model_dir,
+                                                    /*tags=*/{"serve"});
+  TF_CHECK_OK(saved_model.status());
+
+  FingerprintDef fingerprint_proto;
+  std::string fingerprint_pb_path =
+      ::tsl::io::JoinPath(saved_model_dir, kFingerprintFilenamePb);
+  TF_CHECK_OK(
+      tsl::ReadBinaryProto(env, fingerprint_pb_path, &fingerprint_proto));
+  EXPECT_EQ(unified_model_id.Read(model_name, ::absl::StrCat(model_version)),
+            fingerprint_proto.uuid());
+}
+
+TEST(SavedModelTest, EmitUnifiedModelIdWhenNoFingerprintFile) {
+  tsl::Env* env = ::tsl::Env::Default();
+  std::string source_model_dir = tensorflow::GetDataDependencyFilepath(
+      "tensorflow/core/tfrt/saved_model/tests/toy_v1/1");
+  std::string saved_model_dir =
+      CreateTempDir(env, "emit_unified_model_id_when_no_fingerprint_file");
+  CopyRecursively(env, source_model_dir, saved_model_dir);
+  TF_CHECK_OK(env->DeleteFile(
+      ::tsl::io::JoinPath(saved_model_dir, kFingerprintFilenamePb)));
+
+  auto unified_model_id =
+      CellReader<std::string>("/tensorflow/tfrt/saved_model/unified_model_id");
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  std::string model_name = "test_model";
+  int model_version = 1;
+  UserSavedModelOptions user_options;
+  user_options.session_metadata.set_name(model_name);
+  user_options.session_metadata.set_version(model_version);
+  auto options = DefaultSavedModelOptions(runtime.get(), user_options);
+  auto saved_model = SavedModelImpl::LoadSavedModel(options, saved_model_dir,
+                                                    /*tags=*/{"serve"});
+  TF_CHECK_OK(saved_model.status());
+
+  EXPECT_EQ(unified_model_id.Read(model_name, absl::StrCat(model_version)),
+            "(empty)");
+}
+
+TEST(SavedModelTest, EmitUnifiedModelIdWhenFingerprintHasNoUUID) {
+  tsl::Env* env = ::tsl::Env::Default();
+  std::string source_model_dir = tensorflow::GetDataDependencyFilepath(
+      "tensorflow/core/tfrt/saved_model/tests/toy_v1/1");
+  std::string saved_model_dir =
+      CreateTempDir(env, "emit_unified_model_id_when_fingerprint_has_no_uuid");
+  CopyRecursively(env, source_model_dir, saved_model_dir);
+  // Update the fingerprint file to have an empty UUID.
+  FingerprintDef fingerprint_proto;
+  std::string fingerprint_pb_path =
+      ::tsl::io::JoinPath(saved_model_dir, kFingerprintFilenamePb);
+  TF_CHECK_OK(
+      tsl::ReadBinaryProto(env, fingerprint_pb_path, &fingerprint_proto));
+  fingerprint_proto.clear_uuid();
+  TF_CHECK_OK(env->DeleteFile(fingerprint_pb_path));
+  TF_CHECK_OK(
+      tsl::WriteBinaryProto(env, fingerprint_pb_path, fingerprint_proto));
+
+  auto unified_model_id =
+      CellReader<std::string>("/tensorflow/tfrt/saved_model/unified_model_id");
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  std::string model_name = "test_model";
+  int model_version = 1;
+  UserSavedModelOptions user_options;
+  user_options.session_metadata.set_name(model_name);
+  user_options.session_metadata.set_version(model_version);
+  auto options = DefaultSavedModelOptions(runtime.get(), user_options);
+  auto saved_model = SavedModelImpl::LoadSavedModel(options, saved_model_dir,
+                                                    /*tags=*/{"serve"});
+  TF_CHECK_OK(saved_model.status());
+
+  auto value = unified_model_id.Read(model_name, absl::StrCat(model_version));
+  EXPECT_TRUE(!value.empty());
+  EXPECT_NE(value, "(empty)");
+}
+
+// Allows us to intercept module names for `SetsModuleName`-behavior test via
+// BackendCompiler.
+class ModuleNameVerifyingCompiler : public BackendCompiler {
+ public:
+  absl::Status CompileTensorflow(ModelRuntimeContext& model_context,
+                                 mlir::ModuleOp module) const override {
+    module_names_.push_back(module.getName().value_or("").str());
+    return absl::OkStatus();
+  }
+
+  const std::vector<std::string>& GetModuleNames() const {
+    return module_names_;
+  }
+
+ private:
+  mutable std::vector<std::string> module_names_;
+};
+
+TEST(SavedModelTest, SetsModuleName) {
+  std::string saved_model_dir = tensorflow::GetDataDependencyFilepath(
+      "tensorflow/core/tfrt/saved_model/tests/toy_v2");
+
+  auto runtime = DefaultTfrtRuntime(/*num_threads=*/1);
+  auto options = DefaultSavedModelOptions(runtime.get());
+
+  ModuleNameVerifyingCompiler verifying_compiler;
+  options.graph_execution_options.compile_options.backend_compiler =
+      &verifying_compiler;
+
+  // Lazy loading will trigger ImportSubgraph on the first Run.
+  options.enable_lazy_loading = true;
+
+  auto status_or_saved_model = SavedModelImpl::LoadSavedModel(
+      options, saved_model_dir, /*tags=*/{"serve"});
+  TF_ASSERT_OK(status_or_saved_model.status());
+  auto& saved_model = *status_or_saved_model;
+
+  // Run the "serving_default" signature.
+  std::vector<tensorflow::Tensor> inputs;
+  inputs.push_back(
+      CreateTfTensor<int32_t>(/*shape=*/{1, 3}, /*data=*/{1, 1, 1}));
+  std::vector<tensorflow::Tensor> outputs;
+  TF_ASSERT_OK(saved_model->Run({}, "serving_default", inputs, &outputs));
+
+  // Verify that the backend compiler also received a module with the expected
+  // name.
+  EXPECT_THAT(verifying_compiler.GetModuleNames(),
+              ::testing::Contains("serving_default"));
 }
 
 }  // namespace

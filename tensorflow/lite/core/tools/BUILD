@@ -1,11 +1,27 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load("//tensorflow/lite:build_def.bzl", "tflite_self_contained_libs_test_suite")
 load("//tensorflow/lite:special_rules.bzl", "verifier_internal_visibility_allowlist")
 load("//tensorflow/lite/core:special_rules.bzl", "verifier_visibility_allowlist")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow/lite:__subpackages__"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:LICENSE"],
     licenses = ["notice"],
 )
 
@@ -18,6 +34,7 @@ cc_library(
         "//tensorflow/lite:__subpackages__",
     ] + verifier_visibility_allowlist(),
     deps = [
+        "//tensorflow/compiler/mlir/lite/schema:schema_utils",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
         "//tensorflow/lite:util",
@@ -28,7 +45,6 @@ cc_library(
         "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/core/tools:verifier_internal",
         "//tensorflow/lite/schema:schema_fbs",
-        "//tensorflow/lite/schema:schema_utils",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:optional",
         "@flatbuffers//:runtime_cc",
@@ -47,6 +63,7 @@ cc_test(
     ],
     deps = [
         ":verifier",
+        "//tensorflow/compiler/mlir/lite/schema:schema_conversion_utils",
         "//tensorflow/core/platform:resource_loader",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
@@ -56,7 +73,6 @@ cc_test(
         "//tensorflow/lite/c:common",
         "//tensorflow/lite/core:framework",
         "//tensorflow/lite/core/api",
-        "//tensorflow/lite/schema:schema_conversion_utils",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest_main",
         "@flatbuffers",
@@ -68,11 +84,7 @@ cc_library(
     srcs = ["verifier_internal.cc"],
     hdrs = ["verifier_internal.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = verifier_internal_visibility_allowlist() + [
-        "//tensorflow/lite/core/shims:__subpackages__",
-        "//tensorflow/lite/java/src/main/native:__pkg__",
-        "//tensorflow/lite/tools:__subpackages__",
-    ],
+    visibility = verifier_internal_visibility_allowlist() + ["//tensorflow/lite/tools:__subpackages__"],
     deps = [
         "//tensorflow/lite/schema:schema_fbs",
         "@flatbuffers//:runtime_cc",
@@ -85,11 +97,11 @@ cc_test(
     srcs = ["verifier_internal_test.cc"],
     deps = [
         ":verifier_internal",
+        "//tensorflow/compiler/mlir/lite/schema:schema_conversion_utils",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
         "//tensorflow/lite/c:common",
         "//tensorflow/lite/core:framework",
-        "//tensorflow/lite/schema:schema_conversion_utils",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest_main",
         "@flatbuffers",

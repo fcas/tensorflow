@@ -14,6 +14,8 @@
 # ==============================================================================
 """Cond function for Control Flow Operations."""
 
+import os
+
 from tensorflow.python.eager import context
 from tensorflow.python.eager.polymorphic_function import eager_function_run
 from tensorflow.python.framework import dtypes
@@ -32,6 +34,17 @@ from tensorflow.python.util import deprecation
 from tensorflow.python.util import dispatch
 from tensorflow.python.util import nest
 from tensorflow.python.util.tf_export import tf_export
+
+
+# When True, eager tf.cond with a constant predicate also traces the inactive
+# branch so that errors in it are surfaced early, consistent with graph/XLA
+# compilation. Off by default: tracing the inactive branch runs its Python side
+# effects and is incompatible with some constructs (e.g. captured TensorArrays,
+# certain AutoGraph-generated closures), so it is opt-in via the
+# TF_COND_VALIDATE_INACTIVE_BRANCH=1 environment variable.
+_VALIDATE_INACTIVE_BRANCH = (
+    os.environ.get("TF_COND_VALIDATE_INACTIVE_BRANCH", "0") == "1"
+)
 
 
 # pylint: disable=redefined-outer-name
@@ -257,7 +270,7 @@ def cond_for_tf_v2(pred, true_fn=None, false_fn=None, name=None):
   ...   else:
   ...     z = y-1
   ...   return z
-  >>> fun1(tf.constant(7), tf.constant(3)).numpy()
+  >>> print(fun1(tf.constant(7), tf.constant(3)).numpy())
   4
 
   >>> @tf.function
@@ -266,7 +279,7 @@ def cond_for_tf_v2(pred, true_fn=None, false_fn=None, name=None):
   ...   true_fn =  lambda: y+1
   ...   false_fn = lambda: y-1
   ...   return tf.cond(pred, true_fn, false_fn)  # Use tf.cond() explicitly.
-  >>> fun1(tf.constant(7), tf.constant(3)).numpy()
+  >>> print(fun1(tf.constant(7), tf.constant(3)).numpy())
   4
 
   For more information, see [tf.function and AutoGraph guide](
@@ -285,7 +298,7 @@ def cond_for_tf_v2(pred, true_fn=None, false_fn=None, name=None):
   >>> x, y = tf.constant(2, dtype=tf.int32), tf.constant(4, dtype=tf.int32)
   >>> z = tf.multiply(x, y)
   >>> r = tf.cond(x < y, lambda: tf.add(x, z), lambda: tf.square(y))
-  >>> r.numpy()
+  >>> print(r.numpy())
   10
 
   If `x < y`, the `tf.add` operation will be executed and `tf.square`
@@ -336,7 +349,7 @@ def cond_for_tf_v2(pred, true_fn=None, false_fn=None, name=None):
   >>> r = tf.cond(tf.less(x, y), f1, f2)
   >>> # r is set to f1().
   >>> # Operations in f2 (e.g., tf.add) are not executed.
-  >>> r.numpy()
+  >>> print(r.numpy())
   14
 
   """
@@ -380,6 +393,33 @@ def _eager_cond_implementation(pred, true_fn, false_fn, strict, name):
   else:
     # For conditions which are eager tensors with a constant value (most of
     # them), we only call the relevant branch function and execute it eagerly.
+    #
+    # When _VALIDATE_INACTIVE_BRANCH is enabled, both branches are additionally
+    # traced up front so that errors in the inactive branch are surfaced early,
+    # consistent with graph/XLA compilation. This is off by default because
+    # tracing the inactive branch runs its Python side effects and is
+    # incompatible with some constructs (e.g. captured TensorArrays, certain
+    # AutoGraph-generated closures). The selected branch is always executed
+    # eagerly using the original callable, so standard eager execution and
+    # gradient-tape semantics are unchanged (only the active branch's ops are
+    # recorded on the tape).
+    if _VALIDATE_INACTIVE_BRANCH:
+      # pylint: disable=g-import-not-at-top
+      from tensorflow.python.eager.polymorphic_function import polymorphic_function
+      # pylint: enable=g-import-not-at-top
+      validation_true_fn = (
+          true_fn
+          if isinstance(true_fn, core.PolymorphicFunction)
+          else polymorphic_function.function(true_fn)
+      )
+      validation_false_fn = (
+          false_fn
+          if isinstance(false_fn, core.PolymorphicFunction)
+          else polymorphic_function.function(false_fn)
+      )
+      validation_true_fn.get_concrete_function()
+      validation_false_fn.get_concrete_function()
+
     with ops.name_scope(name, "cond", [pred]):
       if pred_constant_value:
         result = true_fn()

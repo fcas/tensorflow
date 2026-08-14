@@ -64,9 +64,7 @@ absl::Status ReadCheckpointObjectGraph(BundleReader* bundle_reader,
         "SavedModel checkpoint object graph was not the correct type.");
   }
 
-  const tstring* object_graph_string = reinterpret_cast<const tstring*>(
-      object_graph_tensor.tensor_data().data());
-  if (!object_graph->ParseFromString(*object_graph_string)) {
+  if (!object_graph->ParseFromString(object_graph_tensor.scalar<tstring>()())) {
     return absl::Status(
         absl::StatusCode::kFailedPrecondition,
         "SavedModel checkpoint object graph could not be deserialized.");
@@ -88,7 +86,7 @@ absl::Status SavedModelV2Bundle::Load(const std::string& export_dir,
   if (saved_model_proto.meta_graphs_size() != 1) {
     return absl::Status(
         absl::StatusCode::kInvalidArgument,
-        strings::StrCat(
+        absl::StrCat(
             "SavedModelV2 should have exactly one MetaGraphDef but actually ",
             "contains ", saved_model_proto.meta_graphs_size()));
   }
@@ -187,7 +185,7 @@ absl::Status SavedModelV2Bundle::RecurseObjectsToRestore(
     if (object_name.empty()) {
       child_name = local_name;
     } else {
-      child_name = strings::StrCat(object_name, ".", local_name);
+      child_name = absl::StrCat(object_name, ".", local_name);
     }
 
     // Descend down the trackable graph.
@@ -198,8 +196,8 @@ absl::Status SavedModelV2Bundle::RecurseObjectsToRestore(
     }
     if (trackable_child_node_id < 0 ||
         trackable_child_node_id >= trackable_object_graph().nodes_size()) {
-      return errors::FailedPrecondition(
-          strings::StrCat("Illegal trackable child node id for ", child_name));
+      return absl::FailedPreconditionError(
+          absl::StrCat("Illegal trackable child node id for ", child_name));
     }
     const auto* trackable_child =
         &trackable_object_graph().nodes(trackable_child_node_id);
@@ -222,8 +220,8 @@ absl::Status SavedModelV2Bundle::RecurseObjectsToRestore(
     if (!saved_child) {
       return absl::Status(
           absl::StatusCode::kFailedPrecondition,
-          strings::StrCat("Could not find saved object to restore for ",
-                          child_name));
+          absl::StrCat("Could not find saved object to restore for ",
+                       child_name));
     }
 
     TF_RETURN_IF_ERROR(RecurseObjectsToRestore(

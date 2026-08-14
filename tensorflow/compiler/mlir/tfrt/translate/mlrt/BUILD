@@ -1,3 +1,19 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -18,13 +34,18 @@ cc_library(
     srcs = ["mlir_to_bytecode.cc"],
     hdrs = ["mlir_to_bytecode.h"],
     deps = [
+        "//tensorflow/compiler/mlir/tfrt/ir/mlrt:mlrt_ops",
         "//tensorflow/core/tfrt/mlrt/bytecode",
         "//tensorflow/core/tfrt/mlrt/bytecode:executable",
+        "//tensorflow/core/tfrt/mlrt/bytecode:function",
+        "//tensorflow/core/tfrt/mlrt/bytecode:kernel",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -38,15 +59,20 @@ tf_cc_test(
     data = glob(["testdata/**"]),
     deps = [
         ":mlir_to_bytecode",
+        "//tensorflow/compiler/mlir/tfrt/ir/mlrt:mlrt_ops",
+        "//tensorflow/core/tfrt/mlrt/bytecode",
         "//tensorflow/core/tfrt/mlrt/bytecode:executable",
         "//tensorflow/core/tfrt/mlrt/interpreter:attribute_span",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/platform:resource_loader",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:test",
+        "@xla//xla/tsl/platform:resource_loader",
     ],
 )
 
@@ -57,10 +83,17 @@ cc_library(
     hdrs = ["test_utils.h"],
     deps = [
         # copybara:uncomment "//learning/brain/experimental/tfrt/native_lowering/stubs:tfrt_native_lowering_impl",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
         "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/tfrt/graph_executor:sync_resource_state",
         "//tensorflow/core/tfrt/mlrt/attribute",
         "//tensorflow/core/tfrt/mlrt/bytecode",
         "//tensorflow/core/tfrt/mlrt/bytecode:kernel",
@@ -69,8 +102,8 @@ cc_library(
         "//tensorflow/core/tfrt/mlrt/interpreter:value",
         "//tensorflow/core/tfrt/stubs:tfrt_native_lowering_stub",
         "//tensorflow/core/tfrt/utils:tensor_util",
-        "@local_tsl//tsl/platform:errors",
         "@tf_runtime//:hostcontext",
+        "@tf_runtime//:support",
         "@tf_runtime//:tensor",
     ],
 )

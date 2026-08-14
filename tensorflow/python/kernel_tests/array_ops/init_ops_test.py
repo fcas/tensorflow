@@ -30,6 +30,7 @@ from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
+from tensorflow.python.util.numpy_compat import np_where
 
 
 # Returns true iff the two initializers produce the same tensor to
@@ -450,6 +451,13 @@ class VarianceScalingInitializationTest(test.TestCase):
     self.assertNear(np.mean(x), expect_mean, err=1e-2)
     self.assertNear(np.var(x), expect_var, err=1e-2)
 
+  @test_util.run_deprecated_v1
+  def testInvalidDistributionType(self):
+    with self.assertRaisesRegex(ValueError, "must be a string"):
+      init_ops.variance_scaling_initializer(distribution=None)
+    with self.assertRaisesRegex(ValueError, "must be a string"):
+      init_ops.variance_scaling_initializer(distribution=123)
+
 
 # TODO(vrv): move to sequence_ops_test?
 class RangeTest(test.TestCase):
@@ -714,7 +722,7 @@ class LinSpaceNdTest(test.TestCase):
       self.assert_close(actual, expected)
 
   def assert_close(self, actual, expected):
-    wrong_indices = np.where(~np.allclose(actual, expected))
+    wrong_indices = np_where(~np.allclose(actual, expected))
     mess = "Wrong float answer. Wrong indices: {}".format(wrong_indices)
     self.assertTrue(np.allclose(actual, expected), mess)
 

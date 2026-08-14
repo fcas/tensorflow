@@ -27,7 +27,23 @@ def RewriteClusterToIfrtCallPass: Pass<"rewrite-cluster-to-ifrt-call", "mlir::Mo
   let dependentDialects = ["mlir::tf_device::TensorFlowDeviceDialect"];
 
   let constructor = "CreateRewriteClusterToIfrtCallPass()";
+  let options = [
+    Option<"enable_async_ifrt", "enable-async-ifrt", "bool", "false",
+           "Enable async IFRT execution.">
+  ];
  }
+
+def PropagateStaticShapesPass : Pass<"propagate-static-shapes", "mlir::ModuleOp"> {
+  let summary = "Propagates static shapes from `tf.SetStaticDimensionBounds` to `tf.IfrtCall`";
+
+  let description = [{
+    This pass propagates static shape information from `tf.SetStaticDimensionBounds`
+    to `tf.IfrtCall` operands and the arguments of its callee function.
+    `tf.SetStaticDimensionBounds` is then replaced with its input.
+  }];
+
+  let constructor = "CreatePropagateStaticShapesPass()";
+}
 
 def SinkVariableAsNamedArrayPass: Pass<"sink-variable-as-named-array", "mlir::ModuleOp"> {
   let summary = "Sink variable tensor for tpu device as named IFRT array for tf.IfrtCall";
@@ -127,5 +143,16 @@ def TfIdentityPropagationPass
   }];
 
   let constructor = "CreateTfIdentityPropagationPass()";
+}
+
+def TfDeviceCleanupPass : Pass<"tf-device-cleanup", "mlir::func::FuncOp"> {
+  let summary = "Cleans up device attributes from all ops";
+
+  let description = [{
+    This pass removes `device` attributes from all TF ops. Some Serving
+    doesn't rely on `device` attributes from SavedModel.
+  }];
+
+  let constructor = "CreateTfDeviceCleanupPass()";
 }
 
